@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Copy, ExternalLink, CheckCircle, XCircle, AlertTriangle, Server, Globe, Zap, Database } from "lucide-react";
+import { Copy, ExternalLink, CheckCircle, XCircle, AlertTriangle, Server, Globe, Zap, Database, Cloud } from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -61,14 +61,14 @@ function EnvVarRow({ name, set, description }: { name: string; set: boolean; des
 }
 
 const ENV_DESCRIPTIONS: Record<string, string> = {
-  FEEDGEN_HOSTNAME: "Your deployed domain (e.g. your-app.replit.app). Used for the did:web and XRPC endpoints.",
+  FEEDGEN_HOSTNAME: "Your deployed domain (e.g. feedforge-api.workers.dev). Used for the did:web and XRPC endpoints.",
   FEEDGEN_PUBLISHER_DID: "Your Bluesky DID (e.g. did:plc:xxxx). Required to publish feeds and show profile data.",
   BLUESKY_HANDLE: "Your Bluesky handle (e.g. you.bsky.social). Required for bulk follow/unfollow and search.",
   BLUESKY_APP_PASSWORD: "App password from bsky.app/settings/app-passwords. Required for write operations.",
-  DATABASE_URL: "PostgreSQL connection string. Automatically set by Replit's built-in database.",
+  DATABASE_URL: "PostgreSQL connection string. Used by the Replit dev environment.",
 };
 
-type DeployOption = "replit" | "cloudflare" | "vercel";
+type DeployOption = "cf-full" | "cf-render" | "replit";
 
 function Badge({ children, color = "gray" }: { children: React.ReactNode; color?: "green" | "blue" | "orange" | "gray" }) {
   const colors = {
@@ -82,6 +82,27 @@ function Badge({ children, color = "gray" }: { children: React.ReactNode; color?
   );
 }
 
+function Step({ i, children }: { i: number; children: React.ReactNode }) {
+  return (
+    <li className="flex gap-2.5">
+      <span className="flex-shrink-0 w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] flex items-center justify-center font-bold mt-0.5">{i + 1}</span>
+      <span className="text-muted-foreground leading-relaxed">{children}</span>
+    </li>
+  );
+}
+
+function Cmd({ children }: { children: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="flex items-center gap-2 mt-1 mb-2">
+      <code className="flex-1 bg-muted border border-border rounded-lg px-3 py-1.5 font-mono text-[11px] text-foreground overflow-x-auto">{children}</code>
+      <Button variant="ghost" size="icon" className="h-6 w-6 flex-shrink-0" onClick={() => { navigator.clipboard.writeText(children); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
+        {copied ? <CheckCircle className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+      </Button>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { data: firehose } = useGetFirehoseStatus({ query: { queryKey: ["firehose-settings"] } });
   const { data: configStatus } = useQuery<Record<string, boolean>>({
@@ -89,7 +110,7 @@ export default function Settings() {
     queryFn: () => fetch("/api/config/status").then(r => r.json()),
     staleTime: 30_000,
   });
-  const [activeOption, setActiveOption] = useState<DeployOption>("cloudflare");
+  const [activeOption, setActiveOption] = useState<DeployOption>("cf-full");
 
   const hostname = window.location.hostname;
   const publisherDid = "(set FEEDGEN_PUBLISHER_DID)";
@@ -102,9 +123,24 @@ export default function Settings() {
   const missingCount = configStatus ? Object.values(configStatus).filter(v => !v).length : null;
 
   const deployOptions: { id: DeployOption; label: string; tagline: string; badges: { label: string; color: "green" | "blue" | "orange" | "gray" }[] }[] = [
-    { id: "cloudflare", label: "Cloudflare Pages + Render.com", tagline: "Best free option — global CDN frontend + persistent API server", badges: [{ label: "100% Free", color: "green" }, { label: "Recommended", color: "blue" }] },
-    { id: "vercel", label: "Vercel + Render.com", tagline: "Popular alternative — same architecture, Vercel instead of Cloudflare", badges: [{ label: "100% Free", color: "green" }] },
-    { id: "replit", label: "Replit Deploy", tagline: "All-in-one, easiest setup — frontend + API + firehose together", badges: [{ label: "Paid", color: "orange" }, { label: "Easiest", color: "gray" }] },
+    {
+      id: "cf-full",
+      label: "100% Cloudflare",
+      tagline: "Workers (API) + D1 (database) + Pages (frontend) + Cron (indexing) — all free, no other services",
+      badges: [{ label: "100% Free", color: "green" }, { label: "Recommended", color: "blue" }, { label: "New!", color: "blue" }],
+    },
+    {
+      id: "cf-render",
+      label: "Cloudflare Pages + Render.com",
+      tagline: "Real-time firehose — Cloudflare frontend + Render API server + Neon PostgreSQL",
+      badges: [{ label: "100% Free", color: "green" }],
+    },
+    {
+      id: "replit",
+      label: "Replit Deploy",
+      tagline: "All-in-one, easiest setup — frontend + API + firehose together",
+      badges: [{ label: "Paid", color: "orange" }, { label: "Easiest", color: "gray" }],
+    },
   ];
 
   return (
@@ -139,14 +175,6 @@ export default function Settings() {
       {/* Deployment Guide */}
       <Section title="Deployment Guide" icon={Globe} delay={0.05}>
 
-        {/* Why split? */}
-        <div className="text-xs text-amber-600 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-5 flex gap-2">
-          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-          <span>
-            <strong>The key constraint:</strong> The firehose is a persistent WebSocket connection to Bluesky. It cannot run on serverless platforms (Cloudflare Workers, Vercel, etc.) — these shut down after each request. The <strong>API server must run on a persistent server</strong>. The frontend (static React app) can go anywhere.
-          </span>
-        </div>
-
         {/* Option selector */}
         <div className="flex flex-col gap-2 mb-5">
           {deployOptions.map(opt => (
@@ -172,117 +200,158 @@ export default function Settings() {
           ))}
         </div>
 
-        {/* Option A: Cloudflare + Render */}
-        {activeOption === "cloudflare" && (
+        {/* Option A: 100% Cloudflare Workers + D1 + Pages */}
+        {activeOption === "cf-full" && (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+            <div className="flex items-center justify-center gap-2 p-4 bg-muted/30 rounded-xl border border-border text-xs flex-wrap">
+              <div className="text-center px-3 py-2 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+                <div className="font-bold text-orange-600">Cloudflare Pages</div>
+                <div className="text-muted-foreground">React frontend</div>
+              </div>
+              <div className="text-muted-foreground">→</div>
+              <div className="text-center px-3 py-2 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+                <div className="font-bold text-orange-600">Cloudflare Workers</div>
+                <div className="text-muted-foreground">Hono API</div>
+              </div>
+              <div className="text-muted-foreground">→</div>
+              <div className="text-center px-3 py-2 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+                <div className="font-bold text-orange-600">Cloudflare D1</div>
+                <div className="text-muted-foreground">SQLite database</div>
+              </div>
+              <div className="text-muted-foreground">+</div>
+              <div className="text-center px-3 py-2 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+                <div className="font-bold text-orange-600">Cron Trigger</div>
+                <div className="text-muted-foreground">Posts every 3 min</div>
+              </div>
+            </div>
+
+            <div className="text-xs text-blue-600 bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 flex gap-2">
+              <Cloud className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>
+                The <code className="bg-blue-500/10 px-1 rounded">artifacts/cf-worker</code> package in this project contains the complete backend ready to deploy.
+                Posts are indexed every 3 minutes via Cron Triggers instead of a real-time firehose — perfect for Cloudflare's serverless runtime.
+              </span>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-semibold text-foreground mb-2">Step 1 — Install Wrangler & login</h4>
+              <Cmd>npm install -g wrangler && wrangler login</Cmd>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-semibold text-foreground mb-2">Step 2 — Create D1 database</h4>
+              <Cmd>cd artifacts/cf-worker && pnpm install</Cmd>
+              <Cmd>wrangler d1 create feedforge-db</Cmd>
+              <p className="text-xs text-muted-foreground">Copy the <code className="bg-muted px-1 rounded">database_id</code> from the output and paste it into <code className="bg-muted px-1 rounded">artifacts/cf-worker/wrangler.toml</code></p>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-semibold text-foreground mb-2">Step 3 — Run migrations</h4>
+              <Cmd>wrangler d1 execute feedforge-db --remote --file ./migrations/0001_init.sql</Cmd>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-semibold text-foreground mb-2">Step 4 — Set secrets</h4>
+              <ol className="space-y-1 text-xs list-none">
+                {[
+                  <>wrangler secret put FEEDGEN_PUBLISHER_DID<br /><span className="text-muted-foreground pl-4">→ did:plc:oobxeg4vljlqpp62k7fd6flp</span></>,
+                  <>wrangler secret put BLUESKY_HANDLE<br /><span className="text-muted-foreground pl-4">→ bruceoyugi.bsky.social</span></>,
+                  <>wrangler secret put BLUESKY_APP_PASSWORD<br /><span className="text-muted-foreground pl-4">→ your app password</span></>,
+                  <>wrangler secret put FEEDGEN_HOSTNAME<br /><span className="text-muted-foreground pl-4">→ set AFTER deploying (Step 5)</span></>,
+                ].map((cmd, i) => (
+                  <li key={i} className="flex gap-2.5">
+                    <span className="flex-shrink-0 w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] flex items-center justify-center font-bold mt-0.5">{i + 1}</span>
+                    <code className="font-mono text-foreground">{cmd}</code>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-semibold text-foreground mb-2">Step 5 — Deploy the Worker</h4>
+              <Cmd>wrangler deploy</Cmd>
+              <p className="text-xs text-muted-foreground">You'll get a URL like <code className="bg-muted px-1 rounded">feedforge-api.your-name.workers.dev</code> — set that as FEEDGEN_HOSTNAME secret now.</p>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-semibold text-foreground mb-2">Step 6 — Deploy frontend to Cloudflare Pages</h4>
+              <ol className="space-y-2 text-xs">
+                {[
+                  <>Push this repo to GitHub, then go to <a href="https://pages.cloudflare.com" target="_blank" rel="noreferrer" className="text-primary underline">Cloudflare Pages</a> → Create a project → Connect to Git</>,
+                  <>Build command: <code className="bg-muted px-1 rounded font-mono">pnpm --filter @workspace/bluesky-feeds run build</code></>,
+                  <>Build output directory: <code className="bg-muted px-1 rounded font-mono">artifacts/bluesky-feeds/dist/public</code></>,
+                  <>Add env var: <code className="bg-muted px-1 rounded font-mono">VITE_API_BASE_URL</code> = <code className="bg-muted px-1 rounded font-mono">https://feedforge-api.your-name.workers.dev</code></>,
+                  "Deploy — the _redirects file already in the project handles SPA routing",
+                ].map((step, i) => <Step key={i} i={i}>{step}</Step>)}
+              </ol>
+            </div>
+
+            <div className="text-xs text-muted-foreground bg-muted/40 rounded-lg p-3 border border-border">
+              Full instructions are in <code className="bg-muted px-1 rounded">artifacts/cf-worker/DEPLOY.md</code> in this project.
+            </div>
+
+            <div className="flex gap-2 flex-wrap pt-1">
+              <a href="https://dash.cloudflare.com" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Cloudflare dashboard <ExternalLink className="w-3 h-3" /></a>
+              <span className="text-muted-foreground/40 text-xs">·</span>
+              <a href="https://developers.cloudflare.com/workers/" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Workers docs <ExternalLink className="w-3 h-3" /></a>
+              <span className="text-muted-foreground/40 text-xs">·</span>
+              <a href="https://developers.cloudflare.com/d1/" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">D1 docs <ExternalLink className="w-3 h-3" /></a>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Option B: Cloudflare Pages + Render */}
+        {activeOption === "cf-render" && (
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-            {/* Architecture diagram */}
+            <div className="text-xs text-amber-600 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 flex gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>
+                Use this option if you want <strong>real-time post indexing</strong> via the firehose WebSocket.
+                The API must run on a persistent server (Render.com free tier works great).
+              </span>
+            </div>
             <div className="flex items-center justify-center gap-2 p-4 bg-muted/30 rounded-xl border border-border text-xs flex-wrap">
               <div className="text-center px-3 py-2 bg-orange-500/10 border border-orange-500/20 rounded-lg">
                 <div className="font-bold text-orange-600">Cloudflare Pages</div>
                 <div className="text-muted-foreground">React frontend (free)</div>
               </div>
-              <div className="text-muted-foreground">→ calls API at →</div>
+              <div className="text-muted-foreground">→ API →</div>
               <div className="text-center px-3 py-2 bg-green-500/10 border border-green-500/20 rounded-lg">
                 <div className="font-bold text-green-600">Render.com</div>
                 <div className="text-muted-foreground">Express + firehose (free)</div>
               </div>
-              <div className="text-muted-foreground">← connects →</div>
+              <div className="text-muted-foreground">↔ DB ↔</div>
               <div className="text-center px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-                <div className="font-bold text-blue-600">Neon / Supabase</div>
+                <div className="font-bold text-blue-600">Neon.tech</div>
                 <div className="text-muted-foreground">PostgreSQL (free)</div>
               </div>
             </div>
-
             <div>
-              <h4 className="text-xs font-semibold text-foreground mb-2">Part 1 — API Server on Render.com (free)</h4>
+              <h4 className="text-xs font-semibold text-foreground mb-2">Part 1 — API Server on Render.com</h4>
               <ol className="space-y-2 text-xs">
                 {[
-                  <>Sign up at <a href="https://render.com" target="_blank" rel="noreferrer" className="text-primary underline">render.com</a> → New → Web Service → connect your GitHub repo</>,
-                  <>Set <strong>Build command:</strong> <code className="bg-muted px-1 rounded font-mono">pnpm install && pnpm --filter @workspace/api-server run build</code></>,
-                  <>Set <strong>Start command:</strong> <code className="bg-muted px-1 rounded font-mono">node artifacts/api-server/dist/index.mjs</code></>,
-                  <>Add environment variables in Render dashboard: <code className="bg-muted px-1 rounded font-mono">PORT=10000</code>, <code className="bg-muted px-1 rounded font-mono">DATABASE_URL</code> (from Neon/Supabase), <code className="bg-muted px-1 rounded font-mono">FEEDGEN_PUBLISHER_DID</code>, <code className="bg-muted px-1 rounded font-mono">BLUESKY_HANDLE</code>, <code className="bg-muted px-1 rounded font-mono">BLUESKY_APP_PASSWORD</code>, <code className="bg-muted px-1 rounded font-mono">FEEDGEN_HOSTNAME</code> = your Render domain</>,
-                  "Deploy — your API will be live at https://your-app.onrender.com",
-                ].map((step, i) => (
-                  <li key={i} className="flex gap-2.5">
-                    <span className="flex-shrink-0 w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] flex items-center justify-center font-bold mt-0.5">{i + 1}</span>
-                    <span className="text-muted-foreground leading-relaxed">{step}</span>
-                  </li>
-                ))}
+                  <>Sign up at <a href="https://render.com" target="_blank" rel="noreferrer" className="text-primary underline">render.com</a> → New → Web Service → connect your repo</>,
+                  <>Build command: <code className="bg-muted px-1 rounded font-mono">pnpm install && pnpm --filter @workspace/api-server run build</code></>,
+                  <>Start command: <code className="bg-muted px-1 rounded font-mono">node artifacts/api-server/dist/index.mjs</code></>,
+                  <>Add env vars: <code className="bg-muted px-1 rounded font-mono">PORT=10000</code>, <code className="bg-muted px-1 rounded font-mono">DATABASE_URL</code> (from Neon), <code className="bg-muted px-1 rounded font-mono">FEEDGEN_PUBLISHER_DID</code>, <code className="bg-muted px-1 rounded font-mono">BLUESKY_HANDLE</code>, <code className="bg-muted px-1 rounded font-mono">BLUESKY_APP_PASSWORD</code>, <code className="bg-muted px-1 rounded font-mono">FEEDGEN_HOSTNAME</code></>,
+                ].map((step, i) => <Step key={i} i={i}>{step}</Step>)}
               </ol>
             </div>
-
             <div>
-              <h4 className="text-xs font-semibold text-foreground mb-2">Part 2 — Frontend on Cloudflare Pages (free)</h4>
+              <h4 className="text-xs font-semibold text-foreground mb-2">Part 2 — Frontend on Cloudflare Pages</h4>
               <ol className="space-y-2 text-xs">
                 {[
-                  <>Sign up at <a href="https://pages.cloudflare.com" target="_blank" rel="noreferrer" className="text-primary underline">pages.cloudflare.com</a> → Create application → Pages → Connect to Git</>,
-                  <>Set <strong>Build command:</strong> <code className="bg-muted px-1 rounded font-mono">pnpm --filter @workspace/bluesky-feeds run build</code></>,
-                  <>Set <strong>Build output directory:</strong> <code className="bg-muted px-1 rounded font-mono">artifacts/bluesky-feeds/dist/public</code></>,
-                  <>Add environment variable: <code className="bg-muted px-1 rounded font-mono">VITE_API_BASE_URL</code> = <code className="bg-muted px-1 rounded font-mono">https://your-app.onrender.com</code></>,
-                  <>Also set <code className="bg-muted px-1 rounded font-mono">BASE_PATH</code> = <code className="bg-muted px-1 rounded font-mono">/</code></>,
-                  "Deploy — Cloudflare Pages handles SPA routing automatically via the _redirects file already in the project",
-                ].map((step, i) => (
-                  <li key={i} className="flex gap-2.5">
-                    <span className="flex-shrink-0 w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] flex items-center justify-center font-bold mt-0.5">{i + 1}</span>
-                    <span className="text-muted-foreground leading-relaxed">{step}</span>
-                  </li>
-                ))}
+                  <>Go to <a href="https://pages.cloudflare.com" target="_blank" rel="noreferrer" className="text-primary underline">Cloudflare Pages</a> → Connect repo</>,
+                  <>Build command: <code className="bg-muted px-1 rounded font-mono">pnpm --filter @workspace/bluesky-feeds run build</code></>,
+                  <>Output directory: <code className="bg-muted px-1 rounded font-mono">artifacts/bluesky-feeds/dist/public</code></>,
+                  <>Add env var: <code className="bg-muted px-1 rounded font-mono">VITE_API_BASE_URL</code> = your Render URL</>,
+                ].map((step, i) => <Step key={i} i={i}>{step}</Step>)}
               </ol>
             </div>
-
             <div className="flex gap-2 flex-wrap pt-1">
-              <a href="https://dash.cloudflare.com/?to=/:account/pages/new" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Cloudflare Pages dashboard <ExternalLink className="w-3 h-3" /></a>
-              <span className="text-muted-foreground/40 text-xs">·</span>
               <a href="https://neon.tech" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Neon free Postgres <ExternalLink className="w-3 h-3" /></a>
-              <span className="text-muted-foreground/40 text-xs">·</span>
-              <a href="https://supabase.com" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Supabase free Postgres <ExternalLink className="w-3 h-3" /></a>
-            </div>
-          </motion.div>
-        )}
-
-        {/* Option B: Vercel + Render */}
-        {activeOption === "vercel" && (
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-            <div className="flex items-center justify-center gap-2 p-4 bg-muted/30 rounded-xl border border-border text-xs flex-wrap">
-              <div className="text-center px-3 py-2 bg-black/10 dark:bg-white/10 border border-border rounded-lg">
-                <div className="font-bold text-foreground">Vercel</div>
-                <div className="text-muted-foreground">React frontend (free)</div>
-              </div>
-              <div className="text-muted-foreground">→ calls API at →</div>
-              <div className="text-center px-3 py-2 bg-green-500/10 border border-green-500/20 rounded-lg">
-                <div className="font-bold text-green-600">Render.com</div>
-                <div className="text-muted-foreground">Express + firehose (free)</div>
-              </div>
-              <div className="text-muted-foreground">← connects →</div>
-              <div className="text-center px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-                <div className="font-bold text-blue-600">Neon / Supabase</div>
-                <div className="text-muted-foreground">PostgreSQL (free)</div>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">Same architecture as Cloudflare — deploy the API to Render.com the same way. The only difference is the frontend hosting.</p>
-            <div>
-              <h4 className="text-xs font-semibold text-foreground mb-2">Frontend on Vercel</h4>
-              <ol className="space-y-2 text-xs">
-                {[
-                  <>Import your repo at <a href="https://vercel.com/new" target="_blank" rel="noreferrer" className="text-primary underline">vercel.com/new</a></>,
-                  <>Vercel auto-detects the <code className="bg-muted px-1 rounded font-mono">vercel.json</code> already in the project root — no build settings needed</>,
-                  <>Add environment variable: <code className="bg-muted px-1 rounded font-mono">VITE_API_BASE_URL</code> = <code className="bg-muted px-1 rounded font-mono">https://your-app.onrender.com</code></>,
-                  <>Also set <code className="bg-muted px-1 rounded font-mono">BASE_PATH</code> = <code className="bg-muted px-1 rounded font-mono">/</code></>,
-                  "Deploy — the vercel.json already handles SPA routing rewrites",
-                ].map((step, i) => (
-                  <li key={i} className="flex gap-2.5">
-                    <span className="flex-shrink-0 w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] flex items-center justify-center font-bold mt-0.5">{i + 1}</span>
-                    <span className="text-muted-foreground leading-relaxed">{step}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-            <div className="flex gap-2 flex-wrap pt-1">
-              <a href="https://vercel.com/new" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Import to Vercel <ExternalLink className="w-3 h-3" /></a>
               <span className="text-muted-foreground/40 text-xs">·</span>
               <a href="https://render.com" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Render.com <ExternalLink className="w-3 h-3" /></a>
-              <span className="text-muted-foreground/40 text-xs">·</span>
-              <a href="https://neon.tech" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Neon free Postgres <ExternalLink className="w-3 h-3" /></a>
             </div>
           </motion.div>
         )}
@@ -292,7 +361,7 @@ export default function Settings() {
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
             <div className="text-xs text-orange-600 bg-orange-500/10 border border-orange-500/20 rounded-lg p-3 flex gap-2">
               <Zap className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-              <span>Replit Deploy is paid (starting ~$7/month) but requires zero configuration — everything runs together with no split services.</span>
+              <span>Replit Deploy is paid (starting ~$7/month) but requires zero configuration — everything runs together.</span>
             </div>
             <div className="flex items-center justify-center gap-2 p-4 bg-muted/30 rounded-xl border border-border text-xs">
               <div className="text-center px-3 py-2 bg-orange-500/10 border border-orange-500/20 rounded-lg">
@@ -303,15 +372,10 @@ export default function Settings() {
             <ol className="space-y-2 text-xs">
               {[
                 "Click the Deploy button in the top-right of your Replit workspace",
-                <>Set <code className="bg-muted px-1 rounded font-mono">FEEDGEN_HOSTNAME</code> to your deployed domain (e.g. <code className="bg-muted px-1 rounded font-mono">my-app.replit.app</code>) in the deployment secrets</>,
-                "All other secrets (FEEDGEN_PUBLISHER_DID, BLUESKY_HANDLE, BLUESKY_APP_PASSWORD) are already configured and carried over automatically",
-                "Deploy — everything is live at your Replit domain, no extra services needed",
-              ].map((step, i) => (
-                <li key={i} className="flex gap-2.5">
-                  <span className="flex-shrink-0 w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] flex items-center justify-center font-bold mt-0.5">{i + 1}</span>
-                  <span className="text-muted-foreground leading-relaxed">{step}</span>
-                </li>
-              ))}
+                <>Set <code className="bg-muted px-1 rounded font-mono">FEEDGEN_HOSTNAME</code> to your deployed domain (e.g. <code className="bg-muted px-1 rounded font-mono">my-app.replit.app</code>) in deployment secrets</>,
+                "All other secrets carry over automatically",
+                "Deploy — live at your Replit domain, no extra services needed",
+              ].map((step, i) => <Step key={i} i={i}>{step}</Step>)}
             </ol>
           </motion.div>
         )}
@@ -330,12 +394,18 @@ export default function Settings() {
         </div>
       </Section>
 
-      {/* Firehose */}
-      <Section title="Firehose Status" icon={Zap} delay={0.15}>
-        <CopyableCode value={firehose?.endpoint || "wss://jetstream2.us-east.bsky.network/subscribe"} label="Jetstream Endpoint" />
-        <div className="grid grid-cols-3 gap-3 mt-2">
+      {/* Indexer Status */}
+      <Section title="Post Indexer" icon={Zap} delay={0.15}>
+        <div className="text-xs text-blue-600 bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 flex gap-2 mb-4">
+          <Cloud className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+          <span>
+            When deployed to <strong>Cloudflare Workers</strong>, posts are indexed automatically every 3 minutes via Cron Triggers.
+            In the Replit dev environment, the traditional firehose WebSocket is used for real-time indexing.
+          </span>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
           {[
-            { label: "Status", value: firehose?.connected ? "Connected" : "Disconnected", color: firehose?.connected ? "text-emerald-500" : "text-red-400" },
+            { label: "Firehose Status", value: firehose?.connected ? "Connected" : "Disconnected", color: firehose?.connected ? "text-emerald-500" : "text-red-400" },
             { label: "Session Indexed", value: (firehose?.postsIndexedTotal ?? 0).toLocaleString(), color: "text-foreground" },
             { label: "Reconnects", value: firehose?.reconnectCount ?? 0, color: "text-foreground" },
           ].map(({ label, value, color }) => (
@@ -345,9 +415,17 @@ export default function Settings() {
             </div>
           ))}
         </div>
-        <p className="text-xs text-muted-foreground mt-3">
-          The firehose maintains a persistent WebSocket to Bluesky's Jetstream. This is why the full app cannot run on Cloudflare Workers or Vercel serverless — those platforms shut down idle processes. Use <strong>Render.com or Fly.io</strong> for the API server when deploying free.
-        </p>
+        <div className="grid grid-cols-2 gap-3 mt-3">
+          {[
+            { label: "CF Cron Schedule", value: "*/3 * * * *" },
+            { label: "CF Indexer Mode", value: "Bluesky searchPosts API" },
+          ].map(({ label, value }) => (
+            <div key={label} className="bg-muted/40 rounded-lg px-3 py-2.5">
+              <div className="text-xs text-muted-foreground mb-0.5">{label}</div>
+              <div className="text-sm font-mono font-semibold text-foreground">{value}</div>
+            </div>
+          ))}
+        </div>
       </Section>
     </div>
   );

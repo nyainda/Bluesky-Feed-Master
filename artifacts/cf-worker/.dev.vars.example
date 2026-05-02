@@ -1,0 +1,5 @@
+# Copy this file to .dev.vars (git-ignored) for local wrangler dev
+FEEDGEN_PUBLISHER_DID=did:plc:oobxeg4vljlqpp62k7fd6flp
+BLUESKY_HANDLE=bruceoyugi.bsky.social
+BLUESKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
+FEEDGEN_HOSTNAME=localhost:8787

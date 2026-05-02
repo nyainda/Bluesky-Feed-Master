@@ -1,0 +1,29 @@
+name = "feedforge-api"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# ─── D1 Database ───────────────────────────────────────────────────────────────
+# After running `pnpm run db:create`, paste the database_id here
+[[d1_databases]]
+binding = "DB"
+database_name = "feedforge-db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# ─── Cron Trigger (replaces firehose — indexes posts every 3 minutes) ──────────
+[triggers]
+crons = ["*/3 * * * *"]
+
+# ─── Non-secret env vars (set secrets via `wrangler secret put`) ────────────────
+# Secrets to set via CLI:
+#   wrangler secret put FEEDGEN_PUBLISHER_DID
+#   wrangler secret put BLUESKY_HANDLE
+#   wrangler secret put BLUESKY_APP_PASSWORD
+#   wrangler secret put FEEDGEN_HOSTNAME
+
+# ─── Local dev vars (.dev.vars file — git-ignored) ─────────────────────────────
+# Copy this block into a .dev.vars file for local development:
+# FEEDGEN_PUBLISHER_DID=did:plc:xxxxx
+# BLUESKY_HANDLE=you.bsky.social
+# BLUESKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
+# FEEDGEN_HOSTNAME=feedforge-api.your-subdomain.workers.dev
