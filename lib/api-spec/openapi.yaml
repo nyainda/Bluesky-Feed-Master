@@ -3,13 +3,19 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Bluesky Feed Generator API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: feeds
+    description: Feed management
+  - name: posts
+    description: Indexed posts
+  - name: stats
+    description: Statistics and analytics
 paths:
   /healthz:
     get:
@@ -24,6 +30,279 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /feeds:
+    get:
+      operationId: listFeeds
+      tags: [feeds]
+      summary: List all feeds
+      responses:
+        "200":
+          description: List of feeds
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Feed"
+    post:
+      operationId: createFeed
+      tags: [feeds]
+      summary: Create a new feed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFeedBody"
+      responses:
+        "201":
+          description: Created feed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Feed"
+        "400":
+          description: Bad request
+
+  /feeds/{id}:
+    get:
+      operationId: getFeed
+      tags: [feeds]
+      summary: Get a single feed
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Feed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Feed"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateFeed
+      tags: [feeds]
+      summary: Update a feed
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateFeedBody"
+      responses:
+        "200":
+          description: Updated feed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Feed"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteFeed
+      tags: [feeds]
+      summary: Delete a feed
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+
+  /feeds/{id}/keywords:
+    get:
+      operationId: getFeedKeywords
+      tags: [feeds]
+      summary: Get keywords for a feed
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Keywords
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Keyword"
+    post:
+      operationId: addFeedKeyword
+      tags: [feeds]
+      summary: Add a keyword to a feed
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateKeywordBody"
+      responses:
+        "201":
+          description: Created keyword
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Keyword"
+
+  /feeds/{id}/keywords/{keywordId}:
+    delete:
+      operationId: deleteFeedKeyword
+      tags: [feeds]
+      summary: Remove a keyword from a feed
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: keywordId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+
+  /feeds/{id}/posts:
+    get:
+      operationId: getFeedPosts
+      tags: [posts]
+      summary: Get indexed posts for a feed
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: cursor
+          in: query
+          schema:
+            type: ["string", "null"]
+      responses:
+        "200":
+          description: Posts page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostsPage"
+
+  /posts:
+    get:
+      operationId: listPosts
+      tags: [posts]
+      summary: List all indexed posts (across all feeds)
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: cursor
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: search
+          in: query
+          schema:
+            type: ["string", "null"]
+      responses:
+        "200":
+          description: Posts page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostsPage"
+
+  /stats/overview:
+    get:
+      operationId: getStatsOverview
+      tags: [stats]
+      summary: Get dashboard overview statistics
+      responses:
+        "200":
+          description: Overview stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsOverview"
+
+  /stats/firehose:
+    get:
+      operationId: getFirehoseStatus
+      tags: [stats]
+      summary: Get firehose connection status
+      responses:
+        "200":
+          description: Firehose status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FirehoseStatus"
+
+  /stats/recent-activity:
+    get:
+      operationId: getRecentActivity
+      tags: [stats]
+      summary: Get recent post indexing activity (last 24h hourly buckets)
+      responses:
+        "200":
+          description: Activity data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityBucket"
+
+  /stats/top-feeds:
+    get:
+      operationId: getTopFeeds
+      tags: [stats]
+      summary: Get feeds ranked by post count
+      responses:
+        "200":
+          description: Feed rankings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FeedRanking"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +313,197 @@ components:
       required:
         - status
 
+    Feed:
+      type: object
+      properties:
+        id:
+          type: integer
+        recordName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: ["string", "null"]
+        isActive:
+          type: boolean
+        publishedAt:
+          type: ["string", "null"]
+        postCount:
+          type: integer
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - id
+        - recordName
+        - displayName
+        - isActive
+        - postCount
+        - createdAt
+        - updatedAt
+
+    CreateFeedBody:
+      type: object
+      properties:
+        recordName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: ["string", "null"]
+      required:
+        - recordName
+        - displayName
+
+    UpdateFeedBody:
+      type: object
+      properties:
+        displayName:
+          type: ["string", "null"]
+        description:
+          type: ["string", "null"]
+        isActive:
+          type: ["boolean", "null"]
+
+    Keyword:
+      type: object
+      properties:
+        id:
+          type: integer
+        feedId:
+          type: integer
+        keyword:
+          type: string
+        createdAt:
+          type: string
+      required:
+        - id
+        - feedId
+        - keyword
+        - createdAt
+
+    CreateKeywordBody:
+      type: object
+      properties:
+        keyword:
+          type: string
+      required:
+        - keyword
+
+    IndexedPost:
+      type: object
+      properties:
+        id:
+          type: integer
+        uri:
+          type: string
+        cid:
+          type: string
+        author:
+          type: string
+        text:
+          type: string
+        algoTags:
+          type: string
+        indexedAt:
+          type: string
+        likes:
+          type: integer
+      required:
+        - id
+        - uri
+        - cid
+        - author
+        - text
+        - algoTags
+        - indexedAt
+        - likes
+
+    PostsPage:
+      type: object
+      properties:
+        posts:
+          type: array
+          items:
+            $ref: "#/components/schemas/IndexedPost"
+        cursor:
+          type: ["string", "null"]
+        total:
+          type: integer
+      required:
+        - posts
+        - total
+
+    StatsOverview:
+      type: object
+      properties:
+        totalFeeds:
+          type: integer
+        activeFeeds:
+          type: integer
+        totalPosts:
+          type: integer
+        postsLast24h:
+          type: integer
+        postsLast1h:
+          type: integer
+        firehoseConnected:
+          type: boolean
+        uptime:
+          type: number
+      required:
+        - totalFeeds
+        - activeFeeds
+        - totalPosts
+        - postsLast24h
+        - postsLast1h
+        - firehoseConnected
+        - uptime
+
+    FirehoseStatus:
+      type: object
+      properties:
+        connected:
+          type: boolean
+        endpoint:
+          type: string
+        reconnectCount:
+          type: integer
+        lastEventAt:
+          type: ["string", "null"]
+        postsIndexedTotal:
+          type: integer
+      required:
+        - connected
+        - endpoint
+        - reconnectCount
+        - postsIndexedTotal
+
+    ActivityBucket:
+      type: object
+      properties:
+        hour:
+          type: string
+        count:
+          type: integer
+      required:
+        - hour
+        - count
+
+    FeedRanking:
+      type: object
+      properties:
+        feedId:
+          type: integer
+        recordName:
+          type: string
+        displayName:
+          type: string
+        postCount:
+          type: integer
+      required:
+        - feedId
+        - recordName
+        - displayName
+        - postCount
