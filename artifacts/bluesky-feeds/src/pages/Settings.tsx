@@ -8,21 +8,14 @@ import { cn } from "@/lib/utils";
 
 function CopyableCode({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false);
-
   function copy() {
-    navigator.clipboard.writeText(value).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+    navigator.clipboard.writeText(value).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   }
-
   return (
     <div className="mb-4">
       <div className="text-xs text-muted-foreground mb-1.5">{label}</div>
       <div className="flex items-center gap-2">
-        <code className="flex-1 bg-muted font-mono text-sm px-3 py-2 rounded-lg border border-border text-foreground truncate">
-          {value}
-        </code>
+        <code className="flex-1 bg-muted font-mono text-sm px-3 py-2 rounded-lg border border-border text-foreground truncate">{value}</code>
         <Button variant="ghost" size="icon" onClick={copy} className="flex-shrink-0">
           {copied ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
         </Button>
@@ -54,9 +47,7 @@ function EnvVarRow({ name, set, description }: { name: string; set: boolean; des
   return (
     <div className={cn("flex items-start gap-3 py-3 px-4 rounded-lg border", set ? "bg-emerald-500/5 border-emerald-500/20" : "bg-red-500/5 border-red-500/20")}>
       <div className="flex-shrink-0 mt-0.5">
-        {set
-          ? <CheckCircle className="w-4 h-4 text-emerald-500" />
-          : <XCircle className="w-4 h-4 text-red-400" />}
+        {set ? <CheckCircle className="w-4 h-4 text-emerald-500" /> : <XCircle className="w-4 h-4 text-red-400" />}
       </div>
       <div className="flex-1 min-w-0">
         <code className="text-xs font-mono font-semibold text-foreground">{name}</code>
@@ -72,10 +63,24 @@ function EnvVarRow({ name, set, description }: { name: string; set: boolean; des
 const ENV_DESCRIPTIONS: Record<string, string> = {
   FEEDGEN_HOSTNAME: "Your deployed domain (e.g. your-app.replit.app). Used for the did:web and XRPC endpoints.",
   FEEDGEN_PUBLISHER_DID: "Your Bluesky DID (e.g. did:plc:xxxx). Required to publish feeds and show profile data.",
-  BLUESKY_HANDLE: "Your Bluesky handle (e.g. you.bsky.social). Required for bulk follow/unfollow.",
+  BLUESKY_HANDLE: "Your Bluesky handle (e.g. you.bsky.social). Required for bulk follow/unfollow and search.",
   BLUESKY_APP_PASSWORD: "App password from bsky.app/settings/app-passwords. Required for write operations.",
   DATABASE_URL: "PostgreSQL connection string. Automatically set by Replit's built-in database.",
 };
+
+type DeployOption = "replit" | "cloudflare" | "vercel";
+
+function Badge({ children, color = "gray" }: { children: React.ReactNode; color?: "green" | "blue" | "orange" | "gray" }) {
+  const colors = {
+    green: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
+    blue: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+    orange: "bg-orange-500/10 text-orange-600 border-orange-500/20",
+    gray: "bg-muted text-muted-foreground border-border",
+  };
+  return (
+    <span className={cn("text-[10px] font-medium px-2 py-0.5 rounded-full border", colors[color])}>{children}</span>
+  );
+}
 
 export default function Settings() {
   const { data: firehose } = useGetFirehoseStatus({ query: { queryKey: ["firehose-settings"] } });
@@ -84,6 +89,7 @@ export default function Settings() {
     queryFn: () => fetch("/api/config/status").then(r => r.json()),
     staleTime: 30_000,
   });
+  const [activeOption, setActiveOption] = useState<DeployOption>("cloudflare");
 
   const hostname = window.location.hostname;
   const publisherDid = "(set FEEDGEN_PUBLISHER_DID)";
@@ -94,6 +100,12 @@ export default function Settings() {
 
   const allSet = configStatus && Object.values(configStatus).every(Boolean);
   const missingCount = configStatus ? Object.values(configStatus).filter(v => !v).length : null;
+
+  const deployOptions: { id: DeployOption; label: string; tagline: string; badges: { label: string; color: "green" | "blue" | "orange" | "gray" }[] }[] = [
+    { id: "cloudflare", label: "Cloudflare Pages + Render.com", tagline: "Best free option — global CDN frontend + persistent API server", badges: [{ label: "100% Free", color: "green" }, { label: "Recommended", color: "blue" }] },
+    { id: "vercel", label: "Vercel + Render.com", tagline: "Popular alternative — same architecture, Vercel instead of Cloudflare", badges: [{ label: "100% Free", color: "green" }] },
+    { id: "replit", label: "Replit Deploy", tagline: "All-in-one, easiest setup — frontend + API + firehose together", badges: [{ label: "Paid", color: "orange" }, { label: "Easiest", color: "gray" }] },
+  ];
 
   return (
     <div className="p-8 max-w-3xl mx-auto">
@@ -118,61 +130,182 @@ export default function Settings() {
             : Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-14 bg-muted rounded-lg animate-pulse" />)}
         </div>
         <div className="mt-4 flex gap-2 flex-wrap">
-          <a href="https://bsky.app/settings" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">
-            Find your DID on Bluesky <ExternalLink className="w-3 h-3" />
-          </a>
+          <a href="https://bsky.app/settings" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Find your DID on Bluesky <ExternalLink className="w-3 h-3" /></a>
           <span className="text-muted-foreground/40 text-xs">·</span>
-          <a href="https://bsky.app/settings/app-passwords" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">
-            Generate an App Password <ExternalLink className="w-3 h-3" />
-          </a>
+          <a href="https://bsky.app/settings/app-passwords" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Generate an App Password <ExternalLink className="w-3 h-3" /></a>
         </div>
       </Section>
 
       {/* Deployment Guide */}
       <Section title="Deployment Guide" icon={Globe} delay={0.05}>
-        <div className="space-y-5">
 
-          {/* Replit Deploy */}
-          <div className="border border-border rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-6 h-6 rounded-md bg-orange-500/15 flex items-center justify-center"><Zap className="w-3.5 h-3.5 text-orange-500" /></div>
-              <h3 className="text-sm font-semibold">Option A — Replit Deploy (Recommended)</h3>
-              <span className="ml-auto text-xs text-emerald-600 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full">Easiest</span>
-            </div>
-            <p className="text-xs text-muted-foreground mb-3">Deploys the full app (API + frontend + firehose) together. The firehose WebSocket connection requires a persistent process — Replit Deploy handles this automatically.</p>
-            <ol className="space-y-2 text-xs text-foreground">
-              {[
-                "Click the Deploy button in the top-right of your Replit workspace",
-                <>Set <code className="bg-muted px-1 rounded font-mono">FEEDGEN_HOSTNAME</code> to your deployed domain (e.g. <code className="bg-muted px-1 rounded font-mono">my-app.replit.app</code>)</>,
-                "All other secrets (FEEDGEN_PUBLISHER_DID, BLUESKY_HANDLE, BLUESKY_APP_PASSWORD) are already configured as secrets — Replit copies them to production automatically",
-                "Deploy and your full feed generator will be live at your domain",
-              ].map((step, i) => (
-                <li key={i} className="flex gap-2.5">
-                  <span className="flex-shrink-0 w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] flex items-center justify-center font-bold mt-0.5">{i + 1}</span>
-                  <span className="text-muted-foreground leading-relaxed">{step}</span>
-                </li>
-              ))}
-            </ol>
-          </div>
+        {/* Why split? */}
+        <div className="text-xs text-amber-600 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-5 flex gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+          <span>
+            <strong>The key constraint:</strong> The firehose is a persistent WebSocket connection to Bluesky. It cannot run on serverless platforms (Cloudflare Workers, Vercel, etc.) — these shut down after each request. The <strong>API server must run on a persistent server</strong>. The frontend (static React app) can go anywhere.
+          </span>
+        </div>
 
-          {/* Vercel Frontend + Replit API */}
-          <div className="border border-border rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-6 h-6 rounded-md bg-black/10 dark:bg-white/10 flex items-center justify-center">
-                <Server className="w-3.5 h-3.5" />
+        {/* Option selector */}
+        <div className="flex flex-col gap-2 mb-5">
+          {deployOptions.map(opt => (
+            <button
+              key={opt.id}
+              onClick={() => setActiveOption(opt.id)}
+              className={cn(
+                "flex items-start gap-3 p-4 rounded-xl border text-left transition-all",
+                activeOption === opt.id
+                  ? "border-primary/50 bg-primary/5 shadow-sm"
+                  : "border-border hover:border-border/80 hover:bg-muted/30",
+              )}
+            >
+              <div className={cn("w-4 h-4 rounded-full border-2 flex-shrink-0 mt-0.5 transition-colors", activeOption === opt.id ? "border-primary bg-primary" : "border-muted-foreground/30")} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-semibold text-foreground">{opt.label}</span>
+                  {opt.badges.map(b => <Badge key={b.label} color={b.color}>{b.label}</Badge>)}
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">{opt.tagline}</p>
               </div>
-              <h3 className="text-sm font-semibold">Option B — Vercel (Frontend) + Replit (API)</h3>
+            </button>
+          ))}
+        </div>
+
+        {/* Option A: Cloudflare + Render */}
+        {activeOption === "cloudflare" && (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+            {/* Architecture diagram */}
+            <div className="flex items-center justify-center gap-2 p-4 bg-muted/30 rounded-xl border border-border text-xs flex-wrap">
+              <div className="text-center px-3 py-2 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+                <div className="font-bold text-orange-600">Cloudflare Pages</div>
+                <div className="text-muted-foreground">React frontend (free)</div>
+              </div>
+              <div className="text-muted-foreground">→ calls API at →</div>
+              <div className="text-center px-3 py-2 bg-green-500/10 border border-green-500/20 rounded-lg">
+                <div className="font-bold text-green-600">Render.com</div>
+                <div className="text-muted-foreground">Express + firehose (free)</div>
+              </div>
+              <div className="text-muted-foreground">← connects →</div>
+              <div className="text-center px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+                <div className="font-bold text-blue-600">Neon / Supabase</div>
+                <div className="text-muted-foreground">PostgreSQL (free)</div>
+              </div>
             </div>
-            <div className="text-xs text-amber-600 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-3 flex gap-2">
-              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-              <span><strong>Important:</strong> The Express API + firehose WebSocket <em>cannot</em> run on Vercel (serverless). The API server must stay on Replit Deploy. Only the frontend goes to Vercel.</span>
+
+            <div>
+              <h4 className="text-xs font-semibold text-foreground mb-2">Part 1 — API Server on Render.com (free)</h4>
+              <ol className="space-y-2 text-xs">
+                {[
+                  <>Sign up at <a href="https://render.com" target="_blank" rel="noreferrer" className="text-primary underline">render.com</a> → New → Web Service → connect your GitHub repo</>,
+                  <>Set <strong>Build command:</strong> <code className="bg-muted px-1 rounded font-mono">pnpm install && pnpm --filter @workspace/api-server run build</code></>,
+                  <>Set <strong>Start command:</strong> <code className="bg-muted px-1 rounded font-mono">node artifacts/api-server/dist/index.mjs</code></>,
+                  <>Add environment variables in Render dashboard: <code className="bg-muted px-1 rounded font-mono">PORT=10000</code>, <code className="bg-muted px-1 rounded font-mono">DATABASE_URL</code> (from Neon/Supabase), <code className="bg-muted px-1 rounded font-mono">FEEDGEN_PUBLISHER_DID</code>, <code className="bg-muted px-1 rounded font-mono">BLUESKY_HANDLE</code>, <code className="bg-muted px-1 rounded font-mono">BLUESKY_APP_PASSWORD</code>, <code className="bg-muted px-1 rounded font-mono">FEEDGEN_HOSTNAME</code> = your Render domain</>,
+                  "Deploy — your API will be live at https://your-app.onrender.com",
+                ].map((step, i) => (
+                  <li key={i} className="flex gap-2.5">
+                    <span className="flex-shrink-0 w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] flex items-center justify-center font-bold mt-0.5">{i + 1}</span>
+                    <span className="text-muted-foreground leading-relaxed">{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-semibold text-foreground mb-2">Part 2 — Frontend on Cloudflare Pages (free)</h4>
+              <ol className="space-y-2 text-xs">
+                {[
+                  <>Sign up at <a href="https://pages.cloudflare.com" target="_blank" rel="noreferrer" className="text-primary underline">pages.cloudflare.com</a> → Create application → Pages → Connect to Git</>,
+                  <>Set <strong>Build command:</strong> <code className="bg-muted px-1 rounded font-mono">pnpm --filter @workspace/bluesky-feeds run build</code></>,
+                  <>Set <strong>Build output directory:</strong> <code className="bg-muted px-1 rounded font-mono">artifacts/bluesky-feeds/dist/public</code></>,
+                  <>Add environment variable: <code className="bg-muted px-1 rounded font-mono">VITE_API_BASE_URL</code> = <code className="bg-muted px-1 rounded font-mono">https://your-app.onrender.com</code></>,
+                  <>Also set <code className="bg-muted px-1 rounded font-mono">BASE_PATH</code> = <code className="bg-muted px-1 rounded font-mono">/</code></>,
+                  "Deploy — Cloudflare Pages handles SPA routing automatically via the _redirects file already in the project",
+                ].map((step, i) => (
+                  <li key={i} className="flex gap-2.5">
+                    <span className="flex-shrink-0 w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] flex items-center justify-center font-bold mt-0.5">{i + 1}</span>
+                    <span className="text-muted-foreground leading-relaxed">{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            <div className="flex gap-2 flex-wrap pt-1">
+              <a href="https://dash.cloudflare.com/?to=/:account/pages/new" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Cloudflare Pages dashboard <ExternalLink className="w-3 h-3" /></a>
+              <span className="text-muted-foreground/40 text-xs">·</span>
+              <a href="https://neon.tech" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Neon free Postgres <ExternalLink className="w-3 h-3" /></a>
+              <span className="text-muted-foreground/40 text-xs">·</span>
+              <a href="https://supabase.com" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Supabase free Postgres <ExternalLink className="w-3 h-3" /></a>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Option B: Vercel + Render */}
+        {activeOption === "vercel" && (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+            <div className="flex items-center justify-center gap-2 p-4 bg-muted/30 rounded-xl border border-border text-xs flex-wrap">
+              <div className="text-center px-3 py-2 bg-black/10 dark:bg-white/10 border border-border rounded-lg">
+                <div className="font-bold text-foreground">Vercel</div>
+                <div className="text-muted-foreground">React frontend (free)</div>
+              </div>
+              <div className="text-muted-foreground">→ calls API at →</div>
+              <div className="text-center px-3 py-2 bg-green-500/10 border border-green-500/20 rounded-lg">
+                <div className="font-bold text-green-600">Render.com</div>
+                <div className="text-muted-foreground">Express + firehose (free)</div>
+              </div>
+              <div className="text-muted-foreground">← connects →</div>
+              <div className="text-center px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+                <div className="font-bold text-blue-600">Neon / Supabase</div>
+                <div className="text-muted-foreground">PostgreSQL (free)</div>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">Same architecture as Cloudflare — deploy the API to Render.com the same way. The only difference is the frontend hosting.</p>
+            <div>
+              <h4 className="text-xs font-semibold text-foreground mb-2">Frontend on Vercel</h4>
+              <ol className="space-y-2 text-xs">
+                {[
+                  <>Import your repo at <a href="https://vercel.com/new" target="_blank" rel="noreferrer" className="text-primary underline">vercel.com/new</a></>,
+                  <>Vercel auto-detects the <code className="bg-muted px-1 rounded font-mono">vercel.json</code> already in the project root — no build settings needed</>,
+                  <>Add environment variable: <code className="bg-muted px-1 rounded font-mono">VITE_API_BASE_URL</code> = <code className="bg-muted px-1 rounded font-mono">https://your-app.onrender.com</code></>,
+                  <>Also set <code className="bg-muted px-1 rounded font-mono">BASE_PATH</code> = <code className="bg-muted px-1 rounded font-mono">/</code></>,
+                  "Deploy — the vercel.json already handles SPA routing rewrites",
+                ].map((step, i) => (
+                  <li key={i} className="flex gap-2.5">
+                    <span className="flex-shrink-0 w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] flex items-center justify-center font-bold mt-0.5">{i + 1}</span>
+                    <span className="text-muted-foreground leading-relaxed">{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+            <div className="flex gap-2 flex-wrap pt-1">
+              <a href="https://vercel.com/new" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Import to Vercel <ExternalLink className="w-3 h-3" /></a>
+              <span className="text-muted-foreground/40 text-xs">·</span>
+              <a href="https://render.com" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Render.com <ExternalLink className="w-3 h-3" /></a>
+              <span className="text-muted-foreground/40 text-xs">·</span>
+              <a href="https://neon.tech" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Neon free Postgres <ExternalLink className="w-3 h-3" /></a>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Option C: Replit Deploy */}
+        {activeOption === "replit" && (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+            <div className="text-xs text-orange-600 bg-orange-500/10 border border-orange-500/20 rounded-lg p-3 flex gap-2">
+              <Zap className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>Replit Deploy is paid (starting ~$7/month) but requires zero configuration — everything runs together with no split services.</span>
+            </div>
+            <div className="flex items-center justify-center gap-2 p-4 bg-muted/30 rounded-xl border border-border text-xs">
+              <div className="text-center px-3 py-2 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+                <div className="font-bold text-orange-600">Replit Deploy</div>
+                <div className="text-muted-foreground">Frontend + API + Firehose + DB (all-in-one)</div>
+              </div>
             </div>
             <ol className="space-y-2 text-xs">
               {[
-                <>Deploy the API server on <strong>Replit Deploy</strong> first (Option A, but only the API). Your API URL will be something like <code className="bg-muted px-1 rounded font-mono">https://my-app.replit.app</code></>,
-                <>In Vercel, import this repository and set the following build settings:<br /><code className="bg-muted px-1.5 py-0.5 rounded font-mono block mt-1">Build: pnpm --filter @workspace/bluesky-feeds run build</code><code className="bg-muted px-1.5 py-0.5 rounded font-mono block mt-1">Output: artifacts/bluesky-feeds/dist/public</code></>,
-                <>Add a Vercel environment variable: <code className="bg-muted px-1 rounded font-mono">VITE_API_BASE_URL</code> = <code className="bg-muted px-1 rounded font-mono">https://your-api.replit.app</code><br /><span className="text-muted-foreground">This tells the frontend where to find the API server.</span></>,
-                "Deploy to Vercel — the frontend will proxy all /api calls to your Replit API server.",
+                "Click the Deploy button in the top-right of your Replit workspace",
+                <>Set <code className="bg-muted px-1 rounded font-mono">FEEDGEN_HOSTNAME</code> to your deployed domain (e.g. <code className="bg-muted px-1 rounded font-mono">my-app.replit.app</code>) in the deployment secrets</>,
+                "All other secrets (FEEDGEN_PUBLISHER_DID, BLUESKY_HANDLE, BLUESKY_APP_PASSWORD) are already configured and carried over automatically",
+                "Deploy — everything is live at your Replit domain, no extra services needed",
               ].map((step, i) => (
                 <li key={i} className="flex gap-2.5">
                   <span className="flex-shrink-0 w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] flex items-center justify-center font-bold mt-0.5">{i + 1}</span>
@@ -180,17 +313,8 @@ export default function Settings() {
                 </li>
               ))}
             </ol>
-            <div className="mt-3 flex gap-2 flex-wrap">
-              <a href="https://vercel.com/new" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">
-                Import to Vercel <ExternalLink className="w-3 h-3" />
-              </a>
-              <span className="text-muted-foreground/40 text-xs">·</span>
-              <a href="https://vercel.com/docs/projects/environment-variables" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">
-                Vercel env vars docs <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-          </div>
-        </div>
+          </motion.div>
+        )}
       </Section>
 
       {/* XRPC Endpoints */}
@@ -200,13 +324,9 @@ export default function Settings() {
         <CopyableCode value={describeFeedUrl} label="describeFeedGenerator" />
         <CopyableCode value={getFeedSkeletonUrl} label="getFeedSkeleton (example)" />
         <div className="flex gap-3 mt-2 flex-wrap">
-          <a href={didDocUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">
-            Verify DID document <ExternalLink className="w-3 h-3" />
-          </a>
+          <a href={didDocUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Verify DID document <ExternalLink className="w-3 h-3" /></a>
           <span className="text-muted-foreground/40 text-xs">·</span>
-          <a href="https://docs.bsky.app/docs/tutorials/creating-a-feed" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">
-            Bluesky feed generator docs <ExternalLink className="w-3 h-3" />
-          </a>
+          <a href="https://docs.bsky.app/docs/tutorials/creating-a-feed" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">Bluesky feed generator docs <ExternalLink className="w-3 h-3" /></a>
         </div>
       </Section>
 
@@ -226,7 +346,7 @@ export default function Settings() {
           ))}
         </div>
         <p className="text-xs text-muted-foreground mt-3">
-          The firehose maintains a persistent WebSocket connection to Bluesky's Jetstream service. It automatically reconnects on disconnect. <strong>This is why the full app cannot run on Vercel</strong> — serverless functions are stateless and short-lived.
+          The firehose maintains a persistent WebSocket to Bluesky's Jetstream. This is why the full app cannot run on Cloudflare Workers or Vercel serverless — those platforms shut down idle processes. Use <strong>Render.com or Fly.io</strong> for the API server when deploying free.
         </p>
       </Section>
     </div>
