@@ -1,0 +1,1497 @@
+# 🦋 BLUESKY CUSTOM FEED GENERATOR — COMPLETE BUILD GUIDE
+### Platform: Replit (Node.js/TypeScript) | By Bruce Oyugi / DripsTech
+
+> **Zero-to-live feed. No skipped steps. Everything included.**
+
+---
+
+## TABLE OF CONTENTS
+
+1. [How It All Works — Architecture Overview](#1-how-it-all-works)
+2. [Pre-flight Checklist](#2-pre-flight-checklist)
+3. [Replit Project Setup](#3-replit-project-setup)
+4. [Project File Structure](#4-project-file-structure)
+5. [Full Source Code — Every File](#5-full-source-code)
+6. [Replit Secrets Configuration](#6-replit-secrets-configuration)
+7. [Feed Algorithms — Build Your Own](#7-feed-algorithms)
+8. [Running & Testing Locally in Replit](#8-running--testing-locally)
+9. [Deploy on Replit (HTTPS Public URL)](#9-deploy-on-replit)
+10. [Publishing the Feed to Bluesky](#10-publishing-the-feed-to-bluesky)
+11. [Verifying Your Live Feed](#11-verifying-your-live-feed)
+12. [Multiple Feeds on One Server](#12-multiple-feeds-on-one-server)
+13. [Advanced: AI-Powered Feed with Anthropic API](#13-advanced-ai-powered-feed)
+14. [Advanced: Scoring & Ranking Algorithms](#14-advanced-scoring--ranking)
+15. [Database Persistence (SQLite → Supabase)](#15-database-persistence)
+16. [Integrations Index](#16-integrations-index)
+17. [Monitoring & Logs on Replit](#17-monitoring--logs)
+18. [Common Errors & Fixes](#18-common-errors--fixes)
+19. [Cursor Pagination Deep Dive](#19-cursor-pagination)
+20. [DID:WEB vs DID:PLC — Which One & Why](#20-didweb-vs-didplc)
+21. [Cost & Scaling Considerations](#21-cost--scaling)
+22. [Build Roadmap & Future Features](#22-build-roadmap)
+23. [Quick Reference Cheat Sheet](#23-quick-reference-cheat-sheet)
+
+---
+
+## 1. HOW IT ALL WORKS
+
+```
+BLUESKY APP (user)
+      │
+      │  GET /xrpc/app.bsky.feed.getFeedSkeleton?feed=at://YOUR_DID/...
+      ▼
+YOUR FEED GENERATOR SERVER (Replit)
+      │
+      │  Returns list of post URIs  [{post: "at://did.../post/abc"}, ...]
+      ▼
+BLUESKY APPVIEW
+      │
+      │  Hydrates posts (fetches text, likes, profile data)
+      ▼
+USER SEES FULL POSTS IN APP
+```
+
+### Key Concepts You MUST Understand
+
+| Concept | What It Is |
+|---|---|
+| **Feed Generator** | Your Node.js server on Replit. Hosts one or more algorithms. |
+| **DID** | Decentralized Identifier. Like a permanent ID for your server. You'll use `did:web:your-replit-url.replit.app` |
+| **Firehose** | Real-time stream of ALL posts on Bluesky via WebSocket. You subscribe to this and filter. |
+| **Jetstream** | Lighter-weight firehose alternative (JSON over WebSocket). Easier to work with. |
+| **getFeedSkeleton** | The XRPC endpoint Bluesky calls on your server. You return post URIs. |
+| **AT-URI** | Unique address for any Bluesky post: `at://did:plc:xxx/app.bsky.feed.post/yyy` |
+| **Cursor** | Opaque pagination token. You define what it means. Typically `timestamp::postCID`. |
+| **publishFeedGen** | Script you run ONCE to register your feed in your Bluesky account's repo. |
+
+---
+
+## 2. PRE-FLIGHT CHECKLIST
+
+Before you touch Replit, get these ready:
+
+- [ ] **Bluesky account** — your publisher account (free at bsky.app)
+- [ ] **Your DID** — get it at: `https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=YOUR_HANDLE.bsky.social`
+  - Example response: `{"did":"did:plc:abcdef1234567890"}`
+  - Save this. You'll need it everywhere.
+- [ ] **App Password** — Settings → Privacy and Security → App Passwords → Add App Password
+  - **NEVER use your real login password in code**
+  - Name it `feed-generator` so you remember what it's for
+- [ ] **Replit account** — free tier works for development; paid needed for always-on deployment
+- [ ] **Your feed name idea** — e.g., `irrigation-tech`, `kenya-agritech`, `africa-dev`
+- [ ] **Feed display name** — e.g., "🌍 Africa Dev Feed"
+- [ ] **Feed description** — short text shown in Bluesky UI
+
+---
+
+## 3. REPLIT PROJECT SETUP
+
+### Step 1 — Create New Repl
+
+1. Go to [replit.com](https://replit.com) → **+ Create Repl**
+2. Choose template: **Node.js**
+3. Name it: `bluesky-feed-generator`
+4. Click **Create Repl**
+
+### Step 2 — Open Shell (bottom of screen)
+
+```bash
+# Verify Node version (need 18+)
+node --version
+
+# Initialize the project
+npm init -y
+```
+
+### Step 3 — Install All Dependencies
+
+```bash
+npm install express @atproto/api @atproto/lexicon @atproto/xrpc-server \
+  @atproto/syntax better-sqlite3 dotenv ws @skyware/jetstream
+
+npm install --save-dev typescript ts-node @types/node @types/express \
+  @types/better-sqlite3 @types/ws
+```
+
+### Step 4 — Initialize TypeScript
+
+```bash
+npx tsc --init
+```
+
+---
+
+## 4. PROJECT FILE STRUCTURE
+
+```
+bluesky-feed-generator/
+├── src/
+│   ├── index.ts              ← Main server entry point
+│   ├── config.ts             ← All config from env vars
+│   ├── db.ts                 ← SQLite database setup
+│   ├── firehose.ts           ← Jetstream/firehose subscription
+│   ├── auth.ts               ← JWT verification middleware
+│   ├── algos/
+│   │   ├── index.ts          ← Algo registry (maps name → handler)
+│   │   ├── whats-hot.ts      ← Example: trending posts algo
+│   │   ├── africa-dev.ts     ← Example: Africa dev community
+│   │   └── irrigation.ts     ← Example: Irrigation/agritech feed
+│   └── routes/
+│       ├── feed.ts           ← getFeedSkeleton endpoint
+│       └── describe.ts       ← describeFeedGenerator endpoint
+├── scripts/
+│   └── publishFeed.ts        ← One-time publish script
+├── .well-known/
+│   └── did.json              ← DID document (served at /.well-known/did.json)
+├── tsconfig.json
+├── package.json
+└── .env                      ← LOCAL ONLY — use Replit Secrets in production
+```
+
+---
+
+## 5. FULL SOURCE CODE
+
+### `tsconfig.json`
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*", "scripts/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+### `package.json` (scripts section)
+
+```json
+{
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "build": "tsc",
+    "start:prod": "node dist/index.js",
+    "publish-feed": "ts-node scripts/publishFeed.ts",
+    "dev": "ts-node --watch src/index.ts"
+  }
+}
+```
+
+---
+
+### `src/config.ts`
+
+```typescript
+import dotenv from 'dotenv'
+dotenv.config()
+
+function requireEnv(key: string): string {
+  const val = process.env[key]
+  if (!val) throw new Error(`Missing required env var: ${key}`)
+  return val
+}
+
+export const config = {
+  // Server
+  port: parseInt(process.env.PORT || '3000'),
+  listenHost: process.env.FEEDGEN_LISTENHOST || '0.0.0.0',
+
+  // Feed Generator Identity
+  // On Replit, hostname will be: yourproject.youruser.replit.app
+  hostname: requireEnv('FEEDGEN_HOSTNAME'),
+  serviceDid: process.env.FEEDGEN_SERVICE_DID || `did:web:${process.env.FEEDGEN_HOSTNAME}`,
+
+  // Publisher (YOUR Bluesky account)
+  publisherDid: requireEnv('FEEDGEN_PUBLISHER_DID'),
+
+  // Database
+  sqliteLocation: process.env.FEEDGEN_SQLITE_LOCATION || 'feed.db',
+
+  // Firehose
+  subscriptionEndpoint: process.env.FEEDGEN_SUBSCRIPTION_ENDPOINT || 'wss://jetstream2.us-east.bsky.network/subscribe',
+  subscriptionReconnectDelay: parseInt(process.env.FEEDGEN_SUBSCRIPTION_RECONNECT_DELAY || '3000'),
+
+  // Feed definitions (you'll add more here as you build)
+  feeds: [
+    {
+      recordName: 'africa-dev',       // Short name — used in AT-URI
+      displayName: '🌍 Africa Dev',
+      description: 'Best dev/tech posts from African builders on Bluesky',
+      avatar: undefined,              // Optional: base64 image
+    },
+    {
+      recordName: 'irrigation-tech',
+      displayName: '💧 Irrigation Tech',
+      description: 'Smart irrigation, agritech & water management posts',
+      avatar: undefined,
+    },
+  ],
+}
+```
+
+---
+
+### `src/db.ts`
+
+```typescript
+import Database from 'better-sqlite3'
+import { config } from './config'
+
+let db: Database.Database
+
+export function getDb(): Database.Database {
+  if (!db) {
+    db = new Database(config.sqliteLocation)
+    db.pragma('journal_mode = WAL')   // Better concurrent read performance
+    db.pragma('synchronous = NORMAL') // Balance safety vs speed
+    initSchema(db)
+  }
+  return db
+}
+
+function initSchema(db: Database.Database) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS post (
+      uri        TEXT PRIMARY KEY,
+      cid        TEXT NOT NULL,
+      author     TEXT NOT NULL,
+      text       TEXT NOT NULL,
+      algo_tags  TEXT NOT NULL DEFAULT '',  -- comma-separated feed names
+      indexed_at TEXT NOT NULL,
+      likes      INTEGER DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_post_indexed_at ON post(indexed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_post_author ON post(author);
+    CREATE INDEX IF NOT EXISTS idx_post_algo_tags ON post(algo_tags);
+
+    CREATE TABLE IF NOT EXISTS sub_state (
+      service TEXT PRIMARY KEY,
+      cursor  INTEGER NOT NULL
+    );
+  `)
+  console.log('[DB] Schema initialized')
+}
+
+export function upsertPost(post: {
+  uri: string
+  cid: string
+  author: string
+  text: string
+  algoTags: string[]
+  indexedAt: string
+}) {
+  const db = getDb()
+  const stmt = db.prepare(`
+    INSERT INTO post (uri, cid, author, text, algo_tags, indexed_at)
+    VALUES (@uri, @cid, @author, @text, @algoTags, @indexedAt)
+    ON CONFLICT(uri) DO UPDATE SET
+      algo_tags = excluded.algo_tags,
+      indexed_at = excluded.indexed_at
+  `)
+  stmt.run({
+    uri: post.uri,
+    cid: post.cid,
+    author: post.author,
+    text: post.text,
+    algoTags: post.algoTags.join(','),
+    indexedAt: post.indexedAt,
+  })
+}
+
+export function deletePost(uri: string) {
+  getDb().prepare('DELETE FROM post WHERE uri = ?').run(uri)
+}
+
+export function getSubState(service: string): number | undefined {
+  const row = getDb()
+    .prepare('SELECT cursor FROM sub_state WHERE service = ?')
+    .get(service) as { cursor: number } | undefined
+  return row?.cursor
+}
+
+export function updateSubState(service: string, cursor: number) {
+  getDb()
+    .prepare('INSERT OR REPLACE INTO sub_state (service, cursor) VALUES (?, ?)')
+    .run(service, cursor)
+}
+```
+
+---
+
+### `src/algos/index.ts`
+
+```typescript
+import type { AlgoHandler } from '../types'
+import { africaDev } from './africa-dev'
+import { irrigationTech } from './irrigation'
+
+// Registry: maps short record name → { handler, filter }
+export const algos: Record<string, AlgoHandler> = {
+  'africa-dev': africaDev,
+  'irrigation-tech': irrigationTech,
+}
+```
+
+---
+
+### `src/algos/africa-dev.ts`
+
+```typescript
+import type { AlgoHandler } from '../types'
+import { getDb } from '../db'
+
+// Keywords that match Africa dev community posts
+const KEYWORDS = [
+  'kenya', 'nairobi', 'nigeria', 'lagos', 'ghana', 'accra',
+  'africa', 'african', '#africandev', '#kenyadev', '#techkenya',
+  'andela', 'kcb', 'mpesa', 'safaricom', 'swahili',
+  'developer', 'coding', 'javascript', 'typescript', 'python',
+  'react', 'nextjs', 'supabase', 'startup', 'fintech',
+  'agritech', 'dripstech', '#buildinpublic',
+]
+
+export const africaDev: AlgoHandler = {
+  // Called for every incoming post — return true to index it
+  shouldIndex(post: { text: string; author: string }): boolean {
+    const lower = post.text.toLowerCase()
+    return KEYWORDS.some(kw => lower.includes(kw))
+  },
+
+  // Called when user requests the feed
+  getFeed(limit: number, cursor?: string) {
+    const db = getDb()
+
+    let rows: { uri: string; cid: string; indexed_at: string }[]
+
+    if (cursor) {
+      const [cursorTimestamp] = cursor.split('::')
+      rows = db
+        .prepare(`
+          SELECT uri, cid, indexed_at FROM post
+          WHERE algo_tags LIKE '%africa-dev%'
+            AND indexed_at < ?
+          ORDER BY indexed_at DESC
+          LIMIT ?
+        `)
+        .all(cursorTimestamp, limit) as typeof rows
+    } else {
+      rows = db
+        .prepare(`
+          SELECT uri, cid, indexed_at FROM post
+          WHERE algo_tags LIKE '%africa-dev%'
+          ORDER BY indexed_at DESC
+          LIMIT ?
+        `)
+        .all(limit) as typeof rows
+    }
+
+    const feed = rows.map(row => ({ post: row.uri }))
+
+    // Build next cursor from last item
+    let nextCursor: string | undefined
+    if (rows.length >= limit) {
+      const last = rows[rows.length - 1]
+      nextCursor = `${last.indexed_at}::${last.cid}`
+    }
+
+    return { feed, cursor: nextCursor }
+  },
+}
+```
+
+---
+
+### `src/algos/irrigation.ts`
+
+```typescript
+import type { AlgoHandler } from '../types'
+import { getDb } from '../db'
+
+const KEYWORDS = [
+  'irrigation', 'drip', 'sprinkler', 'fertigation', 'hydroponics',
+  'agritech', 'precision agriculture', 'smart farm', 'water management',
+  'crop water', 'soil moisture', 'evapotranspiration', 'FAO',
+  'greenhouse', 'mulching', 'netafim', 'rain bird', 'hunter',
+  'davis shirtliff', 'elgon kenya', 'sunculture',
+  '#irrigation', '#agritech', '#smartfarming', '#precisionag',
+]
+
+export const irrigationTech: AlgoHandler = {
+  shouldIndex(post: { text: string }): boolean {
+    const lower = post.text.toLowerCase()
+    return KEYWORDS.some(kw => lower.includes(kw))
+  },
+
+  getFeed(limit: number, cursor?: string) {
+    const db = getDb()
+    let rows: { uri: string; cid: string; indexed_at: string }[]
+
+    if (cursor) {
+      const [ts] = cursor.split('::')
+      rows = db
+        .prepare(`
+          SELECT uri, cid, indexed_at FROM post
+          WHERE algo_tags LIKE '%irrigation-tech%'
+            AND indexed_at < ?
+          ORDER BY indexed_at DESC LIMIT ?
+        `)
+        .all(ts, limit) as typeof rows
+    } else {
+      rows = db
+        .prepare(`
+          SELECT uri, cid, indexed_at FROM post
+          WHERE algo_tags LIKE '%irrigation-tech%'
+          ORDER BY indexed_at DESC LIMIT ?
+        `)
+        .all(limit) as typeof rows
+    }
+
+    const feed = rows.map(r => ({ post: r.uri }))
+    let nextCursor: string | undefined
+    if (rows.length >= limit) {
+      const last = rows[rows.length - 1]
+      nextCursor = `${last.indexed_at}::${last.cid}`
+    }
+    return { feed, cursor: nextCursor }
+  },
+}
+```
+
+---
+
+### `src/types.ts`
+
+```typescript
+export interface AlgoHandler {
+  // Filter: called for each incoming post. Return true = index this post.
+  shouldIndex(post: { text: string; author: string; langs?: string[] }): boolean
+
+  // Serve: called when Bluesky requests the feed skeleton.
+  getFeed(
+    limit: number,
+    cursor?: string
+  ): { feed: { post: string }[]; cursor?: string }
+}
+```
+
+---
+
+### `src/firehose.ts`
+
+```typescript
+import { Jetstream } from '@skyware/jetstream'
+import { upsertPost, deletePost, updateSubState, getSubState } from './db'
+import { algos } from './algos'
+import { config } from './config'
+
+export function startFirehose() {
+  console.log('[Firehose] Connecting to Jetstream...')
+
+  // Jetstream is a lighter WebSocket stream vs the full firehose
+  // Endpoint options:
+  //   wss://jetstream1.us-east.bsky.network/subscribe
+  //   wss://jetstream2.us-east.bsky.network/subscribe
+  //   wss://jetstream1.us-west.bsky.network/subscribe
+  const jetstream = new Jetstream({
+    wantedCollections: ['app.bsky.feed.post'],
+    endpoint: config.subscriptionEndpoint,
+  })
+
+  jetstream.on('open', () => {
+    console.log('[Firehose] Connected to Jetstream ✅')
+  })
+
+  jetstream.on('close', () => {
+    console.log('[Firehose] Connection closed, reconnecting in 3s...')
+    setTimeout(() => startFirehose(), config.subscriptionReconnectDelay)
+  })
+
+  jetstream.on('error', (err) => {
+    console.error('[Firehose] Error:', err.message)
+  })
+
+  // Handle new posts
+  jetstream.onCreate('app.bsky.feed.post', (event) => {
+    const post = event.commit.record
+    if (!post || typeof post.text !== 'string') return
+
+    const postData = {
+      text: post.text as string,
+      author: event.did,
+      langs: (post.langs as string[]) || [],
+    }
+
+    // Check which algos want this post
+    const matchingAlgos: string[] = []
+    for (const [name, algo] of Object.entries(algos)) {
+      if (algo.shouldIndex(postData)) {
+        matchingAlgos.push(name)
+      }
+    }
+
+    if (matchingAlgos.length === 0) return
+
+    // Index the post
+    upsertPost({
+      uri: `at://${event.did}/app.bsky.feed.post/${event.commit.rkey}`,
+      cid: event.commit.cid,
+      author: event.did,
+      text: post.text as string,
+      algoTags: matchingAlgos,
+      indexedAt: event.time_us
+        ? new Date(event.time_us / 1000).toISOString()
+        : new Date().toISOString(),
+    })
+
+    console.log(`[Firehose] ⭐ Indexed for [${matchingAlgos.join(', ')}]: "${(post.text as string).substring(0, 60)}..."`)
+  })
+
+  // Handle deleted posts
+  jetstream.onDelete('app.bsky.feed.post', (event) => {
+    const uri = `at://${event.did}/app.bsky.feed.post/${event.commit.rkey}`
+    deletePost(uri)
+  })
+
+  jetstream.start()
+
+  return jetstream
+}
+```
+
+---
+
+### `src/auth.ts`
+
+```typescript
+import { Request, Response, NextFunction } from 'express'
+import { AuthRequiredError, verifyJwt } from '@atproto/xrpc-server'
+import { DidResolver, MemoryCache } from '@atproto/identity'
+import { config } from './config'
+
+const didCache = new MemoryCache()
+const didResolver = new DidResolver(
+  { plcUrl: 'https://plc.directory' },
+  didCache
+)
+
+// Middleware: optionally verify the JWT from Bluesky
+// For most feeds, auth is optional — Bluesky sends it but doesn't require you to verify
+export async function verifyAuthOptional(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  const auth = req.headers.authorization
+  if (!auth || !auth.startsWith('Bearer ')) {
+    // No auth provided — fine for public feeds
+    req.did = undefined
+    return next()
+  }
+
+  try {
+    const jwt = auth.replace('Bearer ', '')
+    const payload = await verifyJwt(
+      jwt,
+      config.serviceDid,
+      async (did: string) => {
+        const doc = await didResolver.resolveAtprotoData(did)
+        return doc.signingKey
+      }
+    )
+    req.did = payload.iss
+    next()
+  } catch (err) {
+    req.did = undefined
+    next()
+  }
+}
+
+// Extend Express Request type
+declare global {
+  namespace Express {
+    interface Request {
+      did?: string
+    }
+  }
+}
+```
+
+---
+
+### `src/routes/describe.ts`
+
+```typescript
+import { Router } from 'express'
+import { config } from '../config'
+
+export const describeRouter = Router()
+
+// GET /xrpc/app.bsky.feed.describeFeedGenerator
+describeRouter.get(
+  '/xrpc/app.bsky.feed.describeFeedGenerator',
+  (req, res) => {
+    const feeds = config.feeds.map(feed => ({
+      uri: `at://${config.publisherDid}/app.bsky.feed.generator/${feed.recordName}`,
+    }))
+
+    res.json({
+      did: config.serviceDid,
+      feeds,
+    })
+  }
+)
+```
+
+---
+
+### `src/routes/feed.ts`
+
+```typescript
+import { Router } from 'express'
+import { algos } from '../algos'
+import { verifyAuthOptional } from '../auth'
+
+export const feedRouter = Router()
+
+// GET /xrpc/app.bsky.feed.getFeedSkeleton?feed=at://DID/.../ALGO_NAME&limit=30&cursor=...
+feedRouter.get(
+  '/xrpc/app.bsky.feed.getFeedSkeleton',
+  verifyAuthOptional,
+  async (req, res) => {
+    const feedUri = req.query.feed as string
+    const limit = Math.min(parseInt(req.query.limit as string || '30'), 100)
+    const cursor = req.query.cursor as string | undefined
+
+    if (!feedUri) {
+      return res.status(400).json({ error: 'MissingFeed', message: 'feed parameter required' })
+    }
+
+    // Extract the short record name from the AT-URI
+    // Format: at://did:plc:xxx/app.bsky.feed.generator/RECORD_NAME
+    const parts = feedUri.split('/')
+    const algoName = parts[parts.length - 1]
+
+    const algo = algos[algoName]
+    if (!algo) {
+      return res.status(404).json({
+        error: 'UnsupportedAlgorithm',
+        message: `Unknown feed: ${algoName}`,
+      })
+    }
+
+    try {
+      const result = algo.getFeed(limit, cursor)
+      return res.json(result)
+    } catch (err) {
+      console.error(`[Feed] Error serving ${algoName}:`, err)
+      return res.status(500).json({ error: 'InternalServerError' })
+    }
+  }
+)
+```
+
+---
+
+### `src/index.ts` (Main Server)
+
+```typescript
+import express from 'express'
+import { config } from './config'
+import { getDb } from './db'
+import { startFirehose } from './firehose'
+import { describeRouter } from './routes/describe'
+import { feedRouter } from './routes/feed'
+
+const app = express()
+app.use(express.json())
+
+// ─── DID Document (CRITICAL — Bluesky resolves your service DID here) ─────────
+// Served at /.well-known/did.json
+app.get('/.well-known/did.json', (req, res) => {
+  res.json({
+    '@context': ['https://www.w3.org/ns/did/v1'],
+    id: config.serviceDid,
+    service: [
+      {
+        id: '#bsky_fg',
+        type: 'BskyFeedGenerator',
+        serviceEndpoint: `https://${config.hostname}`,
+      },
+    ],
+  })
+})
+
+// ─── Health Check ──────────────────────────────────────────────────────────────
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'Bluesky Feed Generator',
+    hostname: config.hostname,
+    did: config.serviceDid,
+    feeds: config.feeds.map(f => f.recordName),
+    uptime: process.uptime(),
+  })
+})
+
+// ─── XRPC Routes ──────────────────────────────────────────────────────────────
+app.use(describeRouter)
+app.use(feedRouter)
+
+// ─── Boot ──────────────────────────────────────────────────────────────────────
+async function main() {
+  // Initialize DB
+  getDb()
+  console.log('[Server] Database ready')
+
+  // Start firehose subscription
+  startFirehose()
+  console.log('[Server] Firehose subscription started')
+
+  // Start HTTP server
+  app.listen(config.port, config.listenHost, () => {
+    console.log(`[Server] 🚀 Running at http://${config.listenHost}:${config.port}`)
+    console.log(`[Server] DID document: https://${config.hostname}/.well-known/did.json`)
+    console.log(`[Server] Feeds: ${config.feeds.map(f => f.recordName).join(', ')}`)
+  })
+}
+
+main().catch(err => {
+  console.error('[Server] Fatal error:', err)
+  process.exit(1)
+})
+```
+
+---
+
+### `scripts/publishFeed.ts`
+
+```typescript
+/**
+ * Run this ONCE to register your feeds with Bluesky.
+ * Run again to UPDATE feed metadata.
+ * 
+ * Usage: npx ts-node scripts/publishFeed.ts
+ */
+
+import { AtpAgent, BlobRef } from '@atproto/api'
+import { config } from '../src/config'
+import * as fs from 'fs'
+import * as path from 'path'
+import dotenv from 'dotenv'
+dotenv.config()
+
+const BLUESKY_HANDLE = process.env.BLUESKY_HANDLE!       // e.g. yourname.bsky.social
+const BLUESKY_APP_PASSWORD = process.env.BLUESKY_APP_PASSWORD!  // App Password, NOT your real password
+
+async function publishFeed(feedConfig: typeof config.feeds[0]) {
+  const agent = new AtpAgent({ service: 'https://bsky.social' })
+
+  console.log(`\n[Publish] Logging in as ${BLUESKY_HANDLE}...`)
+  await agent.login({
+    identifier: BLUESKY_HANDLE,
+    password: BLUESKY_APP_PASSWORD,
+  })
+  console.log('[Publish] Logged in ✅')
+
+  // Optional: upload avatar
+  let avatarRef: BlobRef | undefined
+  const avatarPath = path.join(__dirname, `../assets/${feedConfig.recordName}-avatar.png`)
+  if (fs.existsSync(avatarPath)) {
+    const avatarBytes = fs.readFileSync(avatarPath)
+    const blobRes = await agent.uploadBlob(avatarBytes, { encoding: 'image/png' })
+    avatarRef = blobRes.data.blob
+    console.log('[Publish] Avatar uploaded ✅')
+  }
+
+  // Create/update the feed generator record
+  await agent.com.atproto.repo.putRecord({
+    repo: agent.session!.did,
+    collection: 'app.bsky.feed.generator',
+    rkey: feedConfig.recordName,
+    record: {
+      did: config.serviceDid,
+      displayName: feedConfig.displayName,
+      description: feedConfig.description,
+      avatar: avatarRef,
+      createdAt: new Date().toISOString(),
+    },
+  })
+
+  const feedUri = `at://${agent.session!.did}/app.bsky.feed.generator/${feedConfig.recordName}`
+  console.log(`[Publish] ✅ Feed published!`)
+  console.log(`[Publish] AT-URI: ${feedUri}`)
+  console.log(`[Publish] View on Bluesky: https://bsky.app/profile/${BLUESKY_HANDLE}/feed/${feedConfig.recordName}`)
+}
+
+async function main() {
+  for (const feed of config.feeds) {
+    await publishFeed(feed)
+  }
+}
+
+main().catch(err => {
+  console.error('[Publish] Error:', err.message)
+  process.exit(1)
+})
+```
+
+---
+
+## 6. REPLIT SECRETS CONFIGURATION
+
+> ⚠️ **Critical**: Workspace secrets ≠ Deployment secrets. You must add them in BOTH places.
+
+### Step 1 — Add Secrets in Workspace
+
+In Replit sidebar → click **🔒 Secrets** (lock icon) → **App Secrets** tab → Add each:
+
+| Secret Key | Example Value | Notes |
+|---|---|---|
+| `FEEDGEN_HOSTNAME` | `bluesky-feed.yourusername.replit.app` | Your Replit public URL — NO `https://` prefix |
+| `FEEDGEN_PUBLISHER_DID` | `did:plc:abcdef1234567890` | Your Bluesky DID from pre-flight step |
+| `FEEDGEN_SQLITE_LOCATION` | `feed.db` | File path for SQLite DB |
+| `BLUESKY_HANDLE` | `yourname.bsky.social` | Your Bluesky handle |
+| `BLUESKY_APP_PASSWORD` | `xxxx-xxxx-xxxx-xxxx` | App Password — NOT your real password |
+| `PORT` | `3000` | Replit will override with its own port |
+| `FEEDGEN_SUBSCRIPTION_ENDPOINT` | `wss://jetstream2.us-east.bsky.network/subscribe` | Jetstream endpoint |
+
+### Step 2 — Find Your Replit Hostname
+
+1. Click **Run** to start the server
+2. A webview opens — the URL in the address bar IS your hostname
+3. It will look like: `https://bluesky-feed.yourusername.replit.app`
+4. Copy everything **after** `https://` → that's your `FEEDGEN_HOSTNAME`
+
+### Step 3 — Add Secrets to Deployment (CRITICAL)
+
+When you deploy:
+1. Go to **Deployments** tab
+2. Find **Secrets** section
+3. Add the SAME secrets again (or enable "sync from workspace")
+
+> ⚠️ Skipping this = your deployed app gets `undefined` for all env vars. #1 cause of deployment failures.
+
+---
+
+## 7. FEED ALGORITHMS
+
+### Building Your Own Algo — Template
+
+```typescript
+// src/algos/my-custom-feed.ts
+import type { AlgoHandler } from '../types'
+import { getDb } from '../db'
+
+const KEYWORDS = ['your', 'keywords', 'here']
+const LANGUAGES = ['en', 'sw']  // BCP-47 language codes. 'sw' = Swahili
+
+export const myCustomFeed: AlgoHandler = {
+  shouldIndex(post) {
+    const lower = post.text.toLowerCase()
+    
+    // Example: keyword match
+    const hasKeyword = KEYWORDS.some(kw => lower.includes(kw))
+    
+    // Example: language filter
+    const hasLang = !post.langs?.length || 
+      post.langs.some(l => LANGUAGES.includes(l))
+    
+    return hasKeyword && hasLang
+  },
+
+  getFeed(limit, cursor) {
+    const db = getDb()
+    // ... query DB, return { feed, cursor }
+  }
+}
+```
+
+### Algorithm Ideas
+
+| Feed Name | Concept | Keywords/Logic |
+|---|---|---|
+| **Africa Dev** | Tech from African builders | `kenya, nigeria, africa, #africandev` |
+| **Irrigation Tech** | Agritech/water management | `irrigation, drip, agritech, #smartfarming` |
+| **Swahili Feed** | Posts in Swahili | `langs: ['sw']` filter |
+| **New Developers** | Posts from new accounts | Filter by account age via API |
+| **No-Reply Zone** | Original posts only | Filter out replies |
+| **Long-form Only** | Thoughtful posts | `text.length > 200` |
+| **Image Posts** | Posts with media | Check `embed` field |
+| **Best of Day** | Trending posts | Score by likes/reposts |
+
+---
+
+## 8. RUNNING & TESTING LOCALLY IN REPLIT
+
+### Start the Server
+```bash
+npm start
+```
+
+You should see:
+```
+[DB] Schema initialized
+[Server] Database ready
+[Server] Firehose subscription started
+[Firehose] Connected to Jetstream ✅
+[Server] 🚀 Running at http://0.0.0.0:3000
+```
+
+### Test the Endpoints
+
+Open Replit's shell and run these curl commands:
+
+```bash
+# 1. Health check
+curl http://localhost:3000/
+
+# 2. DID document
+curl http://localhost:3000/.well-known/did.json
+
+# 3. Describe feed generator
+curl "http://localhost:3000/xrpc/app.bsky.feed.describeFeedGenerator"
+
+# 4. Get feed skeleton (africa-dev)
+curl "http://localhost:3000/xrpc/app.bsky.feed.getFeedSkeleton?feed=at://YOUR_DID/app.bsky.feed.generator/africa-dev&limit=10"
+
+# 5. Get feed with cursor (pagination)
+curl "http://localhost:3000/xrpc/app.bsky.feed.getFeedSkeleton?feed=at://YOUR_DID/app.bsky.feed.generator/africa-dev&limit=10&cursor=2024-01-01T00:00:00.000Z::bafy..."
+```
+
+### Watch Posts Being Indexed
+
+```bash
+# The console will show:
+# [Firehose] ⭐ Indexed for [africa-dev]: "Building something cool in Nairobi..."
+# [Firehose] ⭐ Indexed for [irrigation-tech]: "New drip system installation at..."
+```
+
+### Check DB Directly
+
+```bash
+# In Replit shell:
+npx ts-node -e "
+const db = require('better-sqlite3')('feed.db');
+const rows = db.prepare('SELECT COUNT(*) as count, algo_tags FROM post GROUP BY algo_tags').all();
+console.log(rows);
+"
+```
+
+---
+
+## 9. DEPLOY ON REPLIT
+
+### Option A — Reserved VM (Recommended for always-on)
+
+1. Click **Deploy** button (top right of Replit)
+2. Choose **Reserved VM**
+3. Select smallest tier (0.5 vCPU, 512MB RAM) — cheapest option
+4. Configure:
+   - **Build command**: `npm run build` (or leave empty for ts-node)
+   - **Run command**: `npm start`
+5. Add all Secrets in the Deployments → Secrets section
+6. Click **Deploy**
+
+### Option B — Autoscale (Pay per request)
+
+Best if your feed gets irregular traffic. Goes to sleep when idle but wakes instantly.
+- Same setup as above but choose **Autoscale** instead
+- Cheaper for low-traffic feeds
+
+### Option C — Development Mode (Free, but sleeps)
+
+- Just keep your Repl running
+- Works for testing but Bluesky needs your server to always respond
+- Not recommended for production feeds
+
+### Getting Your Production URL
+
+After deployment, Replit gives you a URL like:
+```
+https://bluesky-feed.yourusername.replit.app
+```
+
+> ⚠️ Update `FEEDGEN_HOSTNAME` in both Workspace AND Deployment secrets to match this exact URL (without `https://`)
+
+---
+
+## 10. PUBLISHING THE FEED TO BLUESKY
+
+This step tells Bluesky "my feed exists, here's where to find it."
+
+### Step 1 — Verify Your DID Document is Live
+
+```bash
+curl https://YOUR_HOSTNAME/.well-known/did.json
+```
+
+Expected response:
+```json
+{
+  "@context": ["https://www.w3.org/ns/did/v1"],
+  "id": "did:web:your-hostname.replit.app",
+  "service": [{
+    "id": "#bsky_fg",
+    "type": "BskyFeedGenerator",
+    "serviceEndpoint": "https://your-hostname.replit.app"
+  }]
+}
+```
+
+### Step 2 — Run the Publish Script
+
+```bash
+npx ts-node scripts/publishFeed.ts
+```
+
+Expected output:
+```
+[Publish] Logging in as yourname.bsky.social...
+[Publish] Logged in ✅
+[Publish] ✅ Feed published!
+[Publish] AT-URI: at://did:plc:xxx/app.bsky.feed.generator/africa-dev
+[Publish] View on Bluesky: https://bsky.app/profile/yourname.bsky.social/feed/africa-dev
+```
+
+### Step 3 — Find Your Feed in Bluesky App
+
+1. Open Bluesky app
+2. Go to **Feeds** → **Discover Feeds** (or search)
+3. Search for your feed display name
+4. Pin it to your home screen
+
+---
+
+## 11. VERIFYING YOUR LIVE FEED
+
+```bash
+# Test your live production endpoint
+curl "https://YOUR_HOSTNAME.replit.app/xrpc/app.bsky.feed.getFeedSkeleton?feed=at://YOUR_DID/app.bsky.feed.generator/africa-dev"
+
+# Should return something like:
+{
+  "feed": [
+    { "post": "at://did:plc:abc.../app.bsky.feed.post/3jux..." },
+    { "post": "at://did:plc:xyz.../app.bsky.feed.post/3juy..." }
+  ],
+  "cursor": "2024-05-01T12:00:00.000Z::bafyreiabc..."
+}
+```
+
+### What a "Misconfigured" Error Means
+
+If you see this in Bluesky app:
+> "Hmm, the feed server appears to be misconfigured."
+
+Check:
+1. `/.well-known/did.json` is accessible at your public URL
+2. `FEEDGEN_HOSTNAME` matches your actual deployment URL exactly
+3. `FEEDGEN_SERVICE_DID` = `did:web:` + your hostname (no protocol, no trailing slash)
+4. The `serviceEndpoint` in your DID doc uses `https://`
+
+---
+
+## 12. MULTIPLE FEEDS ON ONE SERVER
+
+One Replit deployment can serve MANY feeds. Just:
+
+1. Add feed config to `config.ts` feeds array
+2. Create `src/algos/new-feed.ts` with handler
+3. Register in `src/algos/index.ts`
+4. Re-run `publishFeed.ts` (it publishes all feeds in config)
+
+```typescript
+// config.ts — add more feeds:
+feeds: [
+  { recordName: 'africa-dev', displayName: '🌍 Africa Dev', description: '...' },
+  { recordName: 'irrigation-tech', displayName: '💧 Irrigation Tech', description: '...' },
+  { recordName: 'kenya-news', displayName: '🇰🇪 Kenya News', description: '...' },
+  { recordName: 'swahili', displayName: '🗣️ Kiswahili', description: '...' },
+]
+```
+
+Each feed has its own AT-URI and appears separately in Bluesky.
+
+---
+
+## 13. ADVANCED: AI-POWERED FEED
+
+Use Anthropic Claude API to intelligently score and filter posts.
+
+### Install
+
+```bash
+npm install @anthropic-ai/sdk
+```
+
+### Add Secret in Replit
+
+`ANTHROPIC_API_KEY` = your Anthropic API key
+
+### AI Scoring Algo
+
+```typescript
+// src/algos/ai-scored.ts
+import Anthropic from '@anthropic-ai/sdk'
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+
+// Cache scores to avoid re-calling API (save costs)
+const scoreCache = new Map<string, number>()
+
+export async function scorePost(text: string): Promise<number> {
+  if (scoreCache.has(text)) return scoreCache.get(text)!
+
+  const response = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001', // Use Haiku — cheapest, fast enough
+    max_tokens: 10,
+    messages: [{
+      role: 'user',
+      content: `Rate this post 0-10 for relevance to African agritech/irrigation/farming. Just respond with a single number.
+
+Post: "${text.substring(0, 200)}"`
+    }]
+  })
+
+  const score = parseFloat(
+    (response.content[0] as { type: 'text'; text: string }).text.trim()
+  ) || 0
+
+  scoreCache.set(text, score)
+  return score
+}
+```
+
+> 💡 **Cost tip**: Run AI scoring async in background, not in the hot path. Score posts as they're indexed, not when Bluesky requests the feed.
+
+---
+
+## 14. ADVANCED: SCORING & RANKING
+
+### Engagement-Weighted Feed
+
+```typescript
+// Add to upsertPost when indexing:
+// Store likes count (you'd need to fetch this periodically via API)
+
+// In your algo's getFeed:
+getFeed(limit, cursor) {
+  const db = getDb()
+  const rows = db.prepare(`
+    SELECT uri, cid, indexed_at,
+      -- Score: recency + engagement boost
+      (
+        -- Recency score (posts decay over 24h)
+        1.0 / (1.0 + (julianday('now') - julianday(indexed_at)) * 24) * 10 +
+        -- Engagement boost
+        (likes * 0.5)
+      ) AS score
+    FROM post
+    WHERE algo_tags LIKE '%my-feed%'
+    ORDER BY score DESC
+    LIMIT ?
+  `).all(limit)
+
+  return {
+    feed: rows.map(r => ({ post: r.uri })),
+    cursor: undefined // For ranked feeds, cursor is optional
+  }
+}
+```
+
+### Language-Filtered Feed
+
+```typescript
+shouldIndex(post) {
+  // Only Swahili posts
+  return post.langs?.includes('sw') === true
+}
+```
+
+---
+
+## 15. DATABASE PERSISTENCE
+
+### Default (SQLite on Replit disk)
+- File: `feed.db` in your project root
+- Persists within a Repl but may be lost on redeployment
+- Fine for most feeds — Jetstream will re-populate from live firehose
+
+### Upgrade to Supabase (Production)
+
+```bash
+npm install @supabase/supabase-js
+```
+
+```typescript
+// src/db-supabase.ts
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_ANON_KEY!
+)
+
+export async function upsertPostSupabase(post: {
+  uri: string; cid: string; author: string; text: string;
+  algoTags: string[]; indexedAt: string
+}) {
+  await supabase.from('feed_posts').upsert({
+    uri: post.uri,
+    cid: post.cid,
+    author: post.author,
+    text: post.text,
+    algo_tags: post.algoTags,
+    indexed_at: post.indexedAt,
+  })
+}
+```
+
+Supabase secrets to add:
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+
+---
+
+## 16. INTEGRATIONS INDEX
+
+| Integration | What It Adds | Package |
+|---|---|---|
+| **Supabase** | Persistent PostgreSQL DB | `@supabase/supabase-js` |
+| **Anthropic Claude** | AI post scoring/filtering | `@anthropic-ai/sdk` |
+| **Bluesky API** | Fetch profiles, likes, follow lists | `@atproto/api` |
+| **Cloudflare D1** | Edge-cached DB reads | REST API |
+| **Upstash Redis** | Fast cursor/session storage | `@upstash/redis` |
+| **Resend** | Email digests of top posts | `resend` |
+| **Telegram Bot** | Alert when feed hits milestones | `node-telegram-bot-api` |
+| **n8n Webhook** | Automation triggers on new indexed posts | HTTP POST |
+| **Bluesky Lists** | Filter to posts from curated list | `@atproto/api` list lookup |
+
+---
+
+## 17. MONITORING & LOGS ON REPLIT
+
+### View Logs in Replit
+
+1. While Repl is running → **Console** tab shows live logs
+2. After deployment → **Deployments** → **Logs** tab
+
+### Add Structured Logging
+
+```typescript
+// Simple logger — add to any file
+const log = {
+  info: (msg: string, data?: object) => 
+    console.log(JSON.stringify({ level: 'INFO', msg, ...data, ts: new Date().toISOString() })),
+  error: (msg: string, err?: Error) => 
+    console.error(JSON.stringify({ level: 'ERROR', msg, error: err?.message, ts: new Date().toISOString() })),
+}
+```
+
+### Health Check Endpoint
+
+Add to `index.ts`:
+```typescript
+app.get('/health', (req, res) => {
+  const db = getDb()
+  const postCount = (db.prepare('SELECT COUNT(*) as c FROM post').get() as any).c
+  res.json({
+    status: 'healthy',
+    postCount,
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+  })
+})
+```
+
+---
+
+## 18. COMMON ERRORS & FIXES
+
+| Error | Cause | Fix |
+|---|---|---|
+| `"Unsupported Algorithm"` | Wrong record name in AT-URI | Match `recordName` in config to algo key in `algos/index.ts` |
+| `"invalid feed generator service details"` | DID doc not resolving | Check `/.well-known/did.json` is accessible publicly |
+| `process.env.X is undefined` | Secret not set in Deployment | Add secrets in Deployments tab separately |
+| `EADDRINUSE port 3000` | Port already in use | Change `PORT` secret or kill other processes |
+| Feed shows 0 posts | Firehose not indexing | Check keywords, check console for `⭐ Indexed` messages |
+| `SQLITE_IOERR` | Disk write error on Replit | Use `:memory:` for dev, set `FEEDGEN_SQLITE_LOCATION=feed.db` for prod |
+| `JWT verification failed` | Wrong DID in config | Ensure `FEEDGEN_PUBLISHER_DID` matches your actual Bluesky DID |
+| Firehose disconnects constantly | Jetstream endpoint unreachable | Try alternate endpoint: `wss://jetstream1.us-west.bsky.network/subscribe` |
+
+---
+
+## 19. CURSOR PAGINATION
+
+Cursors are opaque strings that let Bluesky fetch older posts. Best practice: `timestamp::cid`
+
+```typescript
+// Encoding cursor
+const cursor = `${lastPost.indexed_at}::${lastPost.cid}`
+// e.g.: "2024-05-01T14:32:00.000Z::bafyreiamna..."
+
+// Decoding cursor
+const [timestamp, cid] = cursor.split('::')
+
+// Using in SQL
+db.prepare(`
+  SELECT * FROM post
+  WHERE indexed_at < ?           -- posts OLDER than cursor
+  ORDER BY indexed_at DESC
+  LIMIT ?
+`).all(timestamp, limit)
+```
+
+### Rules for Cursors
+- Must be **unique per feed item** — never duplicate
+- Treated as **opaque** by Bluesky (they just pass it back to you)
+- If your last page has fewer items than `limit`, return `cursor: undefined`
+- Per Bluesky docs: compound `timestamp::CID` is the recommended format
+
+---
+
+## 20. DID:WEB vs DID:PLC
+
+| | `did:web` | `did:plc` |
+|---|---|---|
+| **Setup** | Automatic — uses your domain | Requires registration on plc.directory |
+| **Portability** | Tied to your hostname | Can migrate domains freely |
+| **Stability** | Changes if you change domain | Permanent |
+| **Replit suitability** | ✅ Perfect for free Replit URL | Overkill for starting out |
+| **Recommended for** | Development, starting out | Long-term production feeds |
+
+**Start with `did:web`** — it works automatically on Replit. Migrate to `did:plc` when/if you move to a custom domain (e.g., `feeds.dripstech.co.ke`).
+
+To switch to `did:plc`:
+1. Register at https://plc.directory
+2. Set `FEEDGEN_SERVICE_DID=did:plc:YOUR_PLC_ID` in secrets
+3. Re-run publish script
+
+---
+
+## 21. COST & SCALING CONSIDERATIONS
+
+### Free Tier (Development)
+- Replit free tier: Repl sleeps after inactivity
+- Not suitable for production — Bluesky needs 24/7 responses
+- Use for: building, testing, demoing
+
+### Replit Reserved VM (Production)
+- ~$7/month for smallest tier
+- Always-on, persistent disk, HTTPS included
+- Suitable for: up to ~10k feed requests/day
+
+### Scaling Beyond Replit
+When your feed gets popular:
+
+| Load | Solution |
+|---|---|
+| 10k req/day | Replit Reserved VM |
+| 100k req/day | Add Cloudflare CDN in front |
+| 1M+ req/day | Move to Cloudflare Workers + D1 (your existing DripsTech stack!) |
+
+### Firehose CPU Cost
+The Jetstream firehose delivers millions of posts/day. Your `shouldIndex()` function runs on EVERY post. Keep it fast:
+- Simple string `.includes()` checks: ✅ Fast
+- Regex: ⚠️ Slower but okay
+- API calls in `shouldIndex()`: ❌ Never — will crash under load
+
+---
+
+## 22. BUILD ROADMAP
+
+### Phase 1 — Foundation ✅ (This Guide)
+- [ ] Replit project setup
+- [ ] Basic keyword filtering algo
+- [ ] Africa Dev + Irrigation feeds
+- [ ] Published to Bluesky
+
+### Phase 2 — Enhancement
+- [ ] Supabase backend for persistence across deployments
+- [ ] Admin dashboard (React frontend) showing indexed post stats
+- [ ] Feed analytics (view counts, follower counts via Bluesky API)
+- [ ] Bluesky Lists integration (curate feeds from specific users)
+
+### Phase 3 — Monetization & Community
+- [ ] "Moderation mode" — approve/reject posts before they appear
+- [ ] Community submission — users suggest posts via reply/DM
+- [ ] Embed widget for dripstech.co.ke website
+- [ ] M-Pesa payment for premium feeds (via existing Daraja integration)
+
+### Phase 4 — AI-Powered
+- [ ] Claude Haiku scoring for post quality (0-10)
+- [ ] Auto-classification of post topics
+- [ ] Personalized recommendations (per-user ML models)
+- [ ] DripsTech lead scoring — index posts from potential irrigation clients
+
+---
+
+## 23. QUICK REFERENCE CHEAT SHEET
+
+```bash
+# ── SETUP ───────────────────────────────────────────────────────────────
+npm install                              # Install dependencies
+npx tsc --init                           # Initialize TypeScript
+
+# ── GET YOUR DID ────────────────────────────────────────────────────────
+curl "https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=YOUR_HANDLE.bsky.social"
+
+# ── RUN ─────────────────────────────────────────────────────────────────
+npm start                                # Start server
+
+# ── TEST ────────────────────────────────────────────────────────────────
+curl http://localhost:3000/              # Health check
+curl http://localhost:3000/.well-known/did.json  # DID document
+curl "http://localhost:3000/xrpc/app.bsky.feed.describeFeedGenerator"
+curl "http://localhost:3000/xrpc/app.bsky.feed.getFeedSkeleton?feed=at://YOUR_DID/app.bsky.feed.generator/YOUR_FEED_NAME&limit=10"
+
+# ── PUBLISH ─────────────────────────────────────────────────────────────
+npx ts-node scripts/publishFeed.ts      # Register feeds with Bluesky
+
+# ── VERIFY ──────────────────────────────────────────────────────────────
+# Open in browser after publishing:
+# https://bsky.app/profile/YOUR_HANDLE.bsky.social/feed/YOUR_FEED_NAME
+
+# ── DB DEBUG ────────────────────────────────────────────────────────────
+npx ts-node -e "const db = require('better-sqlite3')('feed.db'); console.log(db.prepare('SELECT COUNT(*), algo_tags FROM post GROUP BY algo_tags').all())"
+
+# ── SECRETS FORMAT ──────────────────────────────────────────────────────
+FEEDGEN_HOSTNAME=         yourproject.yourusername.replit.app    # NO https://
+FEEDGEN_PUBLISHER_DID=    did:plc:xxxxxxxxxxxxxxxxxxxx
+FEEDGEN_SQLITE_LOCATION=  feed.db
+BLUESKY_HANDLE=           yourname.bsky.social
+BLUESKY_APP_PASSWORD=     xxxx-xxxx-xxxx-xxxx
+PORT=                     3000
+```
+
+---
+
+## RESOURCES
+
+| Resource | URL |
+|---|---|
+| Bluesky Feed Generator Starter Kit | https://github.com/bluesky-social/feed-generator |
+| AT Protocol Custom Feeds Docs | https://docs.bsky.app/docs/starter-templates/custom-feeds |
+| Write a Custom Feed (official tutorial) | https://atproto.com/guides/custom-feed-tutorial |
+| @skyware/jetstream (lighter firehose) | https://github.com/skyware-js/jetstream |
+| Bluesky API Reference | https://docs.bsky.app/docs/api/ |
+| PLC Directory (for did:plc) | https://plc.directory |
+| Replit Secrets Docs | https://docs.replit.com/core-concepts/workspace/app-setup/secrets |
+| Graze (no-code feed builder, for inspiration) | https://graze.social |
+| Bluesky Feed Creator | https://blueskyfeedcreator.com |
+
+---
+
+*Built by Bruce Oyugi / DripsTech — dripstech.co.ke*
+*"Feed the algorithm, not the other way around."* 🌍💧
