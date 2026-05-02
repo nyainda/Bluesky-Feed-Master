@@ -126,6 +126,32 @@ paths:
         "404":
           description: Not found
 
+  /feeds/{id}/publish:
+    post:
+      operationId: publishFeed
+      tags: [feeds]
+      summary: Publish a feed to Bluesky
+      description: Creates or updates the app.bsky.feed.generator record in the publisher's Bluesky repo
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Published successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishFeedResult"
+        "400":
+          description: Missing configuration (env vars not set)
+        "404":
+          description: Feed not found
+        "500":
+          description: Bluesky API error
+
   /feeds/{id}/keywords:
     get:
       operationId: getFeedKeywords
@@ -490,6 +516,20 @@ components:
       required:
         - hour
         - count
+
+    PublishFeedResult:
+      type: object
+      properties:
+        uri:
+          type: string
+        cid:
+          type: string
+        feedUri:
+          type: string
+      required:
+        - uri
+        - cid
+        - feedUri
 
     FeedRanking:
       type: object

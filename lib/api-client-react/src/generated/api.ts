@@ -28,6 +28,7 @@ import type {
   Keyword,
   ListPostsParams,
   PostsPage,
+  PublishFeedResult,
   StatsOverview,
   UpdateFeedBody,
 } from "./api.schemas";
@@ -514,6 +515,91 @@ export const useDeleteFeed = <
   TContext
 > => {
   return useMutation(getDeleteFeedMutationOptions(options));
+};
+
+/**
+ * Creates or updates the app.bsky.feed.generator record in the publisher's Bluesky repo
+ * @summary Publish a feed to Bluesky
+ */
+export const getPublishFeedUrl = (id: number) => {
+  return `/api/feeds/${id}/publish`;
+};
+
+export const publishFeed = async (
+  id: number,
+  options?: RequestInit,
+): Promise<PublishFeedResult> => {
+  return customFetch<PublishFeedResult>(getPublishFeedUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getPublishFeedMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof publishFeed>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof publishFeed>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["publishFeed"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof publishFeed>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return publishFeed(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PublishFeedMutationResult = NonNullable<
+  Awaited<ReturnType<typeof publishFeed>>
+>;
+
+export type PublishFeedMutationError = ErrorType<void>;
+
+/**
+ * @summary Publish a feed to Bluesky
+ */
+export const usePublishFeed = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof publishFeed>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof publishFeed>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getPublishFeedMutationOptions(options));
 };
 
 /**

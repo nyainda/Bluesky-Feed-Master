@@ -92,6 +92,20 @@ export const DeleteFeedParams = zod.object({
 });
 
 /**
+ * Creates or updates the app.bsky.feed.generator record in the publisher's Bluesky repo
+ * @summary Publish a feed to Bluesky
+ */
+export const PublishFeedParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const PublishFeedResponse = zod.object({
+  uri: zod.string(),
+  cid: zod.string(),
+  feedUri: zod.string(),
+});
+
+/**
  * @summary Get keywords for a feed
  */
 export const GetFeedKeywordsParams = zod.object({

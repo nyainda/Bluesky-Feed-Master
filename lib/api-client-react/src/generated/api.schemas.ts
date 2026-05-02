@@ -92,6 +92,12 @@ export interface ActivityBucket {
   count: number;
 }
 
+export interface PublishFeedResult {
+  uri: string;
+  cid: string;
+  feedUri: string;
+}
+
 export interface FeedRanking {
   feedId: number;
   recordName: string;
