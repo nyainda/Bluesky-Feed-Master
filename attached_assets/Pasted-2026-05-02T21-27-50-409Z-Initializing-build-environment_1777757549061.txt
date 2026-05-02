@@ -1,0 +1,140 @@
+2026-05-02T21:27:50.409Z	Initializing build environment...
+2026-05-02T21:27:50.409Z	Initializing build environment...
+2026-05-02T21:27:52.283Z	Success: Finished initializing build environment
+2026-05-02T21:27:52.941Z	Cloning repository...
+2026-05-02T21:27:54.442Z	Detected the following tools from environment: pnpm@10.11.1, nodejs@22.16.0
+2026-05-02T21:27:54.443Z	Restoring from dependencies cache
+2026-05-02T21:27:54.446Z	Restoring from build output cache
+2026-05-02T21:27:54.564Z	Installing project dependencies: pnpm install --frozen-lockfile
+2026-05-02T21:27:55.478Z	Scope: all 10 workspace projects
+2026-05-02T21:27:55.585Z	Lockfile is up to date, resolution step is skipped
+2026-05-02T21:27:55.644Z	Progress: resolved 1, reused 0, downloaded 0, added 0
+2026-05-02T21:27:55.751Z	Packages: +634
+2026-05-02T21:27:55.751Z	++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+2026-05-02T21:27:56.642Z	Progress: resolved 634, reused 0, downloaded 77, added 70
+2026-05-02T21:27:57.645Z	Progress: resolved 634, reused 0, downloaded 146, added 132
+2026-05-02T21:27:58.650Z	Progress: resolved 634, reused 0, downloaded 170, added 155
+2026-05-02T21:27:59.662Z	Progress: resolved 634, reused 0, downloaded 178, added 164
+2026-05-02T21:28:00.674Z	Progress: resolved 634, reused 0, downloaded 179, added 164
+2026-05-02T21:28:01.675Z	Progress: resolved 634, reused 0, downloaded 190, added 176
+2026-05-02T21:28:02.676Z	Progress: resolved 634, reused 0, downloaded 234, added 222
+2026-05-02T21:28:03.678Z	Progress: resolved 634, reused 0, downloaded 264, added 250
+2026-05-02T21:28:04.679Z	Progress: resolved 634, reused 0, downloaded 279, added 266
+2026-05-02T21:28:05.680Z	Progress: resolved 634, reused 0, downloaded 359, added 344
+2026-05-02T21:28:06.683Z	Progress: resolved 634, reused 0, downloaded 439, added 425
+2026-05-02T21:28:07.681Z	Progress: resolved 634, reused 0, downloaded 607, added 596
+2026-05-02T21:28:08.371Z	Progress: resolved 634, reused 0, downloaded 634, added 634, done
+2026-05-02T21:28:08.618Z	.../node_modules/workerd postinstall$ node install.js
+2026-05-02T21:28:08.618Z	.../esbuild@0.27.3/node_modules/esbuild postinstall$ node install.js
+2026-05-02T21:28:08.618Z	.../esbuild@0.17.19/node_modules/esbuild postinstall$ node install.js
+2026-05-02T21:28:08.619Z	.../sharp@0.33.5/node_modules/sharp install$ node install/check
+2026-05-02T21:28:08.620Z	.../esbuild@0.18.20/node_modules/esbuild postinstall$ node install.js
+2026-05-02T21:28:08.776Z	.../esbuild@0.17.19/node_modules/esbuild postinstall: Done
+2026-05-02T21:28:08.863Z	.../esbuild@0.27.3/node_modules/esbuild postinstall: Done
+2026-05-02T21:28:08.873Z	.../esbuild@0.25.12/node_modules/esbuild postinstall$ node install.js
+2026-05-02T21:28:08.895Z	.../node_modules/workerd postinstall: Done
+2026-05-02T21:28:08.900Z	.../esbuild@0.18.20/node_modules/esbuild postinstall: Done
+2026-05-02T21:28:08.926Z	.../sharp@0.33.5/node_modules/sharp install: Done
+2026-05-02T21:28:08.962Z	.../esbuild@0.25.12/node_modules/esbuild postinstall: Done
+2026-05-02T21:28:09.508Z	
+2026-05-02T21:28:09.509Z	devDependencies:
+2026-05-02T21:28:09.509Z	+ prettier 3.8.1
+2026-05-02T21:28:09.509Z	+ typescript 5.9.3
+2026-05-02T21:28:09.509Z	
+2026-05-02T21:28:09.560Z	. preinstall$ sh -c 'rm -f package-lock.json yarn.lock; case "$npm_config_user_agent" in pnpm/*) ;; *) echo "Use pnpm instead" >&2; exit 1 ;; esac'
+2026-05-02T21:28:09.573Z	. preinstall: Done
+2026-05-02T21:28:09.736Z	Done in 14.7s
+2026-05-02T21:28:10.021Z	Executing user build command: pnpm run build
+2026-05-02T21:28:10.441Z	
+2026-05-02T21:28:10.441Z	> workspace@0.0.0 build /opt/buildhome/repo
+2026-05-02T21:28:10.441Z	> pnpm run typecheck && pnpm -r --if-present run build
+2026-05-02T21:28:10.441Z	
+2026-05-02T21:28:10.771Z	
+2026-05-02T21:28:10.772Z	> workspace@0.0.0 typecheck /opt/buildhome/repo
+2026-05-02T21:28:10.772Z	> pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck
+2026-05-02T21:28:10.772Z	
+2026-05-02T21:28:11.087Z	
+2026-05-02T21:28:11.087Z	> workspace@0.0.0 typecheck:libs /opt/buildhome/repo
+2026-05-02T21:28:11.088Z	> tsc --build
+2026-05-02T21:28:11.088Z	
+2026-05-02T21:28:15.968Z	Scope: 5 of 10 workspace projects
+2026-05-02T21:28:15.972Z	artifacts/api-server typecheck$ tsc -p tsconfig.json --noEmit
+2026-05-02T21:28:15.973Z	artifacts/bluesky-feeds typecheck$ tsc -p tsconfig.json --noEmit
+2026-05-02T21:28:15.973Z	artifacts/mockup-sandbox typecheck$ tsc -p tsconfig.json --noEmit
+2026-05-02T21:28:15.974Z	scripts typecheck$ tsc -p tsconfig.json --noEmit
+2026-05-02T21:28:18.809Z	scripts typecheck: Done
+2026-05-02T21:28:25.891Z	artifacts/api-server typecheck: Done
+2026-05-02T21:28:29.285Z	artifacts/mockup-sandbox typecheck: Done
+2026-05-02T21:28:31.566Z	artifacts/bluesky-feeds typecheck: Done
+2026-05-02T21:28:32.136Z	Scope: 9 of 10 workspace projects
+2026-05-02T21:28:32.139Z	artifacts/mockup-sandbox build$ vite build
+2026-05-02T21:28:32.715Z	artifacts/mockup-sandbox build: vite v7.3.2 building client environment for production...
+2026-05-02T21:28:32.871Z	artifacts/mockup-sandbox build: transforming...
+2026-05-02T21:28:34.088Z	artifacts/mockup-sandbox build: ✓ 30 modules transformed.
+2026-05-02T21:28:34.255Z	artifacts/mockup-sandbox build: rendering chunks...
+2026-05-02T21:28:34.263Z	artifacts/mockup-sandbox build: computing gzip size...
+2026-05-02T21:28:34.276Z	artifacts/mockup-sandbox build: dist/index.html                   4.42 kB │ gzip:  1.23 kB
+2026-05-02T21:28:34.277Z	artifacts/mockup-sandbox build: dist/assets/index-BhVw-XfD.css   89.70 kB │ gzip: 14.88 kB
+2026-05-02T21:28:34.277Z	artifacts/mockup-sandbox build: dist/assets/index-ZTNvmnih.js   187.72 kB │ gzip: 59.51 kB
+2026-05-02T21:28:34.279Z	artifacts/mockup-sandbox build: ✓ built in 1.49s
+2026-05-02T21:28:34.320Z	artifacts/mockup-sandbox build: Done
+2026-05-02T21:28:34.321Z	artifacts/api-server build$ node ./build.mjs
+2026-05-02T21:28:34.322Z	artifacts/bluesky-feeds build$ vite build --config vite.config.ts
+2026-05-02T21:28:34.767Z	artifacts/bluesky-feeds build: vite v7.3.2 building client environment for production...
+2026-05-02T21:28:34.936Z	artifacts/bluesky-feeds build: transforming...
+2026-05-02T21:28:35.720Z	artifacts/api-server build:   dist/index.mjs                       4.1mb ⚠️
+2026-05-02T21:28:35.722Z	artifacts/api-server build:   dist/pino-worker.mjs               153.4kb
+2026-05-02T21:28:35.722Z	artifacts/api-server build:   dist/pino-file.mjs                 142.1kb
+2026-05-02T21:28:35.723Z	artifacts/api-server build:   dist/pino-pretty.mjs               114.6kb
+2026-05-02T21:28:35.723Z	artifacts/api-server build:   dist/thread-stream-worker.mjs        7.3kb
+2026-05-02T21:28:35.726Z	artifacts/api-server build:   dist/index.mjs.map                   6.7mb
+2026-05-02T21:28:35.727Z	artifacts/api-server build:   dist/pino-worker.mjs.map           256.9kb
+2026-05-02T21:28:35.727Z	artifacts/api-server build:   dist/pino-file.mjs.map             229.0kb
+2026-05-02T21:28:35.727Z	artifacts/api-server build:   dist/pino-pretty.mjs.map           203.9kb
+2026-05-02T21:28:35.727Z	artifacts/api-server build:   dist/thread-stream-worker.mjs.map   12.0kb
+2026-05-02T21:28:35.727Z	artifacts/api-server build: ⚡ Done in 1290ms
+2026-05-02T21:28:35.760Z	artifacts/api-server build: Done
+2026-05-02T21:28:35.806Z	artifacts/bluesky-feeds build: src/components/ui/tooltip.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+2026-05-02T21:28:37.420Z	artifacts/bluesky-feeds build: src/components/ui/select.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+2026-05-02T21:28:38.727Z	artifacts/bluesky-feeds build: src/components/ui/label.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+2026-05-02T21:28:42.315Z	artifacts/bluesky-feeds build: ✓ 3164 modules transformed.
+2026-05-02T21:28:43.142Z	artifacts/bluesky-feeds build: rendering chunks...
+2026-05-02T21:28:43.162Z	artifacts/bluesky-feeds build: computing gzip size...
+2026-05-02T21:28:43.196Z	artifacts/bluesky-feeds build: dist/public/index.html                     0.74 kB │ gzip:   0.42 kB
+2026-05-02T21:28:43.196Z	artifacts/bluesky-feeds build: dist/public/assets/index-DdKa1xuK.css    117.29 kB │ gzip:  18.47 kB
+2026-05-02T21:28:43.196Z	artifacts/bluesky-feeds build: dist/public/assets/index-KJopB-G0.js   1,143.91 kB │ gzip: 331.79 kB
+2026-05-02T21:28:43.196Z	artifacts/bluesky-feeds build: 
+2026-05-02T21:28:43.196Z	artifacts/bluesky-feeds build: (!) Some chunks are larger than 500 kB after minification. Consider:
+2026-05-02T21:28:43.196Z	artifacts/bluesky-feeds build: - Using dynamic import() to code-split the application
+2026-05-02T21:28:43.196Z	artifacts/bluesky-feeds build: - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+2026-05-02T21:28:43.196Z	artifacts/bluesky-feeds build: - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+2026-05-02T21:28:43.196Z	artifacts/bluesky-feeds build: ✓ built in 8.34s
+2026-05-02T21:28:43.290Z	artifacts/bluesky-feeds build: Done
+2026-05-02T21:28:43.313Z	Success: Build command completed
+2026-05-02T21:28:43.497Z	Executing user deploy command: npx wrangler pages deploy artifacts/bluesky-feeds/dist/public --project-name=Bluesky-Feed-Master
+2026-05-02T21:28:44.764Z	npm warn exec The following package was not found and will be installed: wrangler@4.87.0
+2026-05-02T21:28:52.919Z	
+2026-05-02T21:28:52.919Z	 ⛅️ wrangler 4.87.0
+2026-05-02T21:28:52.919Z	───────────────────
+2026-05-02T21:28:53.274Z	
+2026-05-02T21:28:53.331Z	✘ [ERROR] A request to the Cloudflare API (/accounts/26bfba046d4064c985d3123e08e2535f/pages/projects/Bluesky-Feed-Master) failed.
+2026-05-02T21:28:53.332Z	
+2026-05-02T21:28:53.332Z	  Authentication error [code: 10000]
+2026-05-02T21:28:53.332Z	
+2026-05-02T21:28:53.332Z	
+2026-05-02T21:28:53.332Z	📎 It looks like you are authenticating Wrangler via a custom API token set in an environment variable.
+2026-05-02T21:28:53.332Z	Please ensure it has the correct permissions for this operation.
+2026-05-02T21:28:53.332Z	
+2026-05-02T21:28:53.343Z	Getting User settings...
+2026-05-02T21:28:53.841Z	👋 You are logged in with an User API Token, associated with the email manmysterious2020@gmail.com.
+2026-05-02T21:28:53.841Z	ℹ️  The API Token is read from the CLOUDFLARE_API_TOKEN environment variable.
+2026-05-02T21:28:53.845Z	┌───────────────────────────────────────┬──────────────────────────────────┐
+2026-05-02T21:28:53.845Z	│ Account Name                          │ Account ID                       │
+2026-05-02T21:28:53.845Z	├───────────────────────────────────────┼──────────────────────────────────┤
+2026-05-02T21:28:53.845Z	│ Manmysterious2020@gmail.com's Account │ 26bfba046d4064c985d3123e08e2535f │
+2026-05-02T21:28:53.846Z	└───────────────────────────────────────┴──────────────────────────────────┘
+2026-05-02T21:28:53.846Z	🔓 To see token permissions visit https://dash.cloudflare.com/profile/api-tokens.
+2026-05-02T21:28:54.059Z	🎢 Membership roles in "Manmysterious2020@gmail.com's Account": Contact account super admin to change your permissions.
+2026-05-02T21:28:54.064Z	- Super Administrator - All Privileges
+2026-05-02T21:28:54.064Z	🪵  Logs were written to "/opt/buildhome/.config/.wrangler/logs/wrangler-2026-05-02_21-28-52_608.log"
+2026-05-02T21:28:54.182Z	Failed: error occurred while running deploy command
