@@ -46,7 +46,6 @@ router.post("/bluesky/sync-engagement", async (req, res): Promise<void> => {
   const limit = Math.min(body.limit ?? 100, 200);
 
   try {
-    // Get recent posts that need syncing
     const conditions: ReturnType<typeof like>[] = [];
     if (body.feedId) {
       const [feed] = await db.query.feedsTable.findMany({ where: (t, { eq }) => eq(t.id, body.feedId!) });
@@ -64,8 +63,6 @@ router.post("/bluesky/sync-engagement", async (req, res): Promise<void> => {
     if (posts.length === 0) { res.json({ updated: 0, skipped: 0, errors: 0 }); return; }
 
     const agent = await getPublicAgent();
-
-    // Bluesky API allows max 25 URIs per getPosts call
     const BATCH = 25;
     let updated = 0, errors = 0;
 
@@ -154,7 +151,6 @@ router.get("/bluesky/not-following-back", async (req, res): Promise<void> => {
   try {
     const agent = await getPublicAgent();
 
-    // Paginate through ALL following
     const following: { did: string; handle: string; displayName?: string; avatar?: string; followersCount?: number; followsCount?: number }[] = [];
     let followingCursor: string | undefined;
     do {
@@ -163,7 +159,6 @@ router.get("/bluesky/not-following-back", async (req, res): Promise<void> => {
       followingCursor = r.data.cursor;
     } while (followingCursor && following.length < 2000);
 
-    // Paginate through ALL followers
     const followerDids = new Set<string>();
     let followerCursor: string | undefined;
     do {
@@ -177,6 +172,42 @@ router.get("/bluesky/not-following-back", async (req, res): Promise<void> => {
   } catch (err) {
     req.log.error({ err }, "notFollowingBack failed");
     res.status(500).json({ error: "Failed to compute not-following-back list" });
+  }
+});
+
+// GET /api/bluesky/search-users?q=...&cursor=...&limit=25
+router.get("/bluesky/search-users", async (req, res): Promise<void> => {
+  const q = (req.query.q as string | undefined)?.trim();
+  if (!q) { res.status(400).json({ error: "q query param required" }); return; }
+
+  const cursor = req.query.cursor as string | undefined;
+  const limit = Math.min(parseInt((req.query.limit as string) || "25"), 50);
+
+  try {
+    const agent = await getPublicAgent();
+    const result = await agent.searchActors({ q, limit, cursor });
+
+    const users = result.data.actors.map(u => ({
+      did: u.did,
+      handle: u.handle,
+      displayName: u.displayName ?? null,
+      avatar: u.avatar ?? null,
+      description: u.description ?? null,
+      followersCount: (u as { followersCount?: number }).followersCount ?? 0,
+      followsCount: (u as { followsCount?: number }).followsCount ?? 0,
+      postsCount: (u as { postsCount?: number }).postsCount ?? 0,
+      // Heuristic bot signals
+      followerRatio: (() => {
+        const followers = (u as { followersCount?: number }).followersCount ?? 0;
+        const follows = (u as { followsCount?: number }).followsCount ?? 1;
+        return Math.round((followers / follows) * 100) / 100;
+      })(),
+    }));
+
+    res.json({ users, cursor: result.data.cursor ?? null });
+  } catch (err) {
+    req.log.error({ err }, "searchUsers failed");
+    res.status(500).json({ error: "Search failed" });
   }
 });
 
@@ -197,7 +228,7 @@ router.post("/bluesky/bulk-follow", async (req, res): Promise<void> => {
       try {
         await agent.follow(did);
         succeeded++;
-        await new Promise(r => setTimeout(r, 200)); // rate limit friendly
+        await new Promise(r => setTimeout(r, 200));
       } catch (err) {
         failed++;
         errors.push(`${did}: ${String(err)}`);
@@ -225,12 +256,9 @@ router.post("/bluesky/bulk-unfollow", async (req, res): Promise<void> => {
 
     for (const did of dids.slice(0, 100)) {
       try {
-        // Get the follow record URI first
         const profile = await agent.getProfile({ actor: did });
         const followUri = (profile.data as { viewer?: { following?: string } }).viewer?.following;
         if (!followUri) { failed++; errors.push(`${did}: not following`); continue; }
-
-        const parts = followUri.split("/");
         await agent.deleteFollow(followUri);
         succeeded++;
         await new Promise(r => setTimeout(r, 200));
