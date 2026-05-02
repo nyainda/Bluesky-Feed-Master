@@ -243,3 +243,87 @@ export const GetTopFeedsResponseItem = zod.object({
   postCount: zod.number(),
 });
 export const GetTopFeedsResponse = zod.array(GetTopFeedsResponseItem);
+
+/**
+ * @summary Get 7-day daily post indexing activity
+ */
+export const Get7DayActivityResponseItem = zod.object({
+  day: zod.string(),
+  count: zod.number(),
+});
+export const Get7DayActivityResponse = zod.array(Get7DayActivityResponseItem);
+
+/**
+ * @summary Get keyword performance stats for a feed
+ */
+export const GetFeedKeywordStatsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetFeedKeywordStatsResponseItem = zod.object({
+  keyword: zod.string(),
+  postCount: zod.number(),
+  percentage: zod.number(),
+});
+export const GetFeedKeywordStatsResponse = zod.array(
+  GetFeedKeywordStatsResponseItem,
+);
+
+/**
+ * @summary Get top contributing authors for a feed
+ */
+export const GetFeedTopAuthorsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetFeedTopAuthorsResponseItem = zod.object({
+  did: zod.string(),
+  postCount: zod.number(),
+  latestPostAt: zod.string(),
+});
+export const GetFeedTopAuthorsResponse = zod.array(
+  GetFeedTopAuthorsResponseItem,
+);
+
+/**
+ * @summary Get hourly post activity for a feed (last 24h)
+ */
+export const GetFeedHourlyParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetFeedHourlyResponseItem = zod.object({
+  hour: zod.string(),
+  count: zod.number(),
+});
+export const GetFeedHourlyResponse = zod.array(GetFeedHourlyResponseItem);
+
+/**
+ * @summary Get the publisher's Bluesky profile info
+ */
+export const GetBlueskyProfileResponse = zod.object({
+  did: zod.string(),
+  handle: zod.string(),
+  displayName: zod.string().nullish(),
+  avatar: zod.string().nullish(),
+  description: zod.string().nullish(),
+  followersCount: zod.number(),
+  followsCount: zod.number(),
+  postsCount: zod.number(),
+});
+
+/**
+ * @summary Get feed generator info from Bluesky (like count, viewers)
+ */
+export const GetBlueskyFeedInfoParams = zod.object({
+  recordName: zod.coerce.string(),
+});
+
+export const GetBlueskyFeedInfoResponse = zod.object({
+  uri: zod.string(),
+  cid: zod.string(),
+  displayName: zod.string(),
+  description: zod.string().nullish(),
+  likeCount: zod.number(),
+  viewerLiked: zod.string().nullish(),
+});

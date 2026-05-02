@@ -7,6 +7,7 @@ import Dashboard from "@/pages/Dashboard";
 import Feeds from "@/pages/Feeds";
 import FeedDetail from "@/pages/FeedDetail";
 import Posts from "@/pages/Posts";
+import Analytics from "@/pages/Analytics";
 import Settings from "@/pages/Settings";
 import NotFound from "@/pages/not-found";
 
@@ -15,6 +16,7 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 30_000,
       refetchInterval: 60_000,
+      retry: 1,
     },
   },
 });
@@ -27,6 +29,7 @@ function Router() {
         <Route path="/feeds" component={Feeds} />
         <Route path="/feeds/:id" component={FeedDetail} />
         <Route path="/posts" component={Posts} />
+        <Route path="/analytics" component={Analytics} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>

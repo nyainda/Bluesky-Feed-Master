@@ -18,14 +18,19 @@ import type {
 
 import type {
   ActivityBucket,
+  AuthorStat,
+  BlueskyFeedInfo,
+  BlueskyProfile,
   CreateFeedBody,
   CreateKeywordBody,
+  DailyBucket,
   Feed,
   FeedRanking,
   FirehoseStatus,
   GetFeedPostsParams,
   HealthStatus,
   Keyword,
+  KeywordStat,
   ListPostsParams,
   PostsPage,
   PublishFeedResult,
@@ -1353,6 +1358,506 @@ export function useGetTopFeeds<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetTopFeedsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get 7-day daily post indexing activity
+ */
+export const getGet7DayActivityUrl = () => {
+  return `/api/stats/7day`;
+};
+
+export const get7DayActivity = async (
+  options?: RequestInit,
+): Promise<DailyBucket[]> => {
+  return customFetch<DailyBucket[]>(getGet7DayActivityUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGet7DayActivityQueryKey = () => {
+  return [`/api/stats/7day`] as const;
+};
+
+export const getGet7DayActivityQueryOptions = <
+  TData = Awaited<ReturnType<typeof get7DayActivity>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof get7DayActivity>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGet7DayActivityQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof get7DayActivity>>> = ({
+    signal,
+  }) => get7DayActivity({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof get7DayActivity>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type Get7DayActivityQueryResult = NonNullable<
+  Awaited<ReturnType<typeof get7DayActivity>>
+>;
+export type Get7DayActivityQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get 7-day daily post indexing activity
+ */
+
+export function useGet7DayActivity<
+  TData = Awaited<ReturnType<typeof get7DayActivity>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof get7DayActivity>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGet7DayActivityQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get keyword performance stats for a feed
+ */
+export const getGetFeedKeywordStatsUrl = (id: number) => {
+  return `/api/feeds/${id}/keyword-stats`;
+};
+
+export const getFeedKeywordStats = async (
+  id: number,
+  options?: RequestInit,
+): Promise<KeywordStat[]> => {
+  return customFetch<KeywordStat[]>(getGetFeedKeywordStatsUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetFeedKeywordStatsQueryKey = (id: number) => {
+  return [`/api/feeds/${id}/keyword-stats`] as const;
+};
+
+export const getGetFeedKeywordStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFeedKeywordStats>>,
+  TError = ErrorType<void>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getFeedKeywordStats>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetFeedKeywordStatsQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getFeedKeywordStats>>
+  > = ({ signal }) => getFeedKeywordStats(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFeedKeywordStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFeedKeywordStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFeedKeywordStats>>
+>;
+export type GetFeedKeywordStatsQueryError = ErrorType<void>;
+
+/**
+ * @summary Get keyword performance stats for a feed
+ */
+
+export function useGetFeedKeywordStats<
+  TData = Awaited<ReturnType<typeof getFeedKeywordStats>>,
+  TError = ErrorType<void>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getFeedKeywordStats>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFeedKeywordStatsQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get top contributing authors for a feed
+ */
+export const getGetFeedTopAuthorsUrl = (id: number) => {
+  return `/api/feeds/${id}/top-authors`;
+};
+
+export const getFeedTopAuthors = async (
+  id: number,
+  options?: RequestInit,
+): Promise<AuthorStat[]> => {
+  return customFetch<AuthorStat[]>(getGetFeedTopAuthorsUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetFeedTopAuthorsQueryKey = (id: number) => {
+  return [`/api/feeds/${id}/top-authors`] as const;
+};
+
+export const getGetFeedTopAuthorsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFeedTopAuthors>>,
+  TError = ErrorType<void>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getFeedTopAuthors>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetFeedTopAuthorsQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getFeedTopAuthors>>
+  > = ({ signal }) => getFeedTopAuthors(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFeedTopAuthors>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFeedTopAuthorsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFeedTopAuthors>>
+>;
+export type GetFeedTopAuthorsQueryError = ErrorType<void>;
+
+/**
+ * @summary Get top contributing authors for a feed
+ */
+
+export function useGetFeedTopAuthors<
+  TData = Awaited<ReturnType<typeof getFeedTopAuthors>>,
+  TError = ErrorType<void>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getFeedTopAuthors>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFeedTopAuthorsQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get hourly post activity for a feed (last 24h)
+ */
+export const getGetFeedHourlyUrl = (id: number) => {
+  return `/api/feeds/${id}/hourly`;
+};
+
+export const getFeedHourly = async (
+  id: number,
+  options?: RequestInit,
+): Promise<ActivityBucket[]> => {
+  return customFetch<ActivityBucket[]>(getGetFeedHourlyUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetFeedHourlyQueryKey = (id: number) => {
+  return [`/api/feeds/${id}/hourly`] as const;
+};
+
+export const getGetFeedHourlyQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFeedHourly>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getFeedHourly>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetFeedHourlyQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getFeedHourly>>> = ({
+    signal,
+  }) => getFeedHourly(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFeedHourly>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFeedHourlyQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFeedHourly>>
+>;
+export type GetFeedHourlyQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get hourly post activity for a feed (last 24h)
+ */
+
+export function useGetFeedHourly<
+  TData = Awaited<ReturnType<typeof getFeedHourly>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getFeedHourly>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFeedHourlyQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get the publisher's Bluesky profile info
+ */
+export const getGetBlueskyProfileUrl = () => {
+  return `/api/bluesky/profile`;
+};
+
+export const getBlueskyProfile = async (
+  options?: RequestInit,
+): Promise<BlueskyProfile> => {
+  return customFetch<BlueskyProfile>(getGetBlueskyProfileUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetBlueskyProfileQueryKey = () => {
+  return [`/api/bluesky/profile`] as const;
+};
+
+export const getGetBlueskyProfileQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBlueskyProfile>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getBlueskyProfile>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetBlueskyProfileQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getBlueskyProfile>>
+  > = ({ signal }) => getBlueskyProfile({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBlueskyProfile>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetBlueskyProfileQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBlueskyProfile>>
+>;
+export type GetBlueskyProfileQueryError = ErrorType<void>;
+
+/**
+ * @summary Get the publisher's Bluesky profile info
+ */
+
+export function useGetBlueskyProfile<
+  TData = Awaited<ReturnType<typeof getBlueskyProfile>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getBlueskyProfile>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetBlueskyProfileQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get feed generator info from Bluesky (like count, viewers)
+ */
+export const getGetBlueskyFeedInfoUrl = (recordName: string) => {
+  return `/api/bluesky/feed-info/${recordName}`;
+};
+
+export const getBlueskyFeedInfo = async (
+  recordName: string,
+  options?: RequestInit,
+): Promise<BlueskyFeedInfo> => {
+  return customFetch<BlueskyFeedInfo>(getGetBlueskyFeedInfoUrl(recordName), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetBlueskyFeedInfoQueryKey = (recordName: string) => {
+  return [`/api/bluesky/feed-info/${recordName}`] as const;
+};
+
+export const getGetBlueskyFeedInfoQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBlueskyFeedInfo>>,
+  TError = ErrorType<void>,
+>(
+  recordName: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBlueskyFeedInfo>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetBlueskyFeedInfoQueryKey(recordName);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getBlueskyFeedInfo>>
+  > = ({ signal }) =>
+    getBlueskyFeedInfo(recordName, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!recordName,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBlueskyFeedInfo>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetBlueskyFeedInfoQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBlueskyFeedInfo>>
+>;
+export type GetBlueskyFeedInfoQueryError = ErrorType<void>;
+
+/**
+ * @summary Get feed generator info from Bluesky (like count, viewers)
+ */
+
+export function useGetBlueskyFeedInfo<
+  TData = Awaited<ReturnType<typeof getBlueskyFeedInfo>>,
+  TError = ErrorType<void>,
+>(
+  recordName: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBlueskyFeedInfo>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetBlueskyFeedInfoQueryOptions(recordName, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

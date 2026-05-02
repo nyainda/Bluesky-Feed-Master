@@ -105,6 +105,48 @@ export interface FeedRanking {
   postCount: number;
 }
 
+export interface DailyBucket {
+  day: string;
+  count: number;
+}
+
+export interface KeywordStat {
+  keyword: string;
+  postCount: number;
+  percentage: number;
+}
+
+export interface AuthorStat {
+  did: string;
+  postCount: number;
+  latestPostAt: string;
+}
+
+export interface BlueskyProfile {
+  did: string;
+  handle: string;
+  /** @nullable */
+  displayName?: string | null;
+  /** @nullable */
+  avatar?: string | null;
+  /** @nullable */
+  description?: string | null;
+  followersCount: number;
+  followsCount: number;
+  postsCount: number;
+}
+
+export interface BlueskyFeedInfo {
+  uri: string;
+  cid: string;
+  displayName: string;
+  /** @nullable */
+  description?: string | null;
+  likeCount: number;
+  /** @nullable */
+  viewerLiked?: string | null;
+}
+
 export type GetFeedPostsParams = {
   limit?: number;
   /**

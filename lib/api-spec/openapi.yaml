@@ -329,6 +329,124 @@ paths:
                 items:
                   $ref: "#/components/schemas/FeedRanking"
 
+  /stats/7day:
+    get:
+      operationId: get7DayActivity
+      tags: [stats]
+      summary: Get 7-day daily post indexing activity
+      responses:
+        "200":
+          description: Daily activity buckets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DailyBucket"
+
+  /feeds/{id}/keyword-stats:
+    get:
+      operationId: getFeedKeywordStats
+      tags: [feeds]
+      summary: Get keyword performance stats for a feed
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Keyword stats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/KeywordStat"
+        "404":
+          description: Feed not found
+
+  /feeds/{id}/top-authors:
+    get:
+      operationId: getFeedTopAuthors
+      tags: [feeds]
+      summary: Get top contributing authors for a feed
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Top authors
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuthorStat"
+        "404":
+          description: Feed not found
+
+  /feeds/{id}/hourly:
+    get:
+      operationId: getFeedHourly
+      tags: [feeds]
+      summary: Get hourly post activity for a feed (last 24h)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Hourly buckets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityBucket"
+
+  /bluesky/profile:
+    get:
+      operationId: getBlueskyProfile
+      tags: [stats]
+      summary: Get the publisher's Bluesky profile info
+      responses:
+        "200":
+          description: Profile info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlueskyProfile"
+        "404":
+          description: Publisher DID not configured
+
+  /bluesky/feed-info/{recordName}:
+    get:
+      operationId: getBlueskyFeedInfo
+      tags: [stats]
+      summary: Get feed generator info from Bluesky (like count, viewers)
+      parameters:
+        - name: recordName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Feed info from Bluesky
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlueskyFeedInfo"
+        "404":
+          description: Not found or not published
+
 components:
   schemas:
     HealthStatus:
@@ -547,3 +665,89 @@ components:
         - recordName
         - displayName
         - postCount
+
+    DailyBucket:
+      type: object
+      properties:
+        day:
+          type: string
+        count:
+          type: integer
+      required:
+        - day
+        - count
+
+    KeywordStat:
+      type: object
+      properties:
+        keyword:
+          type: string
+        postCount:
+          type: integer
+        percentage:
+          type: number
+      required:
+        - keyword
+        - postCount
+        - percentage
+
+    AuthorStat:
+      type: object
+      properties:
+        did:
+          type: string
+        postCount:
+          type: integer
+        latestPostAt:
+          type: string
+      required:
+        - did
+        - postCount
+        - latestPostAt
+
+    BlueskyProfile:
+      type: object
+      properties:
+        did:
+          type: string
+        handle:
+          type: string
+        displayName:
+          type: ["string", "null"]
+        avatar:
+          type: ["string", "null"]
+        description:
+          type: ["string", "null"]
+        followersCount:
+          type: integer
+        followsCount:
+          type: integer
+        postsCount:
+          type: integer
+      required:
+        - did
+        - handle
+        - followersCount
+        - followsCount
+        - postsCount
+
+    BlueskyFeedInfo:
+      type: object
+      properties:
+        uri:
+          type: string
+        cid:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: ["string", "null"]
+        likeCount:
+          type: integer
+        viewerLiked:
+          type: ["string", "null"]
+      required:
+        - uri
+        - cid
+        - displayName
+        - likeCount
