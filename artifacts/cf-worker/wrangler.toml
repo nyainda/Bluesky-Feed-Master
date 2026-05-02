@@ -8,7 +8,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "feedforge-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "6d1329cc-e8b9-4183-bbf6-42ede9a83b74"
 
 # ─── Cron Trigger (replaces firehose — indexes posts every 3 minutes) ──────────
 [triggers]
