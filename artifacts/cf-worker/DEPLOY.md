@@ -1,5 +1,14 @@
 # FeedForge — Cloudflare Worker Deployment Guide
 
+## ✅ DEPLOYED
+- **Worker:** https://feedforge-api.manmysterious2020.workers.dev
+- **Health:** https://feedforge-api.manmysterious2020.workers.dev/api/healthz
+- **DID doc:** https://feedforge-api.manmysterious2020.workers.dev/.well-known/did.json
+- **D1 database:** feedforge-db (`6d1329cc-e8b9-4183-bbf6-42ede9a83b74`)
+- **Cron:** Every 3 minutes
+
+---
+
 Complete 100% free stack: Cloudflare Workers (API) + D1 (database) + Pages (frontend).
 Posts are indexed via Cron Triggers every 3 minutes instead of a real-time firehose.
 

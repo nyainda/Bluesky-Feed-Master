@@ -112,6 +112,7 @@ export default function Settings() {
   });
   const [activeOption, setActiveOption] = useState<DeployOption>("cf-full");
 
+  const workerUrl = "feedforge-api.manmysterious2020.workers.dev";
   const hostname = window.location.hostname;
   const publisherDid = "(set FEEDGEN_PUBLISHER_DID)";
   const serviceDid = `did:web:${hostname}`;
@@ -203,6 +204,22 @@ export default function Settings() {
         {/* Option A: 100% Cloudflare Workers + D1 + Pages */}
         {activeOption === "cf-full" && (
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+
+            {/* Live banner */}
+            <div className="flex items-center gap-3 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
+              <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-semibold text-emerald-600">Worker deployed and live</div>
+                <a href={`https://${workerUrl}/api/healthz`} target="_blank" rel="noreferrer"
+                  className="text-xs font-mono text-emerald-700 hover:underline break-all">
+                  https://{workerUrl}
+                </a>
+              </div>
+              <a href={`https://${workerUrl}/api/healthz`} target="_blank" rel="noreferrer">
+                <ExternalLink className="w-3.5 h-3.5 text-emerald-600" />
+              </a>
+            </div>
+
             <div className="flex items-center justify-center gap-2 p-4 bg-muted/30 rounded-xl border border-border text-xs flex-wrap">
               <div className="text-center px-3 py-2 bg-orange-500/10 border border-orange-500/20 rounded-lg">
                 <div className="font-bold text-orange-600">Cloudflare Pages</div>
