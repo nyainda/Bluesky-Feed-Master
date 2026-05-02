@@ -2,6 +2,7 @@ name = "feedforge-api"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
 
 # ─── D1 Database ───────────────────────────────────────────────────────────────
 # After running `pnpm run db:create`, paste the database_id here
