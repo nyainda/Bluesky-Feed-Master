@@ -8,6 +8,7 @@ import Feeds from "@/pages/Feeds";
 import FeedDetail from "@/pages/FeedDetail";
 import Posts from "@/pages/Posts";
 import Analytics from "@/pages/Analytics";
+import Audience from "@/pages/Audience";
 import Settings from "@/pages/Settings";
 import NotFound from "@/pages/not-found";
 
@@ -30,6 +31,7 @@ function Router() {
         <Route path="/feeds/:id" component={FeedDetail} />
         <Route path="/posts" component={Posts} />
         <Route path="/analytics" component={Analytics} />
+        <Route path="/audience" component={Audience} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>

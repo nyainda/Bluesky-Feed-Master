@@ -11,6 +11,10 @@ export const indexedPostsTable = pgTable("indexed_posts", {
   algoTags: text("algo_tags").notNull().default(""),
   indexedAt: timestamp("indexed_at", { withTimezone: true }).notNull().defaultNow(),
   likes: integer("likes").notNull().default(0),
+  reposts: integer("reposts").notNull().default(0),
+  replies: integer("replies").notNull().default(0),
+  quotes: integer("quotes").notNull().default(0),
+  engagementSyncedAt: timestamp("engagement_synced_at", { withTimezone: true }),
 });
 
 export const insertIndexedPostSchema = createInsertSchema(indexedPostsTable).omit({ id: true });

@@ -164,6 +164,10 @@ export const GetFeedPostsResponse = zod.object({
       algoTags: zod.string(),
       indexedAt: zod.string(),
       likes: zod.number(),
+      reposts: zod.number(),
+      replies: zod.number(),
+      quotes: zod.number(),
+      engagementSyncedAt: zod.string().nullish(),
     }),
   ),
   cursor: zod.string().nullish(),
@@ -192,6 +196,10 @@ export const ListPostsResponse = zod.object({
       algoTags: zod.string(),
       indexedAt: zod.string(),
       likes: zod.number(),
+      reposts: zod.number(),
+      replies: zod.number(),
+      quotes: zod.number(),
+      engagementSyncedAt: zod.string().nullish(),
     }),
   ),
   cursor: zod.string().nullish(),
@@ -326,4 +334,117 @@ export const GetBlueskyFeedInfoResponse = zod.object({
   description: zod.string().nullish(),
   likeCount: zod.number(),
   viewerLiked: zod.string().nullish(),
+});
+
+/**
+ * @summary Sync real engagement data (likes, reposts, replies, quotes) from Bluesky for recent indexed posts
+ */
+export const syncEngagementBodyLimitDefault = 100;
+
+export const SyncEngagementBody = zod.object({
+  feedId: zod.number().nullish(),
+  limit: zod.number().default(syncEngagementBodyLimitDefault),
+});
+
+export const SyncEngagementResponse = zod.object({
+  updated: zod.number(),
+  skipped: zod.number(),
+  errors: zod.number(),
+});
+
+/**
+ * @summary Get your Bluesky followers
+ */
+export const getFollowersQueryLimitDefault = 50;
+
+export const GetFollowersQueryParams = zod.object({
+  cursor: zod.coerce.string().nullish(),
+  limit: zod.coerce.number().default(getFollowersQueryLimitDefault),
+});
+
+export const GetFollowersResponse = zod.object({
+  users: zod.array(
+    zod.object({
+      did: zod.string(),
+      handle: zod.string(),
+      displayName: zod.string().nullish(),
+      avatar: zod.string().nullish(),
+      description: zod.string().nullish(),
+      followersCount: zod.number(),
+      followsCount: zod.number(),
+      followedAt: zod.string().nullish(),
+    }),
+  ),
+  cursor: zod.string().nullish(),
+  total: zod.number(),
+});
+
+/**
+ * @summary Get accounts you follow on Bluesky
+ */
+export const getFollowingQueryLimitDefault = 50;
+
+export const GetFollowingQueryParams = zod.object({
+  cursor: zod.coerce.string().nullish(),
+  limit: zod.coerce.number().default(getFollowingQueryLimitDefault),
+});
+
+export const GetFollowingResponse = zod.object({
+  users: zod.array(
+    zod.object({
+      did: zod.string(),
+      handle: zod.string(),
+      displayName: zod.string().nullish(),
+      avatar: zod.string().nullish(),
+      description: zod.string().nullish(),
+      followersCount: zod.number(),
+      followsCount: zod.number(),
+      followedAt: zod.string().nullish(),
+    }),
+  ),
+  cursor: zod.string().nullish(),
+  total: zod.number(),
+});
+
+/**
+ * @summary Get people you follow who do not follow you back
+ */
+export const GetNotFollowingBackResponseItem = zod.object({
+  did: zod.string(),
+  handle: zod.string(),
+  displayName: zod.string().nullish(),
+  avatar: zod.string().nullish(),
+  description: zod.string().nullish(),
+  followersCount: zod.number(),
+  followsCount: zod.number(),
+  followedAt: zod.string().nullish(),
+});
+export const GetNotFollowingBackResponse = zod.array(
+  GetNotFollowingBackResponseItem,
+);
+
+/**
+ * @summary Follow multiple Bluesky accounts
+ */
+export const BulkFollowBody = zod.object({
+  dids: zod.array(zod.string()),
+});
+
+export const BulkFollowResponse = zod.object({
+  succeeded: zod.number(),
+  failed: zod.number(),
+  errors: zod.array(zod.string()),
+});
+
+/**
+ * @summary Unfollow multiple Bluesky accounts
+ */
+export const BulkUnfollowBody = zod.object({
+  dids: zod.array(zod.string()),
+});
+
+export const BulkUnfollowResponse = zod.object({
+  succeeded: zod.number(),
+  failed: zod.number(),
+  errors: zod.array(zod.string()),
 });

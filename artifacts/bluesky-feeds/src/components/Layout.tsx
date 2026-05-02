@@ -1,13 +1,14 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Rss, FileText, Settings, Wifi, WifiOff, BarChart3, ChevronUp, ChevronDown } from "lucide-react";
+import { LayoutDashboard, Rss, FileText, Settings, Wifi, WifiOff, BarChart3, Users2 } from "lucide-react";
 import { useGetFirehoseStatus, useGetStatsOverview, useGetBlueskyProfile } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/feeds", label: "Feeds", icon: Rss },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/audience", label: "Audience", icon: Users2 },
   { href: "/posts", label: "Posts", icon: FileText },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
@@ -125,7 +126,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <Link key={href} href={href}>
                 <motion.div
                   whileHover={{ x: 2 }}
-                  data-testid={`nav-${label.toLowerCase()}`}
                   className={cn(
                     "flex items-center gap-2.5 px-3 py-2 rounded-md text-xs font-medium cursor-pointer transition-colors",
                     active

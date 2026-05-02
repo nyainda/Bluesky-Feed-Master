@@ -447,6 +447,129 @@ paths:
         "404":
           description: Not found or not published
 
+  /bluesky/sync-engagement:
+    post:
+      operationId: syncEngagement
+      tags: [stats]
+      summary: Sync real engagement data (likes, reposts, replies, quotes) from Bluesky for recent indexed posts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                feedId:
+                  type: ["integer", "null"]
+                limit:
+                  type: integer
+                  default: 100
+      responses:
+        "200":
+          description: Sync result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncResult"
+
+  /bluesky/followers:
+    get:
+      operationId: getFollowers
+      tags: [stats]
+      summary: Get your Bluesky followers
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Followers page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AudiencePage"
+
+  /bluesky/following:
+    get:
+      operationId: getFollowing
+      tags: [stats]
+      summary: Get accounts you follow on Bluesky
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Following page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AudiencePage"
+
+  /bluesky/not-following-back:
+    get:
+      operationId: getNotFollowingBack
+      tags: [stats]
+      summary: Get people you follow who do not follow you back
+      responses:
+        "200":
+          description: List of users not following back
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AudienceUser"
+
+  /bluesky/bulk-follow:
+    post:
+      operationId: bulkFollow
+      tags: [stats]
+      summary: Follow multiple Bluesky accounts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkActionBody"
+      responses:
+        "200":
+          description: Bulk action result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkActionResult"
+
+  /bluesky/bulk-unfollow:
+    post:
+      operationId: bulkUnfollow
+      tags: [stats]
+      summary: Unfollow multiple Bluesky accounts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkActionBody"
+      responses:
+        "200":
+          description: Bulk action result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkActionResult"
+
 components:
   schemas:
     HealthStatus:
@@ -554,6 +677,14 @@ components:
           type: string
         likes:
           type: integer
+        reposts:
+          type: integer
+        replies:
+          type: integer
+        quotes:
+          type: integer
+        engagementSyncedAt:
+          type: ["string", "null"]
       required:
         - id
         - uri
@@ -563,6 +694,9 @@ components:
         - algoTags
         - indexedAt
         - likes
+        - reposts
+        - replies
+        - quotes
 
     PostsPage:
       type: object
@@ -751,3 +885,83 @@ components:
         - cid
         - displayName
         - likeCount
+
+    AudienceUser:
+      type: object
+      properties:
+        did:
+          type: string
+        handle:
+          type: string
+        displayName:
+          type: ["string", "null"]
+        avatar:
+          type: ["string", "null"]
+        description:
+          type: ["string", "null"]
+        followersCount:
+          type: integer
+        followsCount:
+          type: integer
+        followedAt:
+          type: ["string", "null"]
+      required:
+        - did
+        - handle
+        - followersCount
+        - followsCount
+
+    AudiencePage:
+      type: object
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/AudienceUser"
+        cursor:
+          type: ["string", "null"]
+        total:
+          type: integer
+      required:
+        - users
+        - total
+
+    SyncResult:
+      type: object
+      properties:
+        updated:
+          type: integer
+        skipped:
+          type: integer
+        errors:
+          type: integer
+      required:
+        - updated
+        - skipped
+        - errors
+
+    BulkActionBody:
+      type: object
+      properties:
+        dids:
+          type: array
+          items:
+            type: string
+      required:
+        - dids
+
+    BulkActionResult:
+      type: object
+      properties:
+        succeeded:
+          type: integer
+        failed:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+      required:
+        - succeeded
+        - failed
+        - errors

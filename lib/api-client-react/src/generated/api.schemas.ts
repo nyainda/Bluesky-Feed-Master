@@ -59,6 +59,11 @@ export interface IndexedPost {
   algoTags: string;
   indexedAt: string;
   likes: number;
+  reposts: number;
+  replies: number;
+  quotes: number;
+  /** @nullable */
+  engagementSyncedAt?: string | null;
 }
 
 export interface PostsPage {
@@ -147,6 +152,44 @@ export interface BlueskyFeedInfo {
   viewerLiked?: string | null;
 }
 
+export interface AudienceUser {
+  did: string;
+  handle: string;
+  /** @nullable */
+  displayName?: string | null;
+  /** @nullable */
+  avatar?: string | null;
+  /** @nullable */
+  description?: string | null;
+  followersCount: number;
+  followsCount: number;
+  /** @nullable */
+  followedAt?: string | null;
+}
+
+export interface AudiencePage {
+  users: AudienceUser[];
+  /** @nullable */
+  cursor?: string | null;
+  total: number;
+}
+
+export interface SyncResult {
+  updated: number;
+  skipped: number;
+  errors: number;
+}
+
+export interface BulkActionBody {
+  dids: string[];
+}
+
+export interface BulkActionResult {
+  succeeded: number;
+  failed: number;
+  errors: string[];
+}
+
 export type GetFeedPostsParams = {
   limit?: number;
   /**
@@ -165,4 +208,26 @@ export type ListPostsParams = {
    * @nullable
    */
   search?: string | null;
+};
+
+export type SyncEngagementBody = {
+  /** @nullable */
+  feedId?: number | null;
+  limit?: number;
+};
+
+export type GetFollowersParams = {
+  /**
+   * @nullable
+   */
+  cursor?: string | null;
+  limit?: number;
+};
+
+export type GetFollowingParams = {
+  /**
+   * @nullable
+   */
+  cursor?: string | null;
+  limit?: number;
 };

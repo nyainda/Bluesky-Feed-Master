@@ -18,9 +18,13 @@ import type {
 
 import type {
   ActivityBucket,
+  AudiencePage,
+  AudienceUser,
   AuthorStat,
   BlueskyFeedInfo,
   BlueskyProfile,
+  BulkActionBody,
+  BulkActionResult,
   CreateFeedBody,
   CreateKeywordBody,
   DailyBucket,
@@ -28,6 +32,8 @@ import type {
   FeedRanking,
   FirehoseStatus,
   GetFeedPostsParams,
+  GetFollowersParams,
+  GetFollowingParams,
   HealthStatus,
   Keyword,
   KeywordStat,
@@ -35,6 +41,8 @@ import type {
   PostsPage,
   PublishFeedResult,
   StatsOverview,
+  SyncEngagementBody,
+  SyncResult,
   UpdateFeedBody,
 } from "./api.schemas";
 
@@ -1865,3 +1873,524 @@ export function useGetBlueskyFeedInfo<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Sync real engagement data (likes, reposts, replies, quotes) from Bluesky for recent indexed posts
+ */
+export const getSyncEngagementUrl = () => {
+  return `/api/bluesky/sync-engagement`;
+};
+
+export const syncEngagement = async (
+  syncEngagementBody: SyncEngagementBody,
+  options?: RequestInit,
+): Promise<SyncResult> => {
+  return customFetch<SyncResult>(getSyncEngagementUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(syncEngagementBody),
+  });
+};
+
+export const getSyncEngagementMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof syncEngagement>>,
+    TError,
+    { data: BodyType<SyncEngagementBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof syncEngagement>>,
+  TError,
+  { data: BodyType<SyncEngagementBody> },
+  TContext
+> => {
+  const mutationKey = ["syncEngagement"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof syncEngagement>>,
+    { data: BodyType<SyncEngagementBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return syncEngagement(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SyncEngagementMutationResult = NonNullable<
+  Awaited<ReturnType<typeof syncEngagement>>
+>;
+export type SyncEngagementMutationBody = BodyType<SyncEngagementBody>;
+export type SyncEngagementMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Sync real engagement data (likes, reposts, replies, quotes) from Bluesky for recent indexed posts
+ */
+export const useSyncEngagement = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof syncEngagement>>,
+    TError,
+    { data: BodyType<SyncEngagementBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof syncEngagement>>,
+  TError,
+  { data: BodyType<SyncEngagementBody> },
+  TContext
+> => {
+  return useMutation(getSyncEngagementMutationOptions(options));
+};
+
+/**
+ * @summary Get your Bluesky followers
+ */
+export const getGetFollowersUrl = (params?: GetFollowersParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/bluesky/followers?${stringifiedParams}`
+    : `/api/bluesky/followers`;
+};
+
+export const getFollowers = async (
+  params?: GetFollowersParams,
+  options?: RequestInit,
+): Promise<AudiencePage> => {
+  return customFetch<AudiencePage>(getGetFollowersUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetFollowersQueryKey = (params?: GetFollowersParams) => {
+  return [`/api/bluesky/followers`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetFollowersQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFollowers>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetFollowersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getFollowers>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetFollowersQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getFollowers>>> = ({
+    signal,
+  }) => getFollowers(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFollowers>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFollowersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFollowers>>
+>;
+export type GetFollowersQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get your Bluesky followers
+ */
+
+export function useGetFollowers<
+  TData = Awaited<ReturnType<typeof getFollowers>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetFollowersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getFollowers>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFollowersQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get accounts you follow on Bluesky
+ */
+export const getGetFollowingUrl = (params?: GetFollowingParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/bluesky/following?${stringifiedParams}`
+    : `/api/bluesky/following`;
+};
+
+export const getFollowing = async (
+  params?: GetFollowingParams,
+  options?: RequestInit,
+): Promise<AudiencePage> => {
+  return customFetch<AudiencePage>(getGetFollowingUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetFollowingQueryKey = (params?: GetFollowingParams) => {
+  return [`/api/bluesky/following`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetFollowingQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFollowing>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetFollowingParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getFollowing>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetFollowingQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getFollowing>>> = ({
+    signal,
+  }) => getFollowing(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFollowing>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFollowingQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFollowing>>
+>;
+export type GetFollowingQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get accounts you follow on Bluesky
+ */
+
+export function useGetFollowing<
+  TData = Awaited<ReturnType<typeof getFollowing>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetFollowingParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getFollowing>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFollowingQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get people you follow who do not follow you back
+ */
+export const getGetNotFollowingBackUrl = () => {
+  return `/api/bluesky/not-following-back`;
+};
+
+export const getNotFollowingBack = async (
+  options?: RequestInit,
+): Promise<AudienceUser[]> => {
+  return customFetch<AudienceUser[]>(getGetNotFollowingBackUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetNotFollowingBackQueryKey = () => {
+  return [`/api/bluesky/not-following-back`] as const;
+};
+
+export const getGetNotFollowingBackQueryOptions = <
+  TData = Awaited<ReturnType<typeof getNotFollowingBack>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getNotFollowingBack>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetNotFollowingBackQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getNotFollowingBack>>
+  > = ({ signal }) => getNotFollowingBack({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getNotFollowingBack>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetNotFollowingBackQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getNotFollowingBack>>
+>;
+export type GetNotFollowingBackQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get people you follow who do not follow you back
+ */
+
+export function useGetNotFollowingBack<
+  TData = Awaited<ReturnType<typeof getNotFollowingBack>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getNotFollowingBack>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetNotFollowingBackQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Follow multiple Bluesky accounts
+ */
+export const getBulkFollowUrl = () => {
+  return `/api/bluesky/bulk-follow`;
+};
+
+export const bulkFollow = async (
+  bulkActionBody: BulkActionBody,
+  options?: RequestInit,
+): Promise<BulkActionResult> => {
+  return customFetch<BulkActionResult>(getBulkFollowUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(bulkActionBody),
+  });
+};
+
+export const getBulkFollowMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkFollow>>,
+    TError,
+    { data: BodyType<BulkActionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof bulkFollow>>,
+  TError,
+  { data: BodyType<BulkActionBody> },
+  TContext
+> => {
+  const mutationKey = ["bulkFollow"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof bulkFollow>>,
+    { data: BodyType<BulkActionBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return bulkFollow(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BulkFollowMutationResult = NonNullable<
+  Awaited<ReturnType<typeof bulkFollow>>
+>;
+export type BulkFollowMutationBody = BodyType<BulkActionBody>;
+export type BulkFollowMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Follow multiple Bluesky accounts
+ */
+export const useBulkFollow = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkFollow>>,
+    TError,
+    { data: BodyType<BulkActionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof bulkFollow>>,
+  TError,
+  { data: BodyType<BulkActionBody> },
+  TContext
+> => {
+  return useMutation(getBulkFollowMutationOptions(options));
+};
+
+/**
+ * @summary Unfollow multiple Bluesky accounts
+ */
+export const getBulkUnfollowUrl = () => {
+  return `/api/bluesky/bulk-unfollow`;
+};
+
+export const bulkUnfollow = async (
+  bulkActionBody: BulkActionBody,
+  options?: RequestInit,
+): Promise<BulkActionResult> => {
+  return customFetch<BulkActionResult>(getBulkUnfollowUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(bulkActionBody),
+  });
+};
+
+export const getBulkUnfollowMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkUnfollow>>,
+    TError,
+    { data: BodyType<BulkActionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof bulkUnfollow>>,
+  TError,
+  { data: BodyType<BulkActionBody> },
+  TContext
+> => {
+  const mutationKey = ["bulkUnfollow"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof bulkUnfollow>>,
+    { data: BodyType<BulkActionBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return bulkUnfollow(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BulkUnfollowMutationResult = NonNullable<
+  Awaited<ReturnType<typeof bulkUnfollow>>
+>;
+export type BulkUnfollowMutationBody = BodyType<BulkActionBody>;
+export type BulkUnfollowMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Unfollow multiple Bluesky accounts
+ */
+export const useBulkUnfollow = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkUnfollow>>,
+    TError,
+    { data: BodyType<BulkActionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof bulkUnfollow>>,
+  TError,
+  { data: BodyType<BulkActionBody> },
+  TContext
+> => {
+  return useMutation(getBulkUnfollowMutationOptions(options));
+};
