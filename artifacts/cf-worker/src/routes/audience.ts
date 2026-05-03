@@ -255,44 +255,39 @@ route.get("/bluesky/not-following-back", async (c) => {
   const publisherDid = c.env.FEEDGEN_PUBLISHER_DID;
   if (!publisherDid) return c.json({ error: "FEEDGEN_PUBLISHER_DID not configured" }, 404);
 
-  // Paginate one page at a time via cursor to stay within CPU limits
-  const followingCursor = c.req.query("followingCursor");
-  const followerCursor = c.req.query("followerCursor");
+  const cursor = c.req.query("cursor") || undefined;
   const pageSize = 100;
 
   try {
     const { AtpAgent } = await import("@atproto/api");
     const agent = new AtpAgent({ service: "https://public.api.bsky.app" });
 
-    // Fetch one page of following
-    const followingResult = await agent.getFollows({
+    // getFollows returns viewer.followedBy — the follow record URI if they follow you back.
+    // This is accurate and requires only one API call per page.
+    const result = await agent.getFollows({
       actor: publisherDid,
       limit: pageSize,
-      cursor: followingCursor,
+      cursor,
     });
 
-    // Fetch one page of followers to build exclusion set
-    const followerResult = await agent.getFollowers({
-      actor: publisherDid,
-      limit: pageSize,
-      cursor: followerCursor,
-    });
-
-    const followerDids = new Set(followerResult.data.followers.map((f) => f.did));
-
-    const notFollowingBack = followingResult.data.follows
-      .filter((f) => !followerDids.has(f.did))
+    const notFollowingBack = result.data.follows
+      .filter((f) => !f.viewer?.followedBy)
       .map((u) => ({
         did: u.did,
         handle: u.handle,
         displayName: u.displayName ?? null,
         avatar: u.avatar ?? null,
+        description: u.description ?? null,
         followersCount: u.followersCount ?? 0,
         followsCount: u.followsCount ?? 0,
         followedAt: null,
       }));
 
-    return c.json(notFollowingBack);
+    return c.json({
+      users: notFollowingBack,
+      cursor: result.data.cursor ?? null,
+      hasMore: !!result.data.cursor,
+    });
   } catch (err) {
     console.error("not-following-back failed:", err);
     return c.json({ error: "Failed to compute not-following-back list" }, 500);

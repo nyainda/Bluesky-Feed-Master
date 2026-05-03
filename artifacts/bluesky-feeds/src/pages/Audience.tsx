@@ -1,9 +1,9 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  useGetFollowers, useGetFollowing, useGetNotFollowingBack,
   useSyncEngagement, useBulkFollow, useBulkUnfollow,
   useGetBlueskyProfile, useListFeeds, useGetFeedTopAuthors,
+  useGetFollowers, useGetFollowing,
   customFetch,
 } from "@workspace/api-client-react";
 import type { AudienceUser } from "@workspace/api-client-react";
@@ -437,9 +437,43 @@ export default function Audience() {
     { limit: 50, cursor: followingCursor },
     { query: { queryKey: ["following", followingCursor], enabled: tab === "following" } },
   );
-  const { data: notFollowingBack, isLoading: loadingNFB } = useGetNotFollowingBack({
-    query: { enabled: tab === "not-following-back", staleTime: 120_000, queryKey: ["not-following-back"] },
+  const [nfbUsers, setNfbUsers] = useState<AudienceUser[]>([]);
+  const [nfbCursor, setNfbCursor] = useState<string | null>(null);
+  const [nfbHasMore, setNfbHasMore] = useState(true);
+  const [nfbLoadingMore, setNfbLoadingMore] = useState(false);
+
+  const { isLoading: loadingNFB } = useQuery({
+    queryKey: ["not-following-back-init"],
+    queryFn: async () => {
+      const res = await customFetch<{ users: AudienceUser[]; cursor: string | null; hasMore: boolean }>(
+        "/api/bluesky/not-following-back",
+      );
+      setNfbUsers(res.users);
+      setNfbCursor(res.cursor);
+      setNfbHasMore(res.hasMore);
+      return res;
+    },
+    enabled: tab === "not-following-back" && nfbUsers.length === 0,
+    staleTime: 120_000,
   });
+
+  const loadMoreNFB = useCallback(async () => {
+    if (!nfbCursor || nfbLoadingMore) return;
+    setNfbLoadingMore(true);
+    try {
+      const res = await customFetch<{ users: AudienceUser[]; cursor: string | null; hasMore: boolean }>(
+        `/api/bluesky/not-following-back?cursor=${encodeURIComponent(nfbCursor)}`,
+      );
+      setNfbUsers(prev => {
+        const seen = new Set(prev.map(u => u.did));
+        return [...prev, ...res.users.filter(u => !seen.has(u.did))];
+      });
+      setNfbCursor(res.cursor);
+      setNfbHasMore(res.hasMore);
+    } finally {
+      setNfbLoadingMore(false);
+    }
+  }, [nfbCursor, nfbLoadingMore]);
 
   const numericFeedId = selectedFeedId ? parseInt(selectedFeedId) : null;
   const { data: topAuthors, isLoading: loadingTopAuthors } = useGetFeedTopAuthors(numericFeedId!, {
@@ -473,7 +507,7 @@ export default function Audience() {
   const tabs = [
     { id: "followers" as Tab, label: "Followers", icon: Users, count: profile?.followersCount },
     { id: "following" as Tab, label: "Following", icon: UserPlus, count: profile?.followsCount },
-    { id: "not-following-back" as Tab, label: "Not Following Back", icon: UserMinus, count: notFollowingBack?.length },
+    { id: "not-following-back" as Tab, label: "Not Following Back", icon: UserMinus, count: nfbUsers.length || undefined },
     { id: "top-authors" as Tab, label: "Top Authors", icon: TrendingUp, count: null },
     { id: "search" as Tab, label: "Search & Follow", icon: Search, count: null },
   ];
@@ -490,7 +524,7 @@ export default function Audience() {
 
   const currentFollowers = filterUsers(followers?.users ?? []);
   const currentFollowing = filterUsers(following?.users ?? []);
-  const currentNFB = filterUsers(notFollowingBack ?? []);
+  const currentNFB = filterUsers(nfbUsers);
   const currentTopAuthors = topAuthors ?? [];
 
   return (
@@ -510,7 +544,7 @@ export default function Audience() {
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="grid grid-cols-3 gap-4 mb-6">
           <StatBadge label="Followers" value={profile.followersCount} accent />
           <StatBadge label="Following" value={profile.followsCount} />
-          <StatBadge label="Not Following Back" value={notFollowingBack?.length ?? "—"} />
+          <StatBadge label="Not Following Back" value={nfbUsers.length > 0 ? nfbUsers.length : "—"} />
         </motion.div>
       )}
 
@@ -676,9 +710,9 @@ export default function Audience() {
                 loadingNFB ? (
                   <div className="flex flex-col items-center justify-center h-48 gap-3">
                     <RefreshCw className="w-8 h-8 text-muted-foreground/30 animate-spin" />
-                    <p className="text-sm text-muted-foreground">Analysing your followers and following lists…</p>
+                    <p className="text-sm text-muted-foreground">Checking your first 100 following…</p>
                   </div>
-                ) : currentNFB.length === 0 ? (
+                ) : currentNFB.length === 0 && !nfbHasMore ? (
                   <div className="flex flex-col items-center justify-center h-48 gap-2">
                     <Heart className="w-10 h-10 text-emerald-400/40" />
                     <p className="text-sm text-muted-foreground">Everyone you follow is following you back!</p>
@@ -695,6 +729,32 @@ export default function Audience() {
                         />
                       </motion.div>
                     ))}
+                    {nfbHasMore && (
+                      <div className="px-4 py-4 border-t border-border bg-muted/10 flex flex-col items-center gap-2">
+                        <p className="text-xs text-muted-foreground">
+                          Showing {nfbUsers.length} found so far — {nfbCursor ? "more pages available" : "all checked"}
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={loadMoreNFB}
+                          disabled={nfbLoadingMore}
+                          className="w-48"
+                        >
+                          {nfbLoadingMore
+                            ? <><RefreshCw className="w-3.5 h-3.5 mr-2 animate-spin" />Checking next 100…</>
+                            : <><ChevronRight className="w-3.5 h-3.5 mr-2" />Load next 100 following</>
+                          }
+                        </Button>
+                      </div>
+                    )}
+                    {!nfbHasMore && nfbUsers.length > 0 && (
+                      <div className="px-4 py-3 border-t border-border bg-muted/10 text-center">
+                        <p className="text-xs text-muted-foreground">
+                          ✓ All {nfbUsers.length} accounts checked — {nfbUsers.length} not following back
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )
               )}
