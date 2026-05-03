@@ -3,23 +3,27 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   useSyncEngagement, useBulkFollow, useBulkUnfollow,
   useGetBlueskyProfile, useListFeeds, useGetFeedTopAuthors,
-  useGetFollowers, useGetFollowing,
+  useGetFollowers, useGetFollowing, useGetFollowerGrowth, useSnapshotFollowers,
   customFetch,
 } from "@workspace/api-client-react";
 import type { AudienceUser } from "@workspace/api-client-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from "recharts";
+import {
   Users, UserMinus, UserPlus, RefreshCw, ExternalLink,
   ChevronLeft, ChevronRight, Search, CheckSquare, Square,
-  TrendingUp, Heart, AlertTriangle, Filter, X, ArrowUpRight,
+  TrendingUp, Heart, AlertTriangle, Filter, X, ArrowUpRight, BarChart2, Camera,
 } from "lucide-react";
+import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-type Tab = "followers" | "following" | "not-following-back" | "top-authors" | "search";
+type Tab = "followers" | "following" | "not-following-back" | "top-authors" | "search" | "growth";
 
 type SearchUser = {
   did: string;
@@ -459,6 +463,178 @@ function SearchFollowTab() {
   );
 }
 
+// ─── Follower Growth Tab ──────────────────────────────────────────────────────
+
+function tooltipStyleGrowth() {
+  return {
+    contentStyle: {
+      background: "hsl(240 8% 6%)",
+      border: "1px solid hsl(240 4% 14%)",
+      borderRadius: "10px",
+      fontSize: "11px",
+      color: "hsl(0 0% 97%)",
+      boxShadow: "0 16px 40px hsl(240 10% 2% / .8)",
+      padding: "8px 12px",
+    },
+    cursor: { stroke: "hsl(210 100% 62% / .2)", strokeWidth: 1 },
+  };
+}
+
+function FollowerGrowthTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const { data: snapshots, isLoading } = useGetFollowerGrowth({
+    query: { queryKey: ["follower-growth"], staleTime: 5 * 60_000 },
+  });
+
+  const { mutate: snapshot, isPending: snapshotting } = useSnapshotFollowers({
+    mutation: {
+      onSuccess: (data) => {
+        qc.invalidateQueries({ queryKey: ["follower-growth"] });
+        toast({
+          title: "Snapshot recorded!",
+          description: `${data.followersCount.toLocaleString()} followers captured.`,
+        });
+      },
+      onError: () => toast({ title: "Snapshot failed", variant: "destructive" }),
+    },
+  });
+
+  const list = snapshots ?? [];
+  const chartData = list.map(s => ({
+    date: format(new Date(s.recordedAt), "MMM d"),
+    Followers: s.followersCount,
+    Following: s.followsCount,
+  }));
+
+  const latest = list[list.length - 1];
+  const first = list[0];
+  const followerDelta = latest && first && list.length > 1
+    ? latest.followersCount - first.followersCount
+    : null;
+
+  return (
+    <div className="space-y-5 mt-4">
+      <div className="flex items-center justify-between">
+        <div>
+          {latest && (
+            <div className="flex items-center gap-4 flex-wrap">
+              <div>
+                <p className="text-2xl font-bold text-foreground tabular-nums">{latest.followersCount.toLocaleString()}</p>
+                <p className="text-xs text-muted-foreground">Current followers</p>
+              </div>
+              {followerDelta !== null && (
+                <div className={cn("flex items-center gap-1 text-sm font-semibold", followerDelta >= 0 ? "text-emerald-500" : "text-destructive")}>
+                  <TrendingUp className="w-4 h-4" />
+                  {followerDelta >= 0 ? "+" : ""}{followerDelta.toLocaleString()} since first snapshot
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-2 text-xs flex-shrink-0"
+          onClick={() => snapshot()}
+          disabled={snapshotting}
+        >
+          {snapshotting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+          {snapshotting ? "Recording…" : "Record Snapshot"}
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="h-64 bg-card border border-card-border rounded-xl animate-pulse" />
+      ) : list.length < 2 ? (
+        <div className="flex flex-col items-center justify-center h-64 gap-4 bg-card border border-card-border rounded-xl text-center px-8">
+          <div className="w-12 h-12 rounded-2xl bg-muted border border-border flex items-center justify-center">
+            <BarChart2 className="w-6 h-6 text-muted-foreground/40" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-foreground">Not enough data yet</p>
+            <p className="text-xs text-muted-foreground mt-1 max-w-xs">
+              {list.length === 0
+                ? "Record your first snapshot to start tracking follower growth over time."
+                : "Record one more snapshot to see your growth chart."}
+            </p>
+          </div>
+          <Button size="sm" className="gap-2 text-xs" onClick={() => snapshot()} disabled={snapshotting}>
+            {snapshotting ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Camera className="w-3 h-3" />}
+            {list.length === 0 ? "Take First Snapshot" : "Take Another Snapshot"}
+          </Button>
+        </div>
+      ) : (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-card border border-card-border rounded-xl p-5 md:p-6"
+        >
+          <h3 className="text-sm font-semibold text-foreground mb-4">Follower Growth Over Time</h3>
+          <ResponsiveContainer width="100%" height={240}>
+            <LineChart data={chartData} margin={{ top: 4, right: 12, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 6% 90% / .5)" />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "hsl(240 4% 46%)" }} tickLine={false} axisLine={false} />
+              <YAxis tick={{ fontSize: 10, fill: "hsl(240 4% 46%)" }} tickLine={false} axisLine={false} />
+              <Tooltip {...tooltipStyleGrowth()} />
+              <Line
+                type="monotone"
+                dataKey="Followers"
+                stroke="hsl(210 100% 58%)"
+                strokeWidth={2}
+                dot={{ fill: "hsl(210 100% 58%)", r: 3 }}
+                activeDot={{ r: 5 }}
+              />
+              <Line
+                type="monotone"
+                dataKey="Following"
+                stroke="hsl(168 84% 42%)"
+                strokeWidth={2}
+                dot={{ fill: "hsl(168 84% 42%)", r: 3 }}
+                activeDot={{ r: 5 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+          <p className="text-xs text-muted-foreground text-center mt-3">
+            <span className="inline-flex items-center gap-1.5 mr-4">
+              <span className="w-2.5 h-1 rounded-full bg-primary inline-block" /> Followers
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-2.5 h-1 rounded-full bg-emerald-500 inline-block" /> Following
+            </span>
+          </p>
+        </motion.div>
+      )}
+
+      {list.length > 0 && (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bg-card border border-card-border rounded-xl p-5">
+          <h3 className="text-sm font-semibold text-foreground mb-3">Snapshot History</h3>
+          <div className="space-y-2 max-h-60 overflow-y-auto">
+            {[...list].reverse().map((s, i) => (
+              <div key={s.id} className="flex items-center justify-between py-2 border-b border-border/40 last:border-0">
+                <span className="text-xs text-muted-foreground">{format(new Date(s.recordedAt), "MMM d, yyyy · h:mm a")}</span>
+                <div className="flex items-center gap-4 text-xs font-medium tabular-nums">
+                  <span className="text-foreground">{s.followersCount.toLocaleString()} followers</span>
+                  {i < list.length - 1 && (() => {
+                    const prev = [...list].reverse()[i + 1];
+                    const delta = s.followersCount - prev.followersCount;
+                    return delta !== 0 ? (
+                      <span className={delta > 0 ? "text-emerald-500" : "text-destructive"}>
+                        {delta > 0 ? "+" : ""}{delta}
+                      </span>
+                    ) : null;
+                  })()}
+                </div>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function Audience() {
@@ -553,6 +729,7 @@ export default function Audience() {
     { id: "following", label: "Following", shortLabel: "Following", icon: UserPlus, count: profile?.followsCount },
     { id: "not-following-back", label: "Not Following Back", shortLabel: "NFB", icon: UserMinus, count: nfbUsers.length || undefined },
     { id: "top-authors", label: "Top Authors", shortLabel: "Authors", icon: TrendingUp },
+    { id: "growth", label: "Growth", shortLabel: "Growth", icon: BarChart2 },
     { id: "search", label: "Search & Follow", shortLabel: "Search", icon: Search },
   ];
 
@@ -867,6 +1044,9 @@ export default function Audience() {
                   </div>
                 )
               )}
+
+              {/* GROWTH */}
+              {tab === "growth" && <FollowerGrowthTab />}
             </div>
           </motion.div>
         </AnimatePresence>

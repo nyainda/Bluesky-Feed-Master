@@ -10,6 +10,7 @@ import Posts from "@/pages/Posts";
 import Analytics from "@/pages/Analytics";
 import Audience from "@/pages/Audience";
 import Settings from "@/pages/Settings";
+import Compose from "@/pages/Compose";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -32,6 +33,7 @@ function Router() {
         <Route path="/posts" component={Posts} />
         <Route path="/analytics" component={Analytics} />
         <Route path="/audience" component={Audience} />
+        <Route path="/compose" component={Compose} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>

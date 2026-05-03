@@ -3,6 +3,7 @@ import {
   useListFeeds, useGetRecentActivity, useGet7DayActivity, useGetTopFeeds,
   useGetFeedKeywordStats, useGetFeedTopAuthors, useGetFeedHourly, useGetBlueskyFeedInfo,
   useGetMyPosts, useGetTopPosts, useGetEngagementOverview, useSyncEngagement,
+  useGetBestTimeToPost,
 } from "@workspace/api-client-react";
 import type { MyPost, Feed, TopPost } from "@workspace/api-client-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -14,7 +15,7 @@ import { format, formatDistanceToNow } from "date-fns";
 import {
   TrendingUp, Users, ExternalLink, Heart, Repeat2, MessageCircle, Quote,
   ArrowUpRight, Image, RefreshCw, ChevronLeft, ChevronRight, Zap,
-  BarChart2, Activity,
+  BarChart2, Activity, Clock, Download, Sun,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -295,6 +296,36 @@ function MyPostsTab() {
         <h3 className="text-sm font-semibold text-foreground">All Posts</h3>
         <div className="flex items-center gap-2">
           {isFetching && <RefreshCw className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+          {posts.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs gap-1.5"
+              onClick={() => {
+                const header = ["Text", "Created At", "Likes", "Reposts", "Replies", "Quotes", "URL"];
+                const rows = posts.map(p => [
+                  `"${(p.text ?? "").replace(/"/g, '""')}"`,
+                  p.createdAt,
+                  p.likes,
+                  p.reposts,
+                  p.replies,
+                  p.quotes,
+                  `https://bsky.app/profile/${p.uri.split("/")[2]}/post/${p.uri.split("/").pop()}`,
+                ]);
+                const csv = [header, ...rows].map(r => r.join(",")).join("\n");
+                const blob = new Blob([csv], { type: "text/csv" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "my-bluesky-posts.csv";
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              <Download className="w-3 h-3" />
+              Export CSV
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -965,9 +996,144 @@ function FeedPostsTab({ feeds }: { feeds: Feed[] | undefined }) {
   );
 }
 
+// ─── Best Time Tab ────────────────────────────────────────────────────────────
+
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function formatHourLabel(h: number) {
+  if (h === 0) return "12 AM";
+  if (h < 12) return `${h} AM`;
+  if (h === 12) return "12 PM";
+  return `${h - 12} PM`;
+}
+
+function BestTimeTab() {
+  const { data, isLoading, isError, refetch } = useGetBestTimeToPost({
+    query: { queryKey: ["best-time"], staleTime: 10 * 60_000 },
+  });
+
+  const hourly = data?.hourly ?? [];
+  const maxEngagement = Math.max(...hourly.map(h => h.avgEngagement), 1);
+  const chartData = hourly.map(h => ({
+    hour: formatHourLabel(h.hour),
+    "Avg Engagement": h.avgEngagement,
+    Posts: h.postCount,
+  }));
+
+  return (
+    <div className="space-y-5">
+      {isLoading ? (
+        <div className="space-y-3">
+          <div className="h-16 bg-card border border-card-border rounded-xl animate-pulse" />
+          <div className="h-52 bg-card border border-card-border rounded-xl animate-pulse" />
+        </div>
+      ) : isError ? (
+        <div className="flex flex-col items-center justify-center h-48 gap-3 text-center">
+          <div className="w-12 h-12 rounded-2xl bg-destructive/10 border border-destructive/20 flex items-center justify-center">
+            <RefreshCw className="w-5 h-5 text-destructive/60" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-foreground">Could not load data</p>
+            <p className="text-xs text-muted-foreground mt-1">Make sure your Bluesky credentials are configured.</p>
+          </div>
+          <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => refetch()}>
+            <RefreshCw className="w-3 h-3" /> Retry
+          </Button>
+        </div>
+      ) : (
+        <>
+          {/* Summary Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="bg-primary/5 border border-primary/15 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Sun className="w-4 h-4 text-primary" />
+                <span className="text-xs font-semibold text-primary">Best Hour</span>
+              </div>
+              <p className="text-xl font-bold text-foreground">{formatHourLabel(data?.bestHour ?? 0)}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">UTC · peak engagement</p>
+            </motion.div>
+            <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="bg-emerald-500/5 border border-emerald-500/15 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="w-4 h-4 text-emerald-600" />
+                <span className="text-xs font-semibold text-emerald-600">Best Day</span>
+              </div>
+              <p className="text-xl font-bold text-foreground">{DAYS[data?.bestDay ?? 0]}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Most engagement per post</p>
+            </motion.div>
+            <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bg-muted border border-border rounded-xl p-4 col-span-2 md:col-span-1">
+              <div className="flex items-center gap-2 mb-2">
+                <Activity className="w-4 h-4 text-muted-foreground" />
+                <span className="text-xs font-semibold text-muted-foreground">Posts Analysed</span>
+              </div>
+              <p className="text-xl font-bold text-foreground">{hourly.reduce((s, h) => s + h.postCount, 0)}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Based on recent Bluesky posts</p>
+            </motion.div>
+          </div>
+
+          {/* Hourly Engagement Chart */}
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="bg-card border border-card-border rounded-xl p-5 md:p-6">
+            <h3 className="text-sm font-semibold text-foreground mb-1">Average Engagement by Hour (UTC)</h3>
+            <p className="text-xs text-muted-foreground mb-4">Higher bars = posts published at that hour get more engagement on average</p>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={chartData} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 6% 90% / .5)" />
+                <XAxis dataKey="hour" tick={{ fontSize: 8, fill: "hsl(240 4% 46%)" }} tickLine={false} axisLine={false} interval={2} />
+                <YAxis tick={{ fontSize: 10, fill: "hsl(240 4% 46%)" }} tickLine={false} axisLine={false} />
+                <Tooltip {...tooltipStyle()} formatter={(v: number) => [v.toFixed(2), "Avg Engagement"]} />
+                <Bar
+                  dataKey="Avg Engagement"
+                  radius={[3, 3, 0, 0]}
+                  fill="hsl(210 100% 52%)"
+                  label={false}
+                >
+                  {chartData.map((entry, index) => {
+                    const h = data?.hourly[index];
+                    const isBest = h?.hour === data?.bestHour;
+                    return <Cell key={index} fill={isBest ? "hsl(168 84% 42%)" : "hsl(210 100% 52%)"} />;
+                  })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+            <p className="text-xs text-muted-foreground mt-3 text-center">
+              <span className="inline-flex items-center gap-1.5 mr-4">
+                <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500 inline-block" /> Best hour
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-sm bg-primary inline-block" /> Other hours
+              </span>
+            </p>
+          </motion.div>
+
+          {/* Top hours list */}
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bg-card border border-card-border rounded-xl p-5">
+            <h3 className="text-sm font-semibold text-foreground mb-3">Top 5 Hours to Post</h3>
+            <div className="space-y-2">
+              {[...hourly].sort((a, b) => b.avgEngagement - a.avgEngagement).slice(0, 5).map((slot, i) => (
+                <div key={slot.hour} className="flex items-center gap-3">
+                  <span className="w-5 text-xs font-bold text-muted-foreground/60 text-center">{i + 1}</span>
+                  <span className="text-sm font-medium text-foreground w-16">{formatHourLabel(slot.hour)}</span>
+                  <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                    <motion.div
+                      className="h-full rounded-full bg-primary"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${(slot.avgEngagement / maxEngagement) * 100}%` }}
+                      transition={{ duration: 0.6, delay: i * 0.05 }}
+                    />
+                  </div>
+                  <span className="text-xs text-muted-foreground w-20 text-right">{slot.avgEngagement.toFixed(1)} avg</span>
+                  {slot.postCount > 0 && <span className="text-[10px] text-muted-foreground/50">{slot.postCount}p</span>}
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-type AnalyticsTab = "my-posts" | "feed-posts" | "feeds";
+type AnalyticsTab = "my-posts" | "feed-posts" | "feeds" | "best-time";
 
 export default function Analytics() {
   const [tab, setTab] = useState<AnalyticsTab>("my-posts");
@@ -986,6 +1152,7 @@ export default function Analytics() {
           { id: "my-posts" as AnalyticsTab, label: "My Posts", icon: Activity },
           { id: "feed-posts" as AnalyticsTab, label: "Feed Posts", icon: TrendingUp },
           { id: "feeds" as AnalyticsTab, label: "Feed Stats", icon: BarChart2 },
+          { id: "best-time" as AnalyticsTab, label: "Best Time", icon: Clock },
         ].map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -1017,6 +1184,11 @@ export default function Analytics() {
         {tab === "feeds" && (
           <motion.div key="feeds" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             <FeedAnalyticsTab feeds={feeds} />
+          </motion.div>
+        )}
+        {tab === "best-time" && (
+          <motion.div key="best-time" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <BestTimeTab />
           </motion.div>
         )}
       </AnimatePresence>

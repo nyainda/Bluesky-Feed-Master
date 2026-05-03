@@ -249,6 +249,64 @@ export interface MyPostsResponse {
   stats: MyPostStats;
 }
 
+export interface ComposeBody {
+  text: string;
+  threadParts?: string[];
+  isThread?: boolean;
+}
+
+export interface ComposeResult {
+  uri: string;
+  cid: string;
+  uris: string[];
+}
+
+export interface ScheduledPost {
+  id: number;
+  text: string;
+  /** @nullable */
+  threadParts?: string | null;
+  isThread: boolean;
+  scheduledAt: string;
+  /** @nullable */
+  sentAt?: string | null;
+  status: string;
+  /** @nullable */
+  errorMessage?: string | null;
+  createdAt: string;
+}
+
+export interface CreateScheduledPostBody {
+  text: string;
+  threadParts?: string[];
+  isThread?: boolean;
+  scheduledAt: string;
+}
+
+export interface BestTimeSlot {
+  hour: number;
+  dayOfWeek: number;
+  avgLikes: number;
+  avgReposts: number;
+  avgReplies: number;
+  postCount: number;
+  avgEngagement: number;
+}
+
+export interface BestTimeResponse {
+  hourly: BestTimeSlot[];
+  bestHour: number;
+  bestDay: number;
+}
+
+export interface FollowerSnapshot {
+  id: number;
+  followersCount: number;
+  followsCount: number;
+  postsCount: number;
+  recordedAt: string;
+}
+
 export type GetFeedPostsParams = {
   limit?: number;
   /**
@@ -323,4 +381,8 @@ export type GetMyPostsParams = {
    */
   cursor?: string | null;
   limit?: number;
+};
+
+export type DeleteScheduledPost200 = {
+  ok: boolean;
 };

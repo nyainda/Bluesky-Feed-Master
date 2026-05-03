@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard, Rss, FileText, Settings, Wifi, WifiOff,
-  BarChart3, Users2, Menu, X, ChevronRight,
+  BarChart3, Users2, Menu, X, ChevronRight, PenLine,
 } from "lucide-react";
 import { useGetFirehoseStatus, useGetStatsOverview, useGetBlueskyProfile } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/feeds", label: "Feeds", icon: Rss },
+  { href: "/compose", label: "Compose", icon: PenLine },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/audience", label: "Audience", icon: Users2 },
   { href: "/posts", label: "Posts", icon: FileText },

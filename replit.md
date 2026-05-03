@@ -73,6 +73,17 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 - `GET /api/bluesky/following` — following list
 - `GET /api/bluesky/not-following-back` — accounts not following back
 - `POST /api/bluesky/bulk-follow` / `bulk-unfollow`
+- `POST /api/bluesky/compose` — publish a post or thread to Bluesky
+- `GET /api/bluesky/best-time` — analyse hourly engagement to find best posting hours
+- `GET /api/bluesky/follower-growth` — retrieve stored follower snapshots
+- `POST /api/bluesky/snapshot-followers` — record current follower count snapshot
+
+### Scheduled Posts
+
+- `GET /api/scheduled-posts` — list scheduled posts
+- `POST /api/scheduled-posts` — create a scheduled post
+- `DELETE /api/scheduled-posts/:id` — cancel a scheduled post
+- Background scheduler runs every 60 s via `startScheduler()` in `index.ts`
 
 ### XRPC (Feed Generator Protocol)
 
@@ -86,8 +97,17 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 - **Feeds** — list, create, manage feeds
 - **FeedDetail** — per-feed tabs: Posts, Test Live, Analytics, Keywords
   - "Test Live" tab calls `getFeedSkeleton` then resolves posts via Bluesky public API
-- **Analytics** — "My Posts" (X-style post analytics) + "Feeds" (indexing stats)
-- **Audience** — followers, following, not-following-back, user search
+- **Compose** (`/compose`) — three tabs:
+  - _Post Now_ — single post composer with char counter, ⌘+Enter shortcut, success link
+  - _Thread Builder_ — multi-part composer (up to 10 parts), each with individual char counter
+  - _Scheduled_ — create/cancel scheduled posts; lists pending/sent/failed
+- **Analytics** — four tabs:
+  - _My Posts_ — X-style post analytics with engagement overview + Export CSV button
+  - _Feed Posts_ — feed post browser
+  - _Feed Stats_ — per-feed indexing analytics
+  - _Best Time_ — bar chart of avg engagement by hour (UTC), best hour/day cards, top 5 hours list
+- **Audience** — six tabs: followers, following, not-following-back, top authors, growth, search
+  - _Growth_ tab — follower line chart over time, delta since first snapshot, snapshot history, "Record Snapshot" button
 - **Posts** — browse all indexed posts
 - **Settings** — environment variable status
 

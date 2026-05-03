@@ -338,4 +338,83 @@ router.get("/bluesky/feed-info/:recordName", async (req, res): Promise<void> => 
   }
 });
 
+// GET /api/bluesky/best-time
+// Fetches up to 100 recent posts from Bluesky and aggregates engagement by hour+dayOfWeek
+router.get("/bluesky/best-time", async (req, res): Promise<void> => {
+  const did = process.env.FEEDGEN_PUBLISHER_DID;
+  if (!did) { res.status(404).json({ error: "FEEDGEN_PUBLISHER_DID not configured" }); return; }
+
+  try {
+    const agent = new AtpAgent({ service: "https://public.api.bsky.app" });
+
+    // Fetch up to 100 posts across two pages
+    const posts: { createdAt: string; likes: number; reposts: number; replies: number }[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 2; page++) {
+      const result = await agent.getAuthorFeed({ actor: did, limit: 50, cursor, filter: "posts_no_replies" });
+      for (const item of result.data.feed) {
+        const record = item.post.record as { createdAt?: string };
+        posts.push({
+          createdAt: record.createdAt ?? item.post.indexedAt,
+          likes: item.post.likeCount ?? 0,
+          reposts: item.post.repostCount ?? 0,
+          replies: item.post.replyCount ?? 0,
+        });
+      }
+      cursor = result.data.cursor;
+      if (!cursor) break;
+    }
+
+    // Aggregate by hour (0-23) across all days — simpler and more actionable
+    type HourBucket = { likes: number; reposts: number; replies: number; count: number; dayOfWeek: number };
+    const byHour: Record<number, HourBucket> = {};
+    for (let h = 0; h < 24; h++) byHour[h] = { likes: 0, reposts: 0, replies: 0, count: 0, dayOfWeek: 0 };
+
+    // Also track best day
+    type DayBucket = { totalEngagement: number; count: number };
+    const byDay: Record<number, DayBucket> = {};
+    for (let d = 0; d < 7; d++) byDay[d] = { totalEngagement: 0, count: 0 };
+
+    for (const p of posts) {
+      const date = new Date(p.createdAt);
+      const hour = date.getUTCHours();
+      const day = date.getUTCDay();
+      byHour[hour].likes += p.likes;
+      byHour[hour].reposts += p.reposts;
+      byHour[hour].replies += p.replies;
+      byHour[hour].count++;
+      byHour[hour].dayOfWeek = day;
+      byDay[day].totalEngagement += p.likes + p.reposts + p.replies;
+      byDay[day].count++;
+    }
+
+    const hourly = Array.from({ length: 24 }, (_, hour) => {
+      const b = byHour[hour];
+      const n = b.count || 1;
+      const avgEngagement = (b.likes + b.reposts + b.replies) / n;
+      return {
+        hour,
+        dayOfWeek: b.dayOfWeek,
+        avgLikes: Math.round((b.likes / n) * 100) / 100,
+        avgReposts: Math.round((b.reposts / n) * 100) / 100,
+        avgReplies: Math.round((b.replies / n) * 100) / 100,
+        postCount: b.count,
+        avgEngagement: Math.round(avgEngagement * 100) / 100,
+      };
+    });
+
+    const bestHour = hourly.reduce((best, slot) => slot.avgEngagement > best.avgEngagement ? slot : best, hourly[0]).hour;
+    const bestDay = Object.entries(byDay).reduce((best, [day, d]) => {
+      const avg = d.count > 0 ? d.totalEngagement / d.count : 0;
+      const bestAvg = best[1].count > 0 ? best[1].totalEngagement / best[1].count : 0;
+      return avg > bestAvg ? [day, d] : best;
+    }, ["0", byDay[0]] as [string, DayBucket]);
+
+    res.json({ hourly, bestHour, bestDay: parseInt(bestDay[0]) });
+  } catch (err) {
+    req.log.error({ err }, "getBestTimeToPost failed");
+    res.status(500).json({ error: "Failed to compute best time to post" });
+  }
+});
+
 export default router;

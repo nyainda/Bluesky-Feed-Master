@@ -534,3 +534,101 @@ export const GetMyPostsResponse = zod.object({
     postCount: zod.number(),
   }),
 });
+
+/**
+ * @summary Publish a post or thread immediately to Bluesky
+ */
+export const ComposePostBody = zod.object({
+  text: zod.string(),
+  threadParts: zod.array(zod.string()).optional(),
+  isThread: zod.boolean().optional(),
+});
+
+export const ComposePostResponse = zod.object({
+  uri: zod.string(),
+  cid: zod.string(),
+  uris: zod.array(zod.string()),
+});
+
+/**
+ * @summary List all scheduled posts
+ */
+export const ListScheduledPostsResponseItem = zod.object({
+  id: zod.number(),
+  text: zod.string(),
+  threadParts: zod.string().nullish(),
+  isThread: zod.boolean(),
+  scheduledAt: zod.string(),
+  sentAt: zod.string().nullish(),
+  status: zod.string(),
+  errorMessage: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+export const ListScheduledPostsResponse = zod.array(
+  ListScheduledPostsResponseItem,
+);
+
+/**
+ * @summary Schedule a post for future publishing
+ */
+export const CreateScheduledPostBody = zod.object({
+  text: zod.string(),
+  threadParts: zod.array(zod.string()).optional(),
+  isThread: zod.boolean().optional(),
+  scheduledAt: zod.string(),
+});
+
+/**
+ * @summary Delete a scheduled post
+ */
+export const DeleteScheduledPostParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const DeleteScheduledPostResponse = zod.object({
+  ok: zod.boolean(),
+});
+
+/**
+ * @summary Get hourly engagement heatmap for best posting times
+ */
+export const GetBestTimeToPostResponse = zod.object({
+  hourly: zod.array(
+    zod.object({
+      hour: zod.number(),
+      dayOfWeek: zod.number(),
+      avgLikes: zod.number(),
+      avgReposts: zod.number(),
+      avgReplies: zod.number(),
+      postCount: zod.number(),
+      avgEngagement: zod.number(),
+    }),
+  ),
+  bestHour: zod.number(),
+  bestDay: zod.number(),
+});
+
+/**
+ * @summary Get follower growth snapshots
+ */
+export const GetFollowerGrowthResponseItem = zod.object({
+  id: zod.number(),
+  followersCount: zod.number(),
+  followsCount: zod.number(),
+  postsCount: zod.number(),
+  recordedAt: zod.string(),
+});
+export const GetFollowerGrowthResponse = zod.array(
+  GetFollowerGrowthResponseItem,
+);
+
+/**
+ * @summary Record a follower count snapshot now
+ */
+export const SnapshotFollowersResponse = zod.object({
+  id: zod.number(),
+  followersCount: zod.number(),
+  followsCount: zod.number(),
+  postsCount: zod.number(),
+  recordedAt: zod.string(),
+});

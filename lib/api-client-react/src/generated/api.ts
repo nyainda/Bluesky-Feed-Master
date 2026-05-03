@@ -21,17 +21,23 @@ import type {
   AudiencePage,
   AudienceUser,
   AuthorStat,
+  BestTimeResponse,
   BlueskyFeedInfo,
   BlueskyProfile,
   BulkActionBody,
   BulkActionResult,
+  ComposeBody,
+  ComposeResult,
   CreateFeedBody,
   CreateKeywordBody,
+  CreateScheduledPostBody,
   DailyBucket,
+  DeleteScheduledPost200,
   EngagementOverview,
   Feed,
   FeedRanking,
   FirehoseStatus,
+  FollowerSnapshot,
   GetEngagementOverviewParams,
   GetFeedPostsParams,
   GetFollowersParams,
@@ -45,6 +51,7 @@ import type {
   MyPostsResponse,
   PostsPage,
   PublishFeedResult,
+  ScheduledPost,
   StatsOverview,
   SyncEngagementBody,
   SyncResult,
@@ -2691,3 +2698,565 @@ export function useGetMyPosts<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Publish a post or thread immediately to Bluesky
+ */
+export const getComposePostUrl = () => {
+  return `/api/bluesky/compose`;
+};
+
+export const composePost = async (
+  composeBody: ComposeBody,
+  options?: RequestInit,
+): Promise<ComposeResult> => {
+  return customFetch<ComposeResult>(getComposePostUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(composeBody),
+  });
+};
+
+export const getComposePostMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof composePost>>,
+    TError,
+    { data: BodyType<ComposeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof composePost>>,
+  TError,
+  { data: BodyType<ComposeBody> },
+  TContext
+> => {
+  const mutationKey = ["composePost"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof composePost>>,
+    { data: BodyType<ComposeBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return composePost(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ComposePostMutationResult = NonNullable<
+  Awaited<ReturnType<typeof composePost>>
+>;
+export type ComposePostMutationBody = BodyType<ComposeBody>;
+export type ComposePostMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Publish a post or thread immediately to Bluesky
+ */
+export const useComposePost = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof composePost>>,
+    TError,
+    { data: BodyType<ComposeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof composePost>>,
+  TError,
+  { data: BodyType<ComposeBody> },
+  TContext
+> => {
+  return useMutation(getComposePostMutationOptions(options));
+};
+
+/**
+ * @summary List all scheduled posts
+ */
+export const getListScheduledPostsUrl = () => {
+  return `/api/bluesky/scheduled`;
+};
+
+export const listScheduledPosts = async (
+  options?: RequestInit,
+): Promise<ScheduledPost[]> => {
+  return customFetch<ScheduledPost[]>(getListScheduledPostsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListScheduledPostsQueryKey = () => {
+  return [`/api/bluesky/scheduled`] as const;
+};
+
+export const getListScheduledPostsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listScheduledPosts>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listScheduledPosts>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListScheduledPostsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listScheduledPosts>>
+  > = ({ signal }) => listScheduledPosts({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listScheduledPosts>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListScheduledPostsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listScheduledPosts>>
+>;
+export type ListScheduledPostsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all scheduled posts
+ */
+
+export function useListScheduledPosts<
+  TData = Awaited<ReturnType<typeof listScheduledPosts>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listScheduledPosts>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListScheduledPostsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Schedule a post for future publishing
+ */
+export const getCreateScheduledPostUrl = () => {
+  return `/api/bluesky/scheduled`;
+};
+
+export const createScheduledPost = async (
+  createScheduledPostBody: CreateScheduledPostBody,
+  options?: RequestInit,
+): Promise<ScheduledPost> => {
+  return customFetch<ScheduledPost>(getCreateScheduledPostUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createScheduledPostBody),
+  });
+};
+
+export const getCreateScheduledPostMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createScheduledPost>>,
+    TError,
+    { data: BodyType<CreateScheduledPostBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createScheduledPost>>,
+  TError,
+  { data: BodyType<CreateScheduledPostBody> },
+  TContext
+> => {
+  const mutationKey = ["createScheduledPost"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createScheduledPost>>,
+    { data: BodyType<CreateScheduledPostBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createScheduledPost(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateScheduledPostMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createScheduledPost>>
+>;
+export type CreateScheduledPostMutationBody = BodyType<CreateScheduledPostBody>;
+export type CreateScheduledPostMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Schedule a post for future publishing
+ */
+export const useCreateScheduledPost = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createScheduledPost>>,
+    TError,
+    { data: BodyType<CreateScheduledPostBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createScheduledPost>>,
+  TError,
+  { data: BodyType<CreateScheduledPostBody> },
+  TContext
+> => {
+  return useMutation(getCreateScheduledPostMutationOptions(options));
+};
+
+/**
+ * @summary Delete a scheduled post
+ */
+export const getDeleteScheduledPostUrl = (id: number) => {
+  return `/api/bluesky/scheduled/${id}`;
+};
+
+export const deleteScheduledPost = async (
+  id: number,
+  options?: RequestInit,
+): Promise<DeleteScheduledPost200> => {
+  return customFetch<DeleteScheduledPost200>(getDeleteScheduledPostUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteScheduledPostMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteScheduledPost>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteScheduledPost>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["deleteScheduledPost"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteScheduledPost>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteScheduledPost(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteScheduledPostMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteScheduledPost>>
+>;
+
+export type DeleteScheduledPostMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a scheduled post
+ */
+export const useDeleteScheduledPost = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteScheduledPost>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteScheduledPost>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeleteScheduledPostMutationOptions(options));
+};
+
+/**
+ * @summary Get hourly engagement heatmap for best posting times
+ */
+export const getGetBestTimeToPostUrl = () => {
+  return `/api/bluesky/best-time`;
+};
+
+export const getBestTimeToPost = async (
+  options?: RequestInit,
+): Promise<BestTimeResponse> => {
+  return customFetch<BestTimeResponse>(getGetBestTimeToPostUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetBestTimeToPostQueryKey = () => {
+  return [`/api/bluesky/best-time`] as const;
+};
+
+export const getGetBestTimeToPostQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBestTimeToPost>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getBestTimeToPost>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetBestTimeToPostQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getBestTimeToPost>>
+  > = ({ signal }) => getBestTimeToPost({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBestTimeToPost>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetBestTimeToPostQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBestTimeToPost>>
+>;
+export type GetBestTimeToPostQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get hourly engagement heatmap for best posting times
+ */
+
+export function useGetBestTimeToPost<
+  TData = Awaited<ReturnType<typeof getBestTimeToPost>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getBestTimeToPost>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetBestTimeToPostQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get follower growth snapshots
+ */
+export const getGetFollowerGrowthUrl = () => {
+  return `/api/bluesky/follower-growth`;
+};
+
+export const getFollowerGrowth = async (
+  options?: RequestInit,
+): Promise<FollowerSnapshot[]> => {
+  return customFetch<FollowerSnapshot[]>(getGetFollowerGrowthUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetFollowerGrowthQueryKey = () => {
+  return [`/api/bluesky/follower-growth`] as const;
+};
+
+export const getGetFollowerGrowthQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFollowerGrowth>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFollowerGrowth>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetFollowerGrowthQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getFollowerGrowth>>
+  > = ({ signal }) => getFollowerGrowth({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFollowerGrowth>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFollowerGrowthQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFollowerGrowth>>
+>;
+export type GetFollowerGrowthQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get follower growth snapshots
+ */
+
+export function useGetFollowerGrowth<
+  TData = Awaited<ReturnType<typeof getFollowerGrowth>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFollowerGrowth>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFollowerGrowthQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Record a follower count snapshot now
+ */
+export const getSnapshotFollowersUrl = () => {
+  return `/api/bluesky/snapshot-followers`;
+};
+
+export const snapshotFollowers = async (
+  options?: RequestInit,
+): Promise<FollowerSnapshot> => {
+  return customFetch<FollowerSnapshot>(getSnapshotFollowersUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getSnapshotFollowersMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof snapshotFollowers>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof snapshotFollowers>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["snapshotFollowers"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof snapshotFollowers>>,
+    void
+  > = () => {
+    return snapshotFollowers(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SnapshotFollowersMutationResult = NonNullable<
+  Awaited<ReturnType<typeof snapshotFollowers>>
+>;
+
+export type SnapshotFollowersMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Record a follower count snapshot now
+ */
+export const useSnapshotFollowers = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof snapshotFollowers>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof snapshotFollowers>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getSnapshotFollowersMutationOptions(options));
+};
