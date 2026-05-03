@@ -231,7 +231,7 @@ function SkeletonList({ count = 8 }: { count?: number }) {
 
 // ─── Search & Follow Tab ────────────────────────────────────────────────────
 
-function SearchFollowTab() {
+function SearchFollowTab({ defaultUsers = [], defaultLoading = false }: { defaultUsers?: AudienceUser[]; defaultLoading?: boolean }) {
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [cursor, setCursor] = useState<string | undefined>();
@@ -389,15 +389,59 @@ function SearchFollowTab() {
 
       {/* Results */}
       {!submittedQuery ? (
-        <div className="flex flex-col items-center justify-center h-52 gap-3 text-center px-8">
-          <div className="w-12 h-12 rounded-2xl bg-muted border border-border flex items-center justify-center">
-            <Search className="w-5 h-5 text-muted-foreground/50" />
+        /* ── DEFAULT: show followers so user can instantly select & follow back ── */
+        defaultLoading ? <SkeletonList /> : defaultUsers.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-52 gap-3 text-center px-8">
+            <div className="w-12 h-12 rounded-2xl bg-muted border border-border flex items-center justify-center">
+              <Search className="w-5 h-5 text-muted-foreground/50" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-foreground">Search to discover people</p>
+              <p className="text-xs text-muted-foreground mt-1">Find accounts to follow by keyword, topic, or location.</p>
+            </div>
           </div>
-          <div>
-            <p className="text-sm font-semibold text-foreground">Search to discover people</p>
-            <p className="text-xs text-muted-foreground mt-1">Find real accounts to follow by keyword, topic, or location.</p>
-          </div>
-        </div>
+        ) : (
+          <>
+            {/* Sticky Select-All bar */}
+            <div className="px-4 py-2.5 border-b border-border/40 bg-primary/4 flex items-center justify-between gap-3 sticky top-0 z-10">
+              <div className="flex items-center gap-2">
+                <Users className="w-3.5 h-3.5 text-primary" />
+                <span className="text-xs font-semibold text-primary">
+                  {defaultUsers.length} followers — select to follow back
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {selected.size > 0 ? (
+                  <>
+                    <Button size="sm" className="h-7 text-xs gap-1" onClick={handleFollow} disabled={bulkFollow.isPending}>
+                      <UserPlus className="w-3 h-3" />
+                      {bulkFollow.isPending ? "Following…" : `Follow Back ${selected.size}`}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={clearSelection}>
+                      <X className="w-3 h-3 mr-1" />Clear
+                    </Button>
+                  </>
+                ) : (
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setSelected(new Set(defaultUsers.map(u => u.did)))}>
+                    <CheckSquare className="w-3 h-3" />
+                    Select All {defaultUsers.length}
+                  </Button>
+                )}
+              </div>
+            </div>
+            <div>
+              {defaultUsers.map((u, i) => (
+                <motion.div key={u.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.015 }}>
+                  <UserCard
+                    user={u}
+                    selected={selected.has(u.did)}
+                    onToggle={() => toggleSelect(u.did)}
+                  />
+                </motion.div>
+              ))}
+            </div>
+          </>
+        )
       ) : isLoading ? (
         <SkeletonList />
       ) : filteredUsers.length === 0 ? (
@@ -409,15 +453,32 @@ function SearchFollowTab() {
         </div>
       ) : (
         <>
-          <div className="px-4 py-2 border-b border-border/40 flex items-center justify-between bg-muted/10">
-            <button onClick={selectAll} className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1.5 transition-colors">
-              <CheckSquare className="w-3.5 h-3.5" /> Select all {filteredUsers.length}
-            </button>
-            {hidePossibleBots && botCount > 0 && (
-              <span className="text-[11px] text-amber-500 flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" />{botCount} bot{botCount > 1 ? "s" : ""} hidden
-              </span>
-            )}
+          {/* Sticky Select-All bar for search results */}
+          <div className="px-4 py-2.5 border-b border-border/40 bg-muted/10 flex items-center justify-between gap-3 sticky top-0 z-10">
+            <div className="flex items-center gap-2">
+              {hidePossibleBots && botCount > 0 && (
+                <span className="text-[11px] text-amber-500 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" />{botCount} hidden
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {selected.size > 0 ? (
+                <>
+                  <Button size="sm" className="h-7 text-xs gap-1" onClick={handleFollow} disabled={bulkFollow.isPending}>
+                    <UserPlus className="w-3 h-3" />
+                    {bulkFollow.isPending ? "Following…" : `Follow ${selected.size}`}
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={clearSelection}>
+                    <X className="w-3 h-3 mr-1" />Clear
+                  </Button>
+                </>
+              ) : (
+                <button onClick={selectAll} className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1.5 transition-colors">
+                  <CheckSquare className="w-3.5 h-3.5" /> Select all {filteredUsers.length}
+                </button>
+              )}
+            </div>
           </div>
           <div>
             {filteredUsers.map((u, i) => {
@@ -654,7 +715,7 @@ export default function Audience() {
 
   const { data: followers, isLoading: loadingFollowers } = useGetFollowers(
     { limit: 50, cursor: followersCursor },
-    { query: { queryKey: ["followers", followersCursor], enabled: tab === "followers" } },
+    { query: { queryKey: ["followers", followersCursor], enabled: tab === "followers" || tab === "search" } },
   );
   const { data: following, isLoading: loadingFollowing } = useGetFollowing(
     { limit: 50, cursor: followingCursor },
@@ -806,7 +867,7 @@ export default function Audience() {
       {/* Search Tab */}
       {tab === "search" ? (
         <motion.div key="search" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
-          <SearchFollowTab />
+          <SearchFollowTab defaultUsers={followers?.users ?? []} defaultLoading={loadingFollowers} />
         </motion.div>
       ) : (
         <AnimatePresence mode="wait">
@@ -846,6 +907,12 @@ export default function Audience() {
                 {selected.size > 0 && (
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs text-muted-foreground font-medium">{selected.size} selected</span>
+                    {tab === "followers" && (
+                      <Button size="sm" className="h-7 text-xs gap-1" onClick={handleBulkFollow} disabled={bulkFollow.isPending}>
+                        <UserPlus className="w-3 h-3" />
+                        {bulkFollow.isPending ? "Following…" : `Follow Back ${selected.size}`}
+                      </Button>
+                    )}
                     {(tab === "not-following-back" || tab === "following") && (
                       <Button size="sm" variant="destructive" className="h-7 text-xs gap-1" onClick={handleBulkUnfollow} disabled={bulkUnfollow.isPending}>
                         <UserMinus className="w-3 h-3" />
@@ -864,6 +931,12 @@ export default function Audience() {
                   </div>
                 )}
 
+                {tab === "followers" && currentFollowers.length > 0 && selected.size === 0 && (
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => selectAll(currentFollowers)}>
+                    <CheckSquare className="w-3 h-3" />
+                    Select All ({currentFollowers.length})
+                  </Button>
+                )}
                 {tab === "not-following-back" && currentNFB.length > 0 && selected.size === 0 && (
                   <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => selectAll(currentNFB)}>
                     <CheckSquare className="w-3 h-3" />
@@ -884,7 +957,11 @@ export default function Audience() {
                   <>
                     <div>{currentFollowers.map((user, i) => (
                       <motion.div key={user.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
-                        <UserCard user={user} />
+                        <UserCard
+                          user={user}
+                          selected={selected.has(user.did)}
+                          onToggle={() => toggleSelect(user.did)}
+                        />
                       </motion.div>
                     ))}</div>
                     <Pagination
