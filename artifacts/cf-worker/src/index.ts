@@ -8,6 +8,7 @@ import audienceRoute from "./routes/audience";
 import composeRoute from "./routes/compose";
 import xrpcRoute from "./routes/xrpc";
 import { runIndexer } from "./lib/indexer";
+import { runScheduler } from "./lib/scheduler";
 
 export interface Env {
   DB: D1Database;
@@ -71,6 +72,6 @@ export default {
   fetch: app.fetch,
 
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(runIndexer(env));
+    ctx.waitUntil(Promise.all([runIndexer(env), runScheduler(env)]));
   },
 };
