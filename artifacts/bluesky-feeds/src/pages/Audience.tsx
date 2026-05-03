@@ -11,7 +11,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Users, UserMinus, UserPlus, RefreshCw, ExternalLink,
   ChevronLeft, ChevronRight, Search, CheckSquare, Square,
-  Zap, TrendingUp, Heart, AlertTriangle, Filter, X,
+  TrendingUp, Heart, AlertTriangle, Filter, X, ArrowUpRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,11 +32,6 @@ type SearchUser = {
   postsCount: number;
   followerRatio: number;
 };
-
-function shortenDid(did: string) {
-  if (did.length <= 22) return did;
-  return did.slice(0, 14) + "…" + did.slice(-6);
-}
 
 function UserCard({
   user,
@@ -60,85 +55,109 @@ function UserCard({
   botWarning?: boolean;
 }) {
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
+    <div
       className={cn(
-        "flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors border-b border-border/50 last:border-0",
-        selected && "bg-primary/5",
-        botWarning && "opacity-60",
+        "flex items-center gap-3 px-4 py-3 border-b border-border/40 last:border-0 transition-colors",
+        selected ? "bg-primary/4" : "hover:bg-muted/30",
+        botWarning && "opacity-55",
       )}
     >
       {onToggle && (
-        <button onClick={onToggle} className="flex-shrink-0 text-muted-foreground hover:text-primary transition-colors">
-          {selected ? <CheckSquare className="w-4 h-4 text-primary" /> : <Square className="w-4 h-4" />}
+        <button
+          onClick={onToggle}
+          className="flex-shrink-0 text-muted-foreground hover:text-primary transition-colors"
+        >
+          {selected
+            ? <CheckSquare className="w-4 h-4 text-primary" />
+            : <Square className="w-4 h-4" />
+          }
         </button>
       )}
-      {rank && (
-        <span className="text-xs text-muted-foreground font-mono w-5 text-right flex-shrink-0">{rank}</span>
+      {rank !== undefined && (
+        <span className="text-[10px] text-muted-foreground/40 font-mono w-5 text-right flex-shrink-0 tabular-nums">{rank}</span>
       )}
       {user.avatar ? (
-        <img src={user.avatar} alt={user.handle} className="w-9 h-9 rounded-full flex-shrink-0 ring-1 ring-border" />
+        <img
+          src={user.avatar}
+          alt={user.handle}
+          className="w-9 h-9 rounded-full flex-shrink-0 ring-1 ring-border object-cover"
+        />
       ) : (
-        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary/20 to-blue-500/20 flex items-center justify-center flex-shrink-0">
-          <Users className="w-4 h-4 text-primary" />
+        <div className="w-9 h-9 rounded-full bg-primary/10 border border-primary/15 flex items-center justify-center flex-shrink-0">
+          <span className="text-xs font-bold text-primary">
+            {(user.displayName || user.handle)[0].toUpperCase()}
+          </span>
         </div>
       )}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground truncate">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-sm font-semibold text-foreground truncate leading-tight">
             {user.displayName || user.handle}
           </span>
           {user.displayName && (
-            <span className="text-xs text-muted-foreground truncate hidden sm:block">@{user.handle}</span>
+            <span className="text-xs text-muted-foreground/60 truncate hidden sm:block flex-shrink-0">@{user.handle}</span>
           )}
           {botWarning && (
-            <span className="text-[10px] text-amber-500 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0">
-              possible bot
+            <span className="text-[10px] text-amber-500 bg-amber-500/8 border border-amber-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0 hidden sm:inline">
+              bot?
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3 mt-0.5">
-          <span className="text-xs text-muted-foreground tabular-nums">
-            <strong className="text-foreground">{user.followersCount.toLocaleString()}</strong> followers
+        <div className="flex items-center gap-2.5 mt-0.5">
+          <span className="text-[11px] text-muted-foreground tabular-nums">
+            <strong className="text-foreground font-semibold">{user.followersCount.toLocaleString()}</strong> followers
           </span>
-          <span className="text-xs text-muted-foreground tabular-nums">
-            <strong className="text-foreground">{user.followsCount.toLocaleString()}</strong> following
+          <span className="text-muted-foreground/30 text-[11px]">·</span>
+          <span className="text-[11px] text-muted-foreground tabular-nums">
+            <strong className="text-foreground font-semibold">{user.followsCount.toLocaleString()}</strong> following
           </span>
-          {user.postCount && (
-            <span className="text-xs text-primary font-medium tabular-nums">{user.postCount} posts in feed</span>
+          {user.postCount !== undefined && user.postCount > 0 && (
+            <>
+              <span className="text-muted-foreground/30 text-[11px]">·</span>
+              <span className="text-[11px] text-primary font-medium tabular-nums">{user.postCount} in feed</span>
+            </>
           )}
         </div>
         {user.description && (
-          <p className="text-xs text-muted-foreground/70 truncate mt-0.5 max-w-sm">{user.description}</p>
+          <p className="text-[11px] text-muted-foreground/55 truncate mt-0.5 max-w-sm">{user.description}</p>
         )}
       </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
+      <div className="flex items-center gap-1.5 flex-shrink-0">
         <a
           href={`https://bsky.app/profile/${user.handle}`}
           target="_blank"
           rel="noreferrer"
-          className="text-muted-foreground hover:text-primary transition-colors"
+          className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
         >
-          <ExternalLink className="w-3.5 h-3.5" />
+          <ArrowUpRight className="w-3.5 h-3.5" />
         </a>
         {actionLabel && ActionIcon && onAction && (
-          <Button size="sm" variant="outline" onClick={onAction} disabled={actionPending} className="h-7 text-xs">
-            <ActionIcon className="w-3 h-3 mr-1" />
-            {actionLabel}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onAction}
+            disabled={actionPending}
+            className="h-7 text-xs gap-1"
+          >
+            <ActionIcon className="w-3 h-3" />
+            <span className="hidden sm:inline">{actionLabel}</span>
           </Button>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 }
 
 function StatBadge({ label, value, accent }: { label: string; value: number | string; accent?: boolean }) {
   return (
-    <div className={cn("rounded-xl border px-5 py-3 text-center", accent ? "border-primary/30 bg-primary/5" : "border-border bg-card")}>
-      <div className={cn("text-2xl font-bold tabular-nums", accent ? "text-primary" : "text-foreground")}>{typeof value === "number" ? value.toLocaleString() : value}</div>
-      <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
+    <div className={cn(
+      "rounded-xl border px-4 py-3 text-center transition-colors",
+      accent ? "border-primary/20 bg-primary/5" : "border-border bg-card",
+    )}>
+      <div className={cn("text-xl md:text-2xl font-bold tabular-nums tracking-tight", accent ? "text-primary" : "text-foreground")}>
+        {typeof value === "number" ? value.toLocaleString() : value}
+      </div>
+      <div className="text-[11px] text-muted-foreground mt-0.5 font-medium">{label}</div>
     </div>
   );
 }
@@ -147,22 +166,66 @@ function SyncEngagementButton() {
   const { toast } = useToast();
   const sync = useSyncEngagement();
 
-  function handleSync() {
-    sync.mutate({ data: { limit: 100 } }, {
-      onSuccess: (data) => toast({ title: `Engagement synced: ${data.updated} posts updated` }),
-      onError: () => toast({ title: "Sync failed", variant: "destructive" }),
-    });
-  }
-
   return (
-    <Button variant="outline" size="sm" onClick={handleSync} disabled={sync.isPending}>
-      <RefreshCw className={cn("w-3.5 h-3.5 mr-1.5", sync.isPending && "animate-spin")} />
-      {sync.isPending ? "Syncing…" : "Sync Engagement"}
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => sync.mutate({ data: { limit: 100 } }, {
+        onSuccess: (d) => toast({ title: `Engagement synced: ${d.updated} posts updated` }),
+        onError: () => toast({ title: "Sync failed", variant: "destructive" }),
+      })}
+      disabled={sync.isPending}
+      className="gap-1.5 text-xs"
+    >
+      <RefreshCw className={cn("w-3.5 h-3.5", sync.isPending && "animate-spin")} />
+      {sync.isPending ? "Syncing…" : "Sync"}
     </Button>
   );
 }
 
-// ─── Search & Follow Tab ───────────────────────────────────────────────────────
+function Pagination({
+  cursorStack,
+  onPrev,
+  onNext,
+  hasNext,
+  count,
+}: {
+  cursorStack: string[];
+  onPrev: () => void;
+  onNext: () => void;
+  hasNext: boolean;
+  count: number;
+}) {
+  return (
+    <div className="px-4 py-3 border-t border-border/50 flex items-center justify-between bg-muted/20">
+      <Button variant="outline" size="sm" disabled={cursorStack.length === 0} onClick={onPrev} className="gap-1 text-xs h-8">
+        <ChevronLeft className="w-3.5 h-3.5" /> Prev
+      </Button>
+      <span className="text-xs text-muted-foreground tabular-nums">{count} shown</span>
+      <Button variant="outline" size="sm" disabled={!hasNext} onClick={onNext} className="gap-1 text-xs h-8">
+        Next <ChevronRight className="w-3.5 h-3.5" />
+      </Button>
+    </div>
+  );
+}
+
+function SkeletonList({ count = 8 }: { count?: number }) {
+  return (
+    <div className="p-4 space-y-2">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="flex items-center gap-3 px-1">
+          <div className="w-9 h-9 rounded-full bg-muted animate-pulse flex-shrink-0" />
+          <div className="flex-1 space-y-1.5">
+            <div className="h-3.5 w-32 bg-muted animate-pulse rounded" />
+            <div className="h-2.5 w-20 bg-muted/60 animate-pulse rounded" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Search & Follow Tab ────────────────────────────────────────────────────
 
 function SearchFollowTab() {
   const [query, setQuery] = useState("");
@@ -203,11 +266,9 @@ function SearchFollowTab() {
     return true;
   });
 
-  function toggleSelect(did: string) {
-    setSelected(prev => { const n = new Set(prev); n.has(did) ? n.delete(did) : n.add(did); return n; });
-  }
-  function selectAll() { setSelected(new Set(filteredUsers.map(u => u.did))); }
-  function clearSelection() { setSelected(new Set()); }
+  const toggleSelect = (did: string) => setSelected(prev => { const n = new Set(prev); n.has(did) ? n.delete(did) : n.add(did); return n; });
+  const selectAll = () => setSelected(new Set(filteredUsers.map(u => u.did)));
+  const clearSelection = () => setSelected(new Set());
 
   function handleSearch(e?: React.FormEvent) {
     e?.preventDefault();
@@ -219,8 +280,7 @@ function SearchFollowTab() {
   }
 
   function handleFollow() {
-    const dids = Array.from(selected);
-    bulkFollow.mutate({ data: { dids } }, {
+    bulkFollow.mutate({ data: { dids: Array.from(selected) } }, {
       onSuccess: (r) => { toast({ title: `Followed ${r.succeeded} accounts` }); clearSelection(); },
       onError: () => toast({ title: "Follow failed", variant: "destructive" }),
     });
@@ -230,39 +290,39 @@ function SearchFollowTab() {
   const filtered = allUsers.length - filteredUsers.length;
 
   return (
-    <div className="bg-card border border-card-border rounded-xl shadow-sm overflow-hidden">
-      {/* Search bar */}
-      <form onSubmit={handleSearch} className="px-4 py-4 border-b border-border bg-muted/20">
+    <div className="bg-card border border-card-border rounded-xl overflow-hidden">
+      {/* Search Bar */}
+      <form onSubmit={handleSearch} className="px-4 py-3.5 border-b border-border bg-muted/15">
         <div className="flex gap-2">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
             <Input
               ref={inputRef}
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder='Search Bluesky users, e.g. "software engineering", "Kenya tech"…'
-              className="pl-9 h-9"
+              placeholder='Search by keyword, bio, or name…'
+              className="pl-8 h-9 text-sm"
             />
           </div>
-          <Button type="submit" disabled={!query.trim() || isFetching} className="h-9 px-5">
-            {isFetching ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Search"}
+          <Button type="submit" size="sm" disabled={!query.trim() || isFetching} className="h-9 px-4">
+            {isFetching ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : "Search"}
           </Button>
           <Button
             type="button"
             variant="outline"
             size="icon"
-            className={cn("h-9 w-9 flex-shrink-0", showFilters && "bg-primary/10 border-primary/40 text-primary")}
+            className={cn("h-9 w-9 flex-shrink-0", showFilters && "bg-primary/8 border-primary/30 text-primary")}
             onClick={() => setShowFilters(f => !f)}
           >
-            <Filter className="w-4 h-4" />
+            <Filter className="w-3.5 h-3.5" />
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground mt-2">
-          Searches Bluesky by user bio/name keywords. Use filters below to reduce bots before bulk following.
+        <p className="text-[11px] text-muted-foreground mt-1.5">
+          Try "software engineering", "AI", "Kenya", "web developer" — then select and bulk follow.
         </p>
       </form>
 
-      {/* Filters panel */}
+      {/* Filters Panel */}
       <AnimatePresence>
         {showFilters && (
           <motion.div
@@ -271,18 +331,17 @@ function SearchFollowTab() {
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden border-b border-border"
           >
-            <div className="px-4 py-4 flex items-center gap-6 flex-wrap bg-muted/10">
+            <div className="px-4 py-3.5 flex items-center gap-6 flex-wrap bg-muted/10">
               <div>
                 <label className="text-xs font-medium text-foreground block mb-1.5">Min. followers</label>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2.5">
                   <input
                     type="range" min={0} max={500} step={5} value={minFollowers}
                     onChange={e => setMinFollowers(Number(e.target.value))}
                     className="w-28 accent-primary"
                   />
-                  <span className="text-xs font-mono text-foreground w-8">{minFollowers}</span>
+                  <span className="text-xs font-mono text-foreground w-8 tabular-nums">{minFollowers}</span>
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-0.5">Filter out very new accounts</p>
               </div>
               <div>
                 <label className="text-xs font-medium text-foreground block mb-1.5">Bot filter</label>
@@ -291,19 +350,18 @@ function SearchFollowTab() {
                   className={cn(
                     "flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors",
                     hidePossibleBots
-                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600"
-                      : "border-border text-muted-foreground",
+                      ? "bg-emerald-500/8 border-emerald-500/25 text-emerald-600"
+                      : "border-border text-muted-foreground hover:bg-muted/50",
                   )}
                 >
                   {hidePossibleBots ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
                   Hide possible bots
                 </button>
-                <p className="text-[11px] text-muted-foreground mt-1">Hides accounts with very low follower/following ratio</p>
               </div>
               {allUsers.length > 0 && (
                 <div className="ml-auto text-xs text-muted-foreground text-right">
                   <span className="text-foreground font-medium">{filteredUsers.length}</span> / {allUsers.length} shown
-                  {filtered > 0 && <><br /><span className="text-amber-500">{filtered} filtered out</span></>}
+                  {filtered > 0 && <><br /><span className="text-amber-500 text-[11px]">{filtered} filtered out</span></>}
                 </div>
               )}
             </div>
@@ -311,16 +369,16 @@ function SearchFollowTab() {
         )}
       </AnimatePresence>
 
-      {/* Bulk action toolbar */}
+      {/* Bulk Action Bar */}
       {selected.size > 0 && (
-        <div className="px-4 py-2.5 border-b border-border bg-primary/5 flex items-center gap-3">
-          <span className="text-xs text-primary font-medium">{selected.size} selected</span>
-          <Button size="sm" className="h-7 text-xs" onClick={handleFollow} disabled={bulkFollow.isPending}>
-            <UserPlus className="w-3 h-3 mr-1" />
+        <div className="px-4 py-2.5 border-b border-border bg-primary/4 flex items-center gap-3">
+          <span className="text-xs text-primary font-semibold">{selected.size} selected</span>
+          <Button size="sm" className="h-7 text-xs gap-1" onClick={handleFollow} disabled={bulkFollow.isPending}>
+            <UserPlus className="w-3 h-3" />
             {bulkFollow.isPending ? "Following…" : `Follow ${selected.size}`}
           </Button>
           <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={clearSelection}>
-            <X className="w-3 h-3 mr-1" /> Clear
+            <X className="w-3 h-3 mr-1" />Clear
           </Button>
         </div>
       )}
@@ -328,40 +386,35 @@ function SearchFollowTab() {
       {/* Results */}
       {!submittedQuery ? (
         <div className="flex flex-col items-center justify-center h-52 gap-3 text-center px-8">
-          <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center">
-            <Search className="w-6 h-6 text-primary/60" />
+          <div className="w-12 h-12 rounded-2xl bg-muted border border-border flex items-center justify-center">
+            <Search className="w-5 h-5 text-muted-foreground/50" />
           </div>
           <div>
-            <p className="text-sm font-medium text-foreground">Search to discover people to follow</p>
-            <p className="text-xs text-muted-foreground mt-1">Try "software engineering", "AI", "Kenya", "web developer" — then select and bulk follow real accounts.</p>
+            <p className="text-sm font-semibold text-foreground">Search to discover people</p>
+            <p className="text-xs text-muted-foreground mt-1">Find real accounts to follow by keyword, topic, or location.</p>
           </div>
         </div>
       ) : isLoading ? (
-        <div className="p-4 space-y-3">
-          {Array.from({ length: 8 }).map((_, i) => <div key={i} className="h-16 bg-muted rounded-lg animate-pulse" />)}
-        </div>
+        <SkeletonList />
       ) : filteredUsers.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-40 gap-2">
-          <Users className="w-10 h-10 text-muted-foreground/20" />
+          <Users className="w-9 h-9 text-muted-foreground/20" />
           <p className="text-sm text-muted-foreground">
-            {allUsers.length > 0 ? "All results filtered out — try loosening the filters." : `No results for "${submittedQuery}".`}
+            {allUsers.length > 0 ? "All results filtered — try loosening filters." : `No results for "${submittedQuery}".`}
           </p>
         </div>
       ) : (
         <>
-          {/* Select all row */}
-          <div className="px-4 py-2 border-b border-border/50 flex items-center justify-between bg-muted/10">
+          <div className="px-4 py-2 border-b border-border/40 flex items-center justify-between bg-muted/10">
             <button onClick={selectAll} className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1.5 transition-colors">
               <CheckSquare className="w-3.5 h-3.5" /> Select all {filteredUsers.length}
             </button>
             {hidePossibleBots && botCount > 0 && (
               <span className="text-[11px] text-amber-500 flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" />
-                {botCount} possible bot{botCount > 1 ? "s" : ""} hidden
+                <AlertTriangle className="w-3 h-3" />{botCount} bot{botCount > 1 ? "s" : ""} hidden
               </span>
             )}
           </div>
-
           <div>
             {filteredUsers.map((u, i) => {
               const asAudienceUser: AudienceUser & { postCount?: number } = {
@@ -386,34 +439,27 @@ function SearchFollowTab() {
               );
             })}
           </div>
-
-          {/* Pagination */}
-          <div className="px-4 py-3 border-t border-border flex items-center justify-between bg-muted/10">
-            <Button variant="outline" size="sm" disabled={cursorStack.length === 0} onClick={() => {
+          <Pagination
+            cursorStack={cursorStack}
+            onPrev={() => {
               const s = [...cursorStack]; const p = s.pop();
-              setCursorStack(s); setCursor(p === "" ? undefined : p);
-              setSelected(new Set());
-            }}>
-              <ChevronLeft className="w-4 h-4 mr-1" /> Previous
-            </Button>
-            <span className="text-xs text-muted-foreground">{filteredUsers.length} shown</span>
-            <Button variant="outline" size="sm" disabled={!data?.cursor} onClick={() => {
+              setCursorStack(s); setCursor(p === "" ? undefined : p); setSelected(new Set());
+            }}
+            onNext={() => {
               if (data?.cursor) {
-                setCursorStack(s => [...s, cursor ?? ""]);
-                setCursor(data.cursor!);
-                setSelected(new Set());
+                setCursorStack(s => [...s, cursor ?? ""]); setCursor(data.cursor!); setSelected(new Set());
               }
-            }}>
-              Next <ChevronRight className="w-4 h-4 ml-1" />
-            </Button>
-          </div>
+            }}
+            hasNext={!!data?.cursor}
+            count={filteredUsers.length}
+          />
         </>
       )}
     </div>
   );
 }
 
-// ─── Main Component ────────────────────────────────────────────────────────────
+// ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function Audience() {
   const [tab, setTab] = useState<Tab>("followers");
@@ -429,6 +475,7 @@ export default function Audience() {
 
   const { data: profile } = useGetBlueskyProfile({ query: { retry: false, queryKey: ["profile-audience"] } });
   const { data: feeds } = useListFeeds();
+
   const { data: followers, isLoading: loadingFollowers } = useGetFollowers(
     { limit: 50, cursor: followersCursor },
     { query: { queryKey: ["followers", followersCursor], enabled: tab === "followers" } },
@@ -437,6 +484,7 @@ export default function Audience() {
     { limit: 50, cursor: followingCursor },
     { query: { queryKey: ["following", followingCursor], enabled: tab === "following" } },
   );
+
   const [nfbUsers, setNfbUsers] = useState<AudienceUser[]>([]);
   const [nfbCursor, setNfbCursor] = useState<string | null>(null);
   const [nfbHasMore, setNfbHasMore] = useState(true);
@@ -483,33 +531,29 @@ export default function Audience() {
   const bulkFollow = useBulkFollow();
   const bulkUnfollow = useBulkUnfollow();
 
-  function toggleSelect(did: string) {
-    setSelected(prev => { const n = new Set(prev); n.has(did) ? n.delete(did) : n.add(did); return n; });
-  }
-  function selectAll(users: AudienceUser[]) { setSelected(new Set(users.map(u => u.did))); }
-  function clearSelection() { setSelected(new Set()); }
+  const toggleSelect = (did: string) => setSelected(prev => { const n = new Set(prev); n.has(did) ? n.delete(did) : n.add(did); return n; });
+  const selectAll = (users: AudienceUser[]) => setSelected(new Set(users.map(u => u.did)));
+  const clearSelection = () => setSelected(new Set());
 
   function handleBulkFollow() {
-    const dids = Array.from(selected);
-    bulkFollow.mutate({ data: { dids } }, {
+    bulkFollow.mutate({ data: { dids: Array.from(selected) } }, {
       onSuccess: (r) => { toast({ title: `Followed ${r.succeeded} accounts` }); clearSelection(); queryClient.invalidateQueries(); },
       onError: () => toast({ title: "Bulk follow failed", variant: "destructive" }),
     });
   }
   function handleBulkUnfollow() {
-    const dids = Array.from(selected);
-    bulkUnfollow.mutate({ data: { dids } }, {
+    bulkUnfollow.mutate({ data: { dids: Array.from(selected) } }, {
       onSuccess: (r) => { toast({ title: `Unfollowed ${r.succeeded} accounts` }); clearSelection(); queryClient.invalidateQueries(); },
       onError: () => toast({ title: "Bulk unfollow failed", variant: "destructive" }),
     });
   }
 
-  const tabs = [
-    { id: "followers" as Tab, label: "Followers", icon: Users, count: profile?.followersCount },
-    { id: "following" as Tab, label: "Following", icon: UserPlus, count: profile?.followsCount },
-    { id: "not-following-back" as Tab, label: "Not Following Back", icon: UserMinus, count: nfbUsers.length || undefined },
-    { id: "top-authors" as Tab, label: "Top Authors", icon: TrendingUp, count: null },
-    { id: "search" as Tab, label: "Search & Follow", icon: Search, count: null },
+  const tabs: { id: Tab; label: string; shortLabel: string; icon: React.ElementType; count?: number }[] = [
+    { id: "followers", label: "Followers", shortLabel: "Followers", icon: Users, count: profile?.followersCount },
+    { id: "following", label: "Following", shortLabel: "Following", icon: UserPlus, count: profile?.followsCount },
+    { id: "not-following-back", label: "Not Following Back", shortLabel: "NFB", icon: UserMinus, count: nfbUsers.length || undefined },
+    { id: "top-authors", label: "Top Authors", shortLabel: "Authors", icon: TrendingUp },
+    { id: "search", label: "Search & Follow", shortLabel: "Search", icon: Search },
   ];
 
   function filterUsers(users: AudienceUser[]) {
@@ -528,20 +572,26 @@ export default function Audience() {
   const currentTopAuthors = topAuthors ?? [];
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
-      <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
+    <div className="px-4 py-5 md:px-8 md:py-8 max-w-5xl mx-auto">
+      {/* Header */}
+      <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="mb-5">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Audience</h1>
-            <p className="text-muted-foreground text-sm mt-0.5">Manage your Bluesky followers, following, and discover new accounts</p>
+            <h1 className="text-xl md:text-2xl font-bold text-foreground tracking-tight">Audience</h1>
+            <p className="text-muted-foreground text-sm mt-0.5">Manage followers, following, and discover new accounts</p>
           </div>
           <SyncEngagementButton />
         </div>
       </motion.div>
 
-      {/* Stats row */}
+      {/* Stats Row */}
       {profile && (
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="grid grid-cols-3 gap-4 mb-6">
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.05 }}
+          className="grid grid-cols-3 gap-3 mb-5"
+        >
           <StatBadge label="Followers" value={profile.followersCount} accent />
           <StatBadge label="Following" value={profile.followsCount} />
           <StatBadge label="Not Following Back" value={nfbUsers.length > 0 ? nfbUsers.length : "—"} />
@@ -549,55 +599,63 @@ export default function Audience() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-border mb-0 overflow-x-auto">
-        {tabs.map(({ id, label, icon: Icon, count }) => (
+      <div className="flex border-b border-border mb-0 overflow-x-auto scrollbar-thin -mx-4 px-4 md:mx-0 md:px-0">
+        {tabs.map(({ id, label, shortLabel, icon: Icon, count }) => (
           <button
             key={id}
             onClick={() => { setTab(id); setSearch(""); clearSelection(); }}
             className={cn(
-              "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap",
-              id === "search" && "text-primary border-primary/0",
-              tab === id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground",
+              "flex items-center gap-1.5 px-3 md:px-4 py-2.5 text-xs md:text-sm font-medium border-b-2 -mb-px transition-all whitespace-nowrap flex-shrink-0",
+              tab === id
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:border-border",
             )}
           >
-            <Icon className="w-3.5 h-3.5" />
-            {label}
-            {id === "search" && tab !== "search" && (
-              <span className="text-[10px] bg-primary text-primary-foreground px-1.5 py-0.5 rounded-full font-medium">New</span>
-            )}
-            {count !== undefined && count !== null && (
-              <span className={cn("text-xs px-1.5 py-0.5 rounded-full", tab === id ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground")}>
-                {typeof count === "number" ? count.toLocaleString() : count}
+            <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="sm:hidden">{shortLabel}</span>
+            <span className="hidden sm:inline">{label}</span>
+            {count !== undefined && (
+              <span className={cn(
+                "text-[10px] px-1.5 py-0.5 rounded-full tabular-nums font-medium",
+                tab === id ? "bg-primary/12 text-primary" : "bg-muted text-muted-foreground",
+              )}>
+                {count.toLocaleString()}
               </span>
             )}
           </button>
         ))}
       </div>
 
-      {/* Search & Follow tab renders outside the shared panel */}
+      {/* Search Tab */}
       {tab === "search" ? (
-        <motion.div key="search" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-0">
+        <motion.div key="search" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
           <SearchFollowTab />
         </motion.div>
       ) : (
         <AnimatePresence mode="wait">
-          <motion.div key={tab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
-            <div className="bg-card border border-card-border rounded-b-xl rounded-tr-xl shadow-sm overflow-hidden">
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+          >
+            <div className="bg-card border border-card-border rounded-b-xl rounded-tr-xl overflow-hidden">
               {/* Toolbar */}
-              <div className="px-4 py-3 border-b border-border flex items-center gap-3 flex-wrap">
-                <div className="relative flex-1 min-w-48">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <div className="px-4 py-3 border-b border-border/50 flex items-center gap-2 flex-wrap bg-muted/10">
+                <div className="relative flex-1 min-w-40">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                   <Input
                     value={search}
                     onChange={e => setSearch(e.target.value)}
-                    placeholder="Search by handle, name, or bio…"
+                    placeholder="Filter by handle, name, bio…"
                     className="pl-8 h-8 text-xs"
                   />
                 </div>
 
                 {tab === "top-authors" && (
                   <Select value={selectedFeedId} onValueChange={setSelectedFeedId}>
-                    <SelectTrigger className="w-48 h-8 text-xs">
+                    <SelectTrigger className="w-44 h-8 text-xs">
                       <SelectValue placeholder="Select a feed…" />
                     </SelectTrigger>
                     <SelectContent>
@@ -609,98 +667,90 @@ export default function Audience() {
                 )}
 
                 {selected.size > 0 && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">{selected.size} selected</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-muted-foreground font-medium">{selected.size} selected</span>
                     {(tab === "not-following-back" || tab === "following") && (
-                      <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={handleBulkUnfollow} disabled={bulkUnfollow.isPending}>
-                        <UserMinus className="w-3 h-3 mr-1" />
+                      <Button size="sm" variant="destructive" className="h-7 text-xs gap-1" onClick={handleBulkUnfollow} disabled={bulkUnfollow.isPending}>
+                        <UserMinus className="w-3 h-3" />
                         {bulkUnfollow.isPending ? "Unfollowing…" : `Unfollow ${selected.size}`}
                       </Button>
                     )}
                     {tab === "top-authors" && (
-                      <Button size="sm" className="h-7 text-xs" onClick={handleBulkFollow} disabled={bulkFollow.isPending}>
-                        <UserPlus className="w-3 h-3 mr-1" />
+                      <Button size="sm" className="h-7 text-xs gap-1" onClick={handleBulkFollow} disabled={bulkFollow.isPending}>
+                        <UserPlus className="w-3 h-3" />
                         {bulkFollow.isPending ? "Following…" : `Follow ${selected.size}`}
                       </Button>
                     )}
-                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={clearSelection}>Clear</Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={clearSelection}>
+                      <X className="w-3 h-3" />
+                    </Button>
                   </div>
                 )}
 
                 {tab === "not-following-back" && currentNFB.length > 0 && selected.size === 0 && (
-                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => selectAll(currentNFB)}>
-                    <CheckSquare className="w-3 h-3 mr-1" />
-                    Select All ({currentNFB.length})
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => selectAll(currentNFB)}>
+                    <CheckSquare className="w-3 h-3" />
+                    All ({currentNFB.length})
                   </Button>
                 )}
               </div>
 
               {/* FOLLOWERS */}
               {tab === "followers" && (
-                loadingFollowers ? (
-                  <div className="p-4 space-y-3">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="h-16 bg-muted rounded-lg animate-pulse" />)}</div>
-                ) : currentFollowers.length === 0 ? (
+                loadingFollowers ? <SkeletonList /> :
+                currentFollowers.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-48 gap-2">
-                    <Users className="w-10 h-10 text-muted-foreground/20" />
-                    <p className="text-sm text-muted-foreground">{search ? "No results for your search." : "No followers found."}</p>
+                    <Users className="w-9 h-9 text-muted-foreground/20" />
+                    <p className="text-sm text-muted-foreground">{search ? "No results." : "No followers found."}</p>
                   </div>
                 ) : (
                   <>
-                    <div>
-                      {currentFollowers.map((user, i) => (
-                        <motion.div key={user.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
-                          <UserCard user={user} />
-                        </motion.div>
-                      ))}
-                    </div>
-                    <div className="px-4 py-3 border-t border-border flex items-center justify-between bg-muted/10">
-                      <Button variant="outline" size="sm" disabled={followersCursorStack.length === 0} onClick={() => { const s = [...followersCursorStack]; const p = s.pop(); setFollowersCursorStack(s); setFollowersCursor(p === "" ? undefined : p); }}>
-                        <ChevronLeft className="w-4 h-4 mr-1" /> Previous
-                      </Button>
-                      <span className="text-xs text-muted-foreground">{currentFollowers.length} shown</span>
-                      <Button variant="outline" size="sm" disabled={!followers?.cursor} onClick={() => { if (followers?.cursor) { setFollowersCursorStack(s => [...s, followersCursor ?? ""]); setFollowersCursor(followers.cursor!); } }}>
-                        Next <ChevronRight className="w-4 h-4 ml-1" />
-                      </Button>
-                    </div>
+                    <div>{currentFollowers.map((user, i) => (
+                      <motion.div key={user.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
+                        <UserCard user={user} />
+                      </motion.div>
+                    ))}</div>
+                    <Pagination
+                      cursorStack={followersCursorStack}
+                      onPrev={() => { const s = [...followersCursorStack]; const p = s.pop(); setFollowersCursorStack(s); setFollowersCursor(p === "" ? undefined : p); }}
+                      onNext={() => { if (followers?.cursor) { setFollowersCursorStack(s => [...s, followersCursor ?? ""]); setFollowersCursor(followers.cursor!); } }}
+                      hasNext={!!followers?.cursor}
+                      count={currentFollowers.length}
+                    />
                   </>
                 )
               )}
 
               {/* FOLLOWING */}
               {tab === "following" && (
-                loadingFollowing ? (
-                  <div className="p-4 space-y-3">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="h-16 bg-muted rounded-lg animate-pulse" />)}</div>
-                ) : currentFollowing.length === 0 ? (
+                loadingFollowing ? <SkeletonList /> :
+                currentFollowing.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-48 gap-2">
-                    <UserPlus className="w-10 h-10 text-muted-foreground/20" />
-                    <p className="text-sm text-muted-foreground">{search ? "No results." : "Not following anyone yet."}</p>
+                    <UserPlus className="w-9 h-9 text-muted-foreground/20" />
+                    <p className="text-sm text-muted-foreground">{search ? "No results." : "Not following anyone."}</p>
                   </div>
                 ) : (
                   <>
-                    <div>
-                      {currentFollowing.map((user, i) => (
-                        <motion.div key={user.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
-                          <UserCard
-                            user={user}
-                            selected={selected.has(user.did)}
-                            onToggle={() => toggleSelect(user.did)}
-                            actionLabel="Unfollow"
-                            actionIcon={UserMinus}
-                            onAction={() => { setSelected(new Set([user.did])); handleBulkUnfollow(); }}
-                            actionPending={bulkUnfollow.isPending}
-                          />
-                        </motion.div>
-                      ))}
-                    </div>
-                    <div className="px-4 py-3 border-t border-border flex items-center justify-between bg-muted/10">
-                      <Button variant="outline" size="sm" disabled={followingCursorStack.length === 0} onClick={() => { const s = [...followingCursorStack]; const p = s.pop(); setFollowingCursorStack(s); setFollowingCursor(p === "" ? undefined : p); }}>
-                        <ChevronLeft className="w-4 h-4 mr-1" /> Previous
-                      </Button>
-                      <span className="text-xs text-muted-foreground">{currentFollowing.length} shown</span>
-                      <Button variant="outline" size="sm" disabled={!following?.cursor} onClick={() => { if (following?.cursor) { setFollowingCursorStack(s => [...s, followingCursor ?? ""]); setFollowingCursor(following.cursor!); } }}>
-                        Next <ChevronRight className="w-4 h-4 ml-1" />
-                      </Button>
-                    </div>
+                    <div>{currentFollowing.map((user, i) => (
+                      <motion.div key={user.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
+                        <UserCard
+                          user={user}
+                          selected={selected.has(user.did)}
+                          onToggle={() => toggleSelect(user.did)}
+                          actionLabel="Unfollow"
+                          actionIcon={UserMinus}
+                          onAction={() => { setSelected(new Set([user.did])); handleBulkUnfollow(); }}
+                          actionPending={bulkUnfollow.isPending}
+                        />
+                      </motion.div>
+                    ))}</div>
+                    <Pagination
+                      cursorStack={followingCursorStack}
+                      onPrev={() => { const s = [...followingCursorStack]; const p = s.pop(); setFollowingCursorStack(s); setFollowingCursor(p === "" ? undefined : p); }}
+                      onNext={() => { if (following?.cursor) { setFollowingCursorStack(s => [...s, followingCursor ?? ""]); setFollowingCursor(following.cursor!); } }}
+                      hasNext={!!following?.cursor}
+                      count={currentFollowing.length}
+                    />
                   </>
                 )
               )}
@@ -708,14 +758,19 @@ export default function Audience() {
               {/* NOT FOLLOWING BACK */}
               {tab === "not-following-back" && (
                 loadingNFB ? (
-                  <div className="flex flex-col items-center justify-center h-48 gap-3">
-                    <RefreshCw className="w-8 h-8 text-muted-foreground/30 animate-spin" />
+                  <div className="flex flex-col items-center justify-center h-52 gap-3">
+                    <div className="w-10 h-10 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
                     <p className="text-sm text-muted-foreground">Checking your first 100 following…</p>
                   </div>
                 ) : currentNFB.length === 0 && !nfbHasMore ? (
-                  <div className="flex flex-col items-center justify-center h-48 gap-2">
-                    <Heart className="w-10 h-10 text-emerald-400/40" />
-                    <p className="text-sm text-muted-foreground">Everyone you follow is following you back!</p>
+                  <div className="flex flex-col items-center justify-center h-52 gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/8 border border-emerald-500/20 flex items-center justify-center">
+                      <Heart className="w-6 h-6 text-emerald-500" />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-semibold text-foreground">Everyone follows you back!</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">All your following accounts follow you back.</p>
+                    </div>
                   </div>
                 ) : (
                   <div>
@@ -730,28 +785,35 @@ export default function Audience() {
                       </motion.div>
                     ))}
                     {nfbHasMore && (
-                      <div className="px-4 py-4 border-t border-border bg-muted/10 flex flex-col items-center gap-2">
+                      <div className="px-4 py-4 border-t border-border/50 bg-muted/15 flex flex-col items-center gap-2.5">
                         <p className="text-xs text-muted-foreground">
-                          Showing {nfbUsers.length} found so far — {nfbCursor ? "more pages available" : "all checked"}
+                          {nfbUsers.length > 0
+                            ? <><strong className="text-foreground font-semibold">{nfbUsers.length}</strong> found so far — more pages available</>
+                            : "No accounts found yet in this page — keep loading to check more"
+                          }
                         </p>
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={loadMoreNFB}
                           disabled={nfbLoadingMore}
-                          className="w-48"
+                          className="w-52 gap-2"
                         >
-                          {nfbLoadingMore
-                            ? <><RefreshCw className="w-3.5 h-3.5 mr-2 animate-spin" />Checking next 100…</>
-                            : <><ChevronRight className="w-3.5 h-3.5 mr-2" />Load next 100 following</>
-                          }
+                          {nfbLoadingMore ? (
+                            <><RefreshCw className="w-3.5 h-3.5 animate-spin" />Checking next 100…</>
+                          ) : (
+                            <><ChevronRight className="w-3.5 h-3.5" />Load next 100 following</>
+                          )}
                         </Button>
                       </div>
                     )}
                     {!nfbHasMore && nfbUsers.length > 0 && (
-                      <div className="px-4 py-3 border-t border-border bg-muted/10 text-center">
+                      <div className="px-4 py-3 border-t border-border/50 bg-muted/15 flex items-center justify-center gap-2">
+                        <div className="w-4 h-4 rounded-full bg-emerald-500/15 flex items-center justify-center">
+                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        </div>
                         <p className="text-xs text-muted-foreground">
-                          ✓ All {nfbUsers.length} accounts checked — {nfbUsers.length} not following back
+                          All following checked — <strong className="text-foreground font-semibold">{nfbUsers.length}</strong> not following back
                         </p>
                       </div>
                     )}
@@ -762,21 +824,25 @@ export default function Audience() {
               {/* TOP AUTHORS */}
               {tab === "top-authors" && (
                 !selectedFeedId ? (
-                  <div className="flex flex-col items-center justify-center h-48 gap-2">
-                    <TrendingUp className="w-10 h-10 text-muted-foreground/20" />
-                    <p className="text-sm text-muted-foreground">Select a feed above to see its top contributing authors</p>
+                  <div className="flex flex-col items-center justify-center h-52 gap-3 text-center px-8">
+                    <div className="w-12 h-12 rounded-2xl bg-muted border border-border flex items-center justify-center">
+                      <TrendingUp className="w-5 h-5 text-muted-foreground/50" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">Select a feed</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Choose a feed above to see its top contributing authors</p>
+                    </div>
                   </div>
-                ) : loadingTopAuthors ? (
-                  <div className="p-4 space-y-3">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="h-16 bg-muted rounded-lg animate-pulse" />)}</div>
-                ) : currentTopAuthors.length === 0 ? (
+                ) : loadingTopAuthors ? <SkeletonList /> :
+                currentTopAuthors.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-48 gap-2">
-                    <TrendingUp className="w-10 h-10 text-muted-foreground/20" />
-                    <p className="text-sm text-muted-foreground">No posts indexed for this feed yet.</p>
+                    <TrendingUp className="w-9 h-9 text-muted-foreground/20" />
+                    <p className="text-sm text-muted-foreground">No authors yet. Posts will appear as they're indexed.</p>
                   </div>
                 ) : (
                   <div>
                     {currentTopAuthors.map((author, i) => {
-                      const user: AudienceUser & { postCount: number } = {
+                      const u: AudienceUser & { postCount?: number } = {
                         did: author.did,
                         handle: author.did,
                         displayName: null,
@@ -790,26 +856,14 @@ export default function Audience() {
                       return (
                         <motion.div key={author.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
                           <UserCard
-                            user={user}
+                            user={u}
                             selected={selected.has(author.did)}
                             onToggle={() => toggleSelect(author.did)}
                             rank={i + 1}
-                            actionLabel="Follow"
-                            actionIcon={UserPlus}
-                            onAction={() => setSelected(new Set([author.did]))}
                           />
                         </motion.div>
                       );
                     })}
-                    {selected.size > 0 && (
-                      <div className="px-4 py-3 border-t border-border bg-muted/10 flex items-center justify-between">
-                        <span className="text-xs text-muted-foreground">{selected.size} selected</span>
-                        <Button size="sm" onClick={handleBulkFollow} disabled={bulkFollow.isPending}>
-                          <UserPlus className="w-3.5 h-3.5 mr-1.5" />
-                          {bulkFollow.isPending ? "Following…" : `Follow ${selected.size} accounts`}
-                        </Button>
-                      </div>
-                    )}
                   </div>
                 )
               )}
@@ -817,14 +871,6 @@ export default function Audience() {
           </motion.div>
         </AnimatePresence>
       )}
-
-      {/* Info note */}
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }} className="mt-4 p-3 bg-muted/40 rounded-lg border border-border/50 flex items-start gap-2">
-        <Zap className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-muted-foreground">
-          <strong className="text-foreground">Tip:</strong> Use <strong>Search & Follow</strong> to find real accounts by topic (e.g. "software engineering", "AI researcher"). The bot filter hides accounts with a suspiciously high follow/follower ratio. Bluesky does not expose view counts — use <strong>Sync Engagement</strong> to pull live likes, reposts, and replies.
-        </p>
-      </motion.div>
     </div>
   );
 }

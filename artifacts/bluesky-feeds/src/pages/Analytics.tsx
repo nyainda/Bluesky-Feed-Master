@@ -1,45 +1,60 @@
 import { useState } from "react";
-import { useListFeeds, useGetRecentActivity, useGet7DayActivity, useGetTopFeeds, useGetFeedKeywordStats, useGetFeedTopAuthors, useGetFeedHourly, useGetBlueskyFeedInfo } from "@workspace/api-client-react";
+import {
+  useListFeeds, useGetRecentActivity, useGet7DayActivity, useGetTopFeeds,
+  useGetFeedKeywordStats, useGetFeedTopAuthors, useGetFeedHourly, useGetBlueskyFeedInfo,
+} from "@workspace/api-client-react";
 import { motion } from "framer-motion";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, PieChart, Pie, Cell, Legend,
+  ResponsiveContainer, PieChart, Pie, Cell,
 } from "recharts";
 import { format, formatDistanceToNow } from "date-fns";
-import { TrendingUp, Users, Hash, Clock, ExternalLink, ChevronDown } from "lucide-react";
+import { TrendingUp, Users, ExternalLink } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-const CHART_COLORS = ["hsl(217 91% 60%)", "hsl(199 89% 48%)", "hsl(173 80% 40%)", "hsl(262 83% 58%)", "hsl(338 75% 55%)", "hsl(43 96% 56%)", "hsl(20 90% 55%)"];
-
-function SectionCard({ title, subtitle, children, className }: { title: string; subtitle?: string; children: React.ReactNode; className?: string }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={cn("bg-card border border-card-border rounded-xl shadow-sm overflow-hidden", className)}
-    >
-      <div className="px-6 py-4 border-b border-border">
-        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-        {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
-      </div>
-      <div className="p-6">{children}</div>
-    </motion.div>
-  );
-}
+const CHART_COLORS = [
+  "hsl(210 100% 58%)",
+  "hsl(168 84% 42%)",
+  "hsl(43 96% 52%)",
+  "hsl(338 80% 58%)",
+  "hsl(199 89% 48%)",
+  "hsl(262 83% 60%)",
+  "hsl(20 90% 55%)",
+];
 
 function tooltipStyle() {
   return {
     contentStyle: {
-      background: "hsl(222 40% 10%)",
-      border: "1px solid hsl(222 30% 18%)",
-      borderRadius: "8px",
-      fontSize: "12px",
-      color: "hsl(215 28% 93%)",
+      background: "hsl(240 8% 6%)",
+      border: "1px solid hsl(240 4% 14%)",
+      borderRadius: "10px",
+      fontSize: "11px",
+      color: "hsl(0 0% 97%)",
+      boxShadow: "0 16px 40px hsl(240 10% 2% / .8)",
+      padding: "8px 12px",
     },
-    cursor: { stroke: "hsl(217 91% 60% / 0.3)", strokeWidth: 1 },
+    cursor: { stroke: "hsl(210 100% 62% / .2)", strokeWidth: 1 },
   };
+}
+
+function SectionCard({ title, subtitle, children, className }: {
+  title: string; subtitle?: string; children: React.ReactNode; className?: string;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={cn("bg-card border border-card-border rounded-xl overflow-hidden", className)}
+    >
+      <div className="px-5 md:px-6 py-4 border-b border-border">
+        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+        {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
+      </div>
+      <div className="p-5 md:p-6">{children}</div>
+    </motion.div>
+  );
 }
 
 function formatDay(iso: string) {
@@ -50,14 +65,16 @@ function formatHour(iso: string) {
 }
 function shortenDid(did: string) {
   if (did.length <= 20) return did;
-  return did.substring(0, 12) + "..." + did.substring(did.length - 6);
+  return did.substring(0, 12) + "…" + did.substring(did.length - 6);
 }
 
 function EmptyChart({ message }: { message: string }) {
   return (
-    <div className="flex flex-col items-center justify-center h-40 gap-2">
-      <TrendingUp className="w-8 h-8 text-muted-foreground/20" />
-      <p className="text-xs text-muted-foreground text-center">{message}</p>
+    <div className="flex flex-col items-center justify-center h-40 gap-3">
+      <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
+        <TrendingUp className="w-5 h-5 text-muted-foreground/30" />
+      </div>
+      <p className="text-xs text-muted-foreground text-center max-w-[200px]">{message}</p>
     </div>
   );
 }
@@ -89,23 +106,24 @@ export default function Analytics() {
   const chart24h = (activity24h || []).map(b => ({ time: formatHour(b.hour), posts: b.count }));
   const chart7d = (activity7d || []).map(b => ({ day: formatDay(b.day), posts: b.count }));
   const feedHourlyChart = (feedHourly || []).map(b => ({ time: formatHour(b.hour), posts: b.count }));
-  const pieData = (keywordStats || []).slice(0, 7).map((k, i) => ({ name: k.keyword, value: k.postCount, color: CHART_COLORS[i % CHART_COLORS.length] }));
-
+  const pieData = (keywordStats || []).slice(0, 7).map((k, i) => ({
+    name: k.keyword, value: k.postCount, color: CHART_COLORS[i % CHART_COLORS.length],
+  }));
   const totalForAllFeeds = (topFeeds || []).reduce((s, f) => s + f.postCount, 0);
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
-      <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between mb-8">
+    <div className="px-4 py-5 md:px-8 md:py-8 max-w-7xl mx-auto">
+      <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6 md:mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Analytics</h1>
-          <p className="text-muted-foreground text-sm mt-1">Deep insights into your feed performance and audience</p>
+          <h1 className="text-xl md:text-2xl font-bold text-foreground tracking-tight">Analytics</h1>
+          <p className="text-muted-foreground text-sm mt-0.5">Feed performance and audience insights</p>
         </div>
         <Select value={selectedFeedId} onValueChange={setSelectedFeedId}>
-          <SelectTrigger className="w-52" data-testid="select-feed">
+          <SelectTrigger className="w-full sm:w-52 text-sm" data-testid="select-feed">
             <SelectValue placeholder="All Feeds" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Feeds (Global)</SelectItem>
+            <SelectItem value="all">All Feeds</SelectItem>
             {(feeds || []).map(f => (
               <SelectItem key={f.id} value={String(f.id)}>{f.displayName}</SelectItem>
             ))}
@@ -114,21 +132,29 @@ export default function Analytics() {
       </motion.div>
 
       {selectedFeed && bskyFeedInfo && (
-        <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="mb-6 bg-gradient-to-r from-primary/10 via-blue-500/5 to-transparent border border-primary/20 rounded-xl p-5">
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center">
+        <motion.div
+          initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+          className="mb-6 bg-card border border-card-border rounded-xl p-4 md:p-5"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/15 flex items-center justify-center flex-shrink-0">
               <TrendingUp className="w-5 h-5 text-primary" />
             </div>
-            <div>
+            <div className="flex-1 min-w-0">
               <div className="font-semibold text-foreground">{bskyFeedInfo.displayName}</div>
-              <div className="text-sm text-muted-foreground">Published on Bluesky</div>
+              <div className="text-xs text-muted-foreground">Published on Bluesky</div>
             </div>
-            <div className="ml-auto flex items-center gap-6">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-primary tabular-nums">{bskyFeedInfo.likeCount.toLocaleString()}</div>
+            <div className="flex items-center gap-4">
+              <div>
+                <div className="text-xl md:text-2xl font-bold text-primary tabular-nums">{bskyFeedInfo.likeCount.toLocaleString()}</div>
                 <div className="text-xs text-muted-foreground">People Saved</div>
               </div>
-              <a href={`https://bsky.app/profile/${process.env.FEEDGEN_PUBLISHER_DID}/feed/${selectedFeed.recordName}`} target="_blank" rel="noreferrer" className="text-muted-foreground hover:text-primary transition-colors">
+              <a
+                href={`https://bsky.app/profile/${process.env.FEEDGEN_PUBLISHER_DID}/feed/${selectedFeed.recordName}`}
+                target="_blank"
+                rel="noreferrer"
+                className="p-2 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/8 transition-colors"
+              >
                 <ExternalLink className="w-4 h-4" />
               </a>
             </div>
@@ -138,24 +164,24 @@ export default function Analytics() {
 
       {selectedFeedId === "all" ? (
         <>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             <SectionCard title="24-Hour Activity" subtitle="Posts indexed per hour across all feeds">
               {chart24h.length === 0 ? (
-                <EmptyChart message="No activity in the last 24 hours. Add keywords to start indexing." />
+                <EmptyChart message="No activity in the last 24 hours." />
               ) : (
                 <ResponsiveContainer width="100%" height={200}>
                   <AreaChart data={chart24h} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
                     <defs>
                       <linearGradient id="grad1" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="hsl(217 91% 60%)" stopOpacity={0.35} />
-                        <stop offset="95%" stopColor="hsl(217 91% 60%)" stopOpacity={0} />
+                        <stop offset="5%" stopColor="hsl(210 100% 62%)" stopOpacity={0.25} />
+                        <stop offset="95%" stopColor="hsl(210 100% 62%)" stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 13% 88% / 0.3)" />
-                    <XAxis dataKey="time" tick={{ fontSize: 10, fill: "hsl(220 9% 45%)" }} tickLine={false} axisLine={false} interval={3} />
-                    <YAxis tick={{ fontSize: 10, fill: "hsl(220 9% 45%)" }} tickLine={false} axisLine={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 6% 90% / .5)" />
+                    <XAxis dataKey="time" tick={{ fontSize: 10, fill: "hsl(240 4% 46%)" }} tickLine={false} axisLine={false} interval={3} />
+                    <YAxis tick={{ fontSize: 10, fill: "hsl(240 4% 46%)" }} tickLine={false} axisLine={false} />
                     <Tooltip {...tooltipStyle()} />
-                    <Area type="monotone" dataKey="posts" stroke="hsl(217 91% 60%)" strokeWidth={2} fill="url(#grad1)" />
+                    <Area type="monotone" dataKey="posts" stroke="hsl(210 100% 58%)" strokeWidth={2} fill="url(#grad1)" dot={false} />
                   </AreaChart>
                 </ResponsiveContainer>
               )}
@@ -167,11 +193,11 @@ export default function Analytics() {
               ) : (
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={chart7d} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 13% 88% / 0.3)" />
-                    <XAxis dataKey="day" tick={{ fontSize: 10, fill: "hsl(220 9% 45%)" }} tickLine={false} axisLine={false} />
-                    <YAxis tick={{ fontSize: 10, fill: "hsl(220 9% 45%)" }} tickLine={false} axisLine={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 6% 90% / .5)" />
+                    <XAxis dataKey="day" tick={{ fontSize: 10, fill: "hsl(240 4% 46%)" }} tickLine={false} axisLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: "hsl(240 4% 46%)" }} tickLine={false} axisLine={false} />
                     <Tooltip {...tooltipStyle()} />
-                    <Bar dataKey="posts" fill="hsl(217 91% 60%)" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="posts" fill="hsl(168 84% 42%)" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -182,16 +208,16 @@ export default function Analytics() {
             {!topFeeds || topFeeds.length === 0 ? (
               <EmptyChart message="No feeds yet. Create feeds to see performance data." />
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {topFeeds.map((feed, i) => {
                   const pct = totalForAllFeeds > 0 ? (feed.postCount / totalForAllFeeds) * 100 : 0;
                   return (
                     <div key={feed.feedId} className="flex items-center gap-3">
-                      <span className="text-xs text-muted-foreground font-mono w-5 text-right flex-shrink-0">{i + 1}</span>
+                      <span className="text-xs text-muted-foreground/50 font-mono w-4 text-right flex-shrink-0">{i + 1}</span>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center justify-between mb-1.5">
                           <span className="text-sm font-medium text-foreground truncate">{feed.displayName}</span>
-                          <span className="text-xs text-muted-foreground ml-2 flex-shrink-0 tabular-nums">{feed.postCount.toLocaleString()} posts</span>
+                          <span className="text-xs text-muted-foreground ml-2 flex-shrink-0 tabular-nums">{feed.postCount.toLocaleString()}</span>
                         </div>
                         <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                           <motion.div
@@ -213,8 +239,8 @@ export default function Analytics() {
         </>
       ) : (
         <>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-            <SectionCard title="Feed Activity (24h)" subtitle={`Hourly posts for ${selectedFeed?.displayName}`}>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <SectionCard title="Feed Activity (24h)" subtitle={`Hourly posts for ${selectedFeed?.displayName ?? "this feed"}`}>
               {!feedHourly || feedHourlyChart.length === 0 ? (
                 <EmptyChart message="No activity in the last 24 hours for this feed." />
               ) : (
@@ -222,15 +248,15 @@ export default function Analytics() {
                   <AreaChart data={feedHourlyChart} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
                     <defs>
                       <linearGradient id="feedGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="hsl(199 89% 48%)" stopOpacity={0.35} />
-                        <stop offset="95%" stopColor="hsl(199 89% 48%)" stopOpacity={0} />
+                        <stop offset="5%" stopColor="hsl(168 84% 42%)" stopOpacity={0.25} />
+                        <stop offset="95%" stopColor="hsl(168 84% 42%)" stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 13% 88% / 0.3)" />
-                    <XAxis dataKey="time" tick={{ fontSize: 10, fill: "hsl(220 9% 45%)" }} tickLine={false} axisLine={false} interval={3} />
-                    <YAxis tick={{ fontSize: 10, fill: "hsl(220 9% 45%)" }} tickLine={false} axisLine={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 6% 90% / .5)" />
+                    <XAxis dataKey="time" tick={{ fontSize: 10, fill: "hsl(240 4% 46%)" }} tickLine={false} axisLine={false} interval={3} />
+                    <YAxis tick={{ fontSize: 10, fill: "hsl(240 4% 46%)" }} tickLine={false} axisLine={false} />
                     <Tooltip {...tooltipStyle()} />
-                    <Area type="monotone" dataKey="posts" stroke="hsl(199 89% 48%)" strokeWidth={2} fill="url(#feedGrad)" />
+                    <Area type="monotone" dataKey="posts" stroke="hsl(168 84% 42%)" strokeWidth={2} fill="url(#feedGrad)" dot={false} />
                   </AreaChart>
                 </ResponsiveContainer>
               )}
@@ -241,22 +267,24 @@ export default function Analytics() {
                 <EmptyChart message="No keyword data yet. Add keywords to this feed." />
               ) : (
                 <div className="flex items-center gap-4">
-                  <ResponsiveContainer width={140} height={140}>
-                    <PieChart>
-                      <Pie data={pieData} dataKey="value" cx="50%" cy="50%" innerRadius={35} outerRadius={60} paddingAngle={2}>
-                        {pieData.map((entry, i) => (
-                          <Cell key={i} fill={entry.color} />
-                        ))}
-                      </Pie>
-                    </PieChart>
-                  </ResponsiveContainer>
+                  <div className="flex-shrink-0">
+                    <ResponsiveContainer width={130} height={130}>
+                      <PieChart>
+                        <Pie data={pieData} dataKey="value" cx="50%" cy="50%" innerRadius={32} outerRadius={56} paddingAngle={3}>
+                          {pieData.map((entry, i) => (
+                            <Cell key={i} fill={entry.color} />
+                          ))}
+                        </Pie>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
                   <div className="flex-1 space-y-1.5 min-w-0">
                     {(keywordStats || []).slice(0, 7).map((k, i) => (
                       <div key={k.keyword} className="flex items-center gap-2 text-xs">
                         <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
                         <span className="font-mono text-foreground truncate flex-1">{k.keyword}</span>
-                        <span className="text-muted-foreground flex-shrink-0">{k.postCount.toLocaleString()}</span>
-                        <span className="text-muted-foreground/50 flex-shrink-0 w-8 text-right">{k.percentage}%</span>
+                        <span className="text-muted-foreground flex-shrink-0 tabular-nums">{k.postCount.toLocaleString()}</span>
+                        <span className="text-muted-foreground/40 flex-shrink-0 w-8 text-right">{k.percentage}%</span>
                       </div>
                     ))}
                   </div>
@@ -269,17 +297,17 @@ export default function Analytics() {
             {!topAuthors || topAuthors.length === 0 ? (
               <EmptyChart message="No author data yet. Posts will appear here as they're indexed." />
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-1">
                 {topAuthors.slice(0, 15).map((author, i) => (
                   <motion.div
                     key={author.did}
-                    initial={{ opacity: 0, x: -8 }}
+                    initial={{ opacity: 0, x: -6 }}
                     animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.03 }}
-                    className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-muted/40 transition-colors"
+                    transition={{ delay: i * 0.025 }}
+                    className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-muted/40 transition-colors group"
                   >
-                    <span className="text-xs text-muted-foreground font-mono w-5 text-right flex-shrink-0">{i + 1}</span>
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary/20 to-blue-500/20 flex items-center justify-center flex-shrink-0">
+                    <span className="text-[10px] text-muted-foreground/40 font-mono w-4 text-right flex-shrink-0">{i + 1}</span>
+                    <div className="w-7 h-7 rounded-full bg-primary/10 border border-primary/15 flex items-center justify-center flex-shrink-0">
                       <Users className="w-3 h-3 text-primary" />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -289,12 +317,12 @@ export default function Analytics() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      <Badge variant="secondary" className="text-xs tabular-nums">{author.postCount} posts</Badge>
+                      <Badge variant="secondary" className="text-xs tabular-nums px-2 py-0.5">{author.postCount} posts</Badge>
                       <a
                         href={`https://bsky.app/profile/${author.did}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-muted-foreground hover:text-primary transition-colors"
+                        className="text-muted-foreground hover:text-primary transition-colors opacity-0 group-hover:opacity-100"
                       >
                         <ExternalLink className="w-3 h-3" />
                       </a>
