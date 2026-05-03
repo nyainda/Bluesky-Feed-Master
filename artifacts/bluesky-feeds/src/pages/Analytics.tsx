@@ -162,9 +162,9 @@ function MyPostsTab() {
   const [cursor, setCursor] = useState<string | undefined>();
   const [cursorStack, setCursorStack] = useState<string[]>([]);
 
-  const { data, isLoading, isFetching, refetch } = useGetMyPosts(
+  const { data, isLoading, isFetching, isError, refetch } = useGetMyPosts(
     { limit: 20, cursor },
-    { query: { queryKey: ["my-posts", cursor], staleTime: 60_000 } },
+    { query: { queryKey: ["my-posts", cursor], staleTime: 60_000, retry: 2 } },
   );
 
   const posts = data?.posts ?? [];
@@ -314,12 +314,25 @@ function MyPostsTab() {
             <div key={i} className="h-36 bg-card border border-card-border rounded-xl animate-pulse" />
           ))}
         </div>
+      ) : isError ? (
+        <div className="flex flex-col items-center justify-center h-48 gap-3 text-center">
+          <div className="w-12 h-12 rounded-2xl bg-destructive/10 border border-destructive/20 flex items-center justify-center">
+            <RefreshCw className="w-6 h-6 text-destructive/60" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-foreground">Could not load posts</p>
+            <p className="text-xs text-muted-foreground mt-1">The server may have restarted. Try refreshing.</p>
+          </div>
+          <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => refetch()}>
+            <RefreshCw className="w-3 h-3" /> Retry
+          </Button>
+        </div>
       ) : posts.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-48 gap-3 text-center">
           <div className="w-12 h-12 rounded-2xl bg-muted border border-border flex items-center justify-center">
             <BarChart2 className="w-6 h-6 text-muted-foreground/40" />
           </div>
-          <p className="text-sm text-muted-foreground">No posts found. Make sure <code className="text-xs bg-muted px-1 rounded font-mono">FEEDGEN_PUBLISHER_DID</code> is set.</p>
+          <p className="text-sm text-muted-foreground">No posts found on your Bluesky account yet.</p>
         </div>
       ) : (
         <div className="space-y-3">
