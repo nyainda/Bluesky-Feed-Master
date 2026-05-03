@@ -119,6 +119,72 @@ route.post("/bluesky/unfollow", async (c) => {
   }
 });
 
+route.post("/bluesky/bulk-follow", async (c) => {
+  if (!c.env.BLUESKY_HANDLE || !c.env.BLUESKY_APP_PASSWORD) {
+    return c.json({ error: "BLUESKY_HANDLE and BLUESKY_APP_PASSWORD required" }, 400);
+  }
+  let body: unknown;
+  try { body = await c.req.json(); } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+  const { dids } = body as Record<string, unknown>;
+  if (!Array.isArray(dids) || dids.length === 0) {
+    return c.json({ error: "dids must be a non-empty array" }, 400);
+  }
+
+  const agent = await getAuthenticatedAgent(c.env);
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const did of dids) {
+    try {
+      await agent.follow(String(did));
+      succeeded++;
+    } catch {
+      failed++;
+    }
+  }
+
+  return c.json({ succeeded, failed });
+});
+
+route.post("/bluesky/bulk-unfollow", async (c) => {
+  if (!c.env.BLUESKY_HANDLE || !c.env.BLUESKY_APP_PASSWORD) {
+    return c.json({ error: "BLUESKY_HANDLE and BLUESKY_APP_PASSWORD required" }, 400);
+  }
+  let body: unknown;
+  try { body = await c.req.json(); } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+  const { dids } = body as Record<string, unknown>;
+  if (!Array.isArray(dids) || dids.length === 0) {
+    return c.json({ error: "dids must be a non-empty array" }, 400);
+  }
+
+  const agent = await getAuthenticatedAgent(c.env);
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const did of dids) {
+    try {
+      // Look up the follow record URI from the viewer relationship
+      const profile = await agent.getProfile({ actor: String(did) });
+      const followUri = profile.data.viewer?.following;
+      if (!followUri) {
+        // Not following this person — count as succeeded (idempotent)
+        succeeded++;
+        continue;
+      }
+      await agent.deleteFollow(followUri);
+      succeeded++;
+    } catch {
+      failed++;
+    }
+  }
+
+  return c.json({ succeeded, failed });
+});
+
 route.post("/bluesky/sync-engagement", async (c) => {
   const publisherDid = c.env.FEEDGEN_PUBLISHER_DID;
   if (!publisherDid) return c.json({ error: "FEEDGEN_PUBLISHER_DID not configured" }, 404);
