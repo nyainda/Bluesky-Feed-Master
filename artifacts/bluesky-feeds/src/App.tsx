@@ -11,6 +11,7 @@ import Analytics from "@/pages/Analytics";
 import Audience from "@/pages/Audience";
 import Settings from "@/pages/Settings";
 import Compose from "@/pages/Compose";
+import Notifications from "@/pages/Notifications";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -34,6 +35,7 @@ function Router() {
         <Route path="/analytics" component={Analytics} />
         <Route path="/audience" component={Audience} />
         <Route path="/compose" component={Compose} />
+        <Route path="/notifications" component={Notifications} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>

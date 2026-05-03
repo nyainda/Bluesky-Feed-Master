@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { useListFeeds, useCreateFeed, useUpdateFeed, useDeleteFeed, getListFeedsQueryKey } from "@workspace/api-client-react";
+import { useListFeeds, useCreateFeed, useUpdateFeed, useDeleteFeed, getListFeedsQueryKey, customFetch } from "@workspace/api-client-react";
 import type { Feed } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Trash2, ChevronRight, CheckCircle, XCircle, Rss, MoreHorizontal } from "lucide-react";
-import { Link } from "wouter";
+import { Plus, Trash2, ChevronRight, CheckCircle, XCircle, Rss, Sparkles, Tag, Check } from "lucide-react";
+import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
@@ -16,6 +16,155 @@ import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
+
+type FeedTemplate = {
+  emoji: string;
+  name: string;
+  recordName: string;
+  description: string;
+  keywords: string[];
+};
+
+const FEED_TEMPLATES: FeedTemplate[] = [
+  {
+    emoji: "🛠️",
+    name: "Bluesky Dev",
+    recordName: "bluesky-dev",
+    description: "Posts about building on AT Protocol, Bluesky APIs, and custom feed generators",
+    keywords: ["atproto", "feedgenerator", "at protocol", "bluesky api", "lexicon", "bsky developer", "indiedev bluesky", "atprotocol"],
+  },
+  {
+    emoji: "🤖",
+    name: "AI & Tech",
+    recordName: "ai-tech",
+    description: "The latest in artificial intelligence, machine learning, and software development",
+    keywords: ["ai", "machinelearning", "llm", "openai", "claude", "gemini", "chatgpt", "deeplearning"],
+  },
+  {
+    emoji: "🌐",
+    name: "Web Dev",
+    recordName: "web-dev",
+    description: "JavaScript, TypeScript, React, and modern web development discussions",
+    keywords: ["webdev", "javascript", "typescript", "reactjs", "nodejs", "frontend", "css", "nextjs"],
+  },
+  {
+    emoji: "🎮",
+    name: "Game Dev",
+    recordName: "game-dev",
+    description: "Indie game development, game design, and gamedev progress posts",
+    keywords: ["indiedev", "gamedev", "unity", "godot", "indiegame", "gamedevelopment", "pixelart"],
+  },
+  {
+    emoji: "🎨",
+    name: "Digital Art",
+    recordName: "digital-art",
+    description: "Illustrations, digital art, design work, and creative process posts",
+    keywords: ["art", "illustration", "digitalart", "design", "mastoart", "artistsonbluesky", "drawing"],
+  },
+];
+
+function TemplatesDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const createFeed = useCreateFeed();
+  const [, navigate] = useLocation();
+  const [loading, setLoading] = useState<string | null>(null);
+
+  async function applyTemplate(template: FeedTemplate) {
+    setLoading(template.recordName);
+    try {
+      const feed = await createFeed.mutateAsync({
+        data: {
+          recordName: template.recordName,
+          displayName: `${template.emoji} ${template.name}`,
+          description: template.description,
+        },
+      });
+
+      // Add all keywords in sequence
+      for (const keyword of template.keywords) {
+        await customFetch(`/api/feeds/${feed.id}/keywords`, {
+          method: "POST",
+          body: JSON.stringify({ keyword }),
+        });
+      }
+
+      await queryClient.invalidateQueries({ queryKey: getListFeedsQueryKey() });
+      toast({ title: `${template.emoji} ${template.name} feed created with ${template.keywords.length} keywords!` });
+      onOpenChange(false);
+      navigate(`/feeds/${feed.id}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast({ title: "Failed to create feed from template", description: msg.includes("unique") ? "A feed with that record name already exists." : msg, variant: "destructive" });
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="text-base flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-primary" />
+            Feed Templates
+          </DialogTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            Start from a pre-configured feed with curated keywords — ready to index posts instantly.
+          </p>
+        </DialogHeader>
+        <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+          {FEED_TEMPLATES.map((t) => (
+            <div
+              key={t.recordName}
+              className="flex items-start gap-3 p-3.5 rounded-xl border border-border hover:border-primary/30 hover:bg-primary/3 transition-all group"
+            >
+              <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center text-xl flex-shrink-0">
+                {t.emoji}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-sm text-foreground">{t.name}</div>
+                <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{t.description}</p>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {t.keywords.slice(0, 4).map((kw) => (
+                    <span key={kw} className="inline-flex items-center gap-0.5 text-[10px] bg-muted px-1.5 py-0.5 rounded-full text-muted-foreground">
+                      <Tag className="w-2 h-2" />{kw}
+                    </span>
+                  ))}
+                  {t.keywords.length > 4 && (
+                    <span className="text-[10px] text-muted-foreground/60 px-1">+{t.keywords.length - 4} more</span>
+                  )}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-shrink-0 gap-1.5 self-center"
+                onClick={() => applyTemplate(t)}
+                disabled={loading !== null}
+              >
+                {loading === t.recordName ? (
+                  <><div className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />Creating…</>
+                ) : (
+                  <><Check className="w-3 h-3" />Use</>
+                )}
+              </Button>
+            </div>
+          ))}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 const feedFormSchema = z.object({
   recordName: z.string().min(1, "Required").regex(/^[a-z0-9-]+$/, "Lowercase letters, numbers, hyphens only"),
@@ -172,6 +321,7 @@ function ToggleActiveButton({ feed }: { feed: Feed }) {
 export default function Feeds() {
   const { data: feeds, isLoading } = useListFeeds();
   const [createOpen, setCreateOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Feed | null>(null);
 
   return (
@@ -181,11 +331,17 @@ export default function Feeds() {
           <h1 className="text-xl md:text-2xl font-bold text-foreground tracking-tight">Feeds</h1>
           <p className="text-muted-foreground text-sm mt-0.5">Manage your Bluesky custom feed algorithms</p>
         </div>
-        <Button onClick={() => setCreateOpen(true)} data-testid="button-new-feed" size="sm" className="md:size-default gap-1.5">
-          <Plus className="w-4 h-4" />
-          <span className="hidden sm:inline">New Feed</span>
-          <span className="sm:hidden">New</span>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={() => setTemplatesOpen(true)} variant="outline" size="sm" className="gap-1.5">
+            <Sparkles className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Templates</span>
+          </Button>
+          <Button onClick={() => setCreateOpen(true)} data-testid="button-new-feed" size="sm" className="gap-1.5">
+            <Plus className="w-4 h-4" />
+            <span className="hidden sm:inline">New Feed</span>
+            <span className="sm:hidden">New</span>
+          </Button>
+        </div>
       </motion.div>
 
       {isLoading ? (
@@ -268,6 +424,7 @@ export default function Feeds() {
       )}
 
       <CreateFeedDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <TemplatesDialog open={templatesOpen} onOpenChange={setTemplatesOpen} />
       {deleteTarget && (
         <DeleteFeedDialog feed={deleteTarget} open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)} />
       )}

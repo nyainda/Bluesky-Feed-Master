@@ -6,6 +6,7 @@ import statsRoute from "./routes/stats";
 import analyticsRoute from "./routes/analytics";
 import audienceRoute from "./routes/audience";
 import composeRoute from "./routes/compose";
+import notificationsRoute from "./routes/notifications";
 import xrpcRoute from "./routes/xrpc";
 import { runIndexer } from "./lib/indexer";
 import { runScheduler } from "./lib/scheduler";
@@ -66,6 +67,7 @@ app.route("/api", statsRoute);
 app.route("/api", analyticsRoute);
 app.route("/api", audienceRoute);
 app.route("/api", composeRoute);
+app.route("/api", notificationsRoute);
 app.route("/", xrpcRoute);
 
 export default {
