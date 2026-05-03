@@ -44,6 +44,7 @@ import type {
   GetFollowingParams,
   GetMyPostsParams,
   GetTopPostsParams,
+  HashtagAnalysisResponse,
   HealthStatus,
   Keyword,
   KeywordStat,
@@ -3097,6 +3098,81 @@ export function useGetBestTimeToPost<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetBestTimeToPostQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Analyse hashtag engagement across recent posts
+ */
+export const getGetHashtagAnalysisUrl = () => {
+  return `/api/bluesky/hashtag-analysis`;
+};
+
+export const getHashtagAnalysis = async (
+  options?: RequestInit,
+): Promise<HashtagAnalysisResponse> => {
+  return customFetch<HashtagAnalysisResponse>(getGetHashtagAnalysisUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetHashtagAnalysisQueryKey = () => {
+  return [`/api/bluesky/hashtag-analysis`] as const;
+};
+
+export const getGetHashtagAnalysisQueryOptions = <
+  TData = Awaited<ReturnType<typeof getHashtagAnalysis>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getHashtagAnalysis>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetHashtagAnalysisQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getHashtagAnalysis>>
+  > = ({ signal }) => getHashtagAnalysis({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getHashtagAnalysis>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetHashtagAnalysisQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getHashtagAnalysis>>
+>;
+export type GetHashtagAnalysisQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Analyse hashtag engagement across recent posts
+ */
+
+export function useGetHashtagAnalysis<
+  TData = Awaited<ReturnType<typeof getHashtagAnalysis>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getHashtagAnalysis>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetHashtagAnalysisQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

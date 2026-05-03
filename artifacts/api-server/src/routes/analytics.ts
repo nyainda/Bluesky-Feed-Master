@@ -417,4 +417,90 @@ router.get("/bluesky/best-time", async (req, res): Promise<void> => {
   }
 });
 
+// GET /api/bluesky/hashtag-analysis
+// Fetches recent posts and aggregates engagement by hashtag
+router.get("/bluesky/hashtag-analysis", async (req, res): Promise<void> => {
+  const did = process.env.FEEDGEN_PUBLISHER_DID;
+  if (!did) { res.status(404).json({ error: "FEEDGEN_PUBLISHER_DID not configured" }); return; }
+
+  try {
+    const agent = new AtpAgent({ service: "https://public.api.bsky.app" });
+
+    // Fetch up to 150 posts across 3 pages
+    const posts: { text: string; likes: number; reposts: number; replies: number; quotes: number; createdAt: string }[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 3; page++) {
+      const result = await agent.getAuthorFeed({ actor: did, limit: 50, cursor, filter: "posts_no_replies" });
+      for (const item of result.data.feed) {
+        const record = item.post.record as { text?: string; createdAt?: string };
+        posts.push({
+          text: record.text ?? "",
+          createdAt: record.createdAt ?? item.post.indexedAt,
+          likes: item.post.likeCount ?? 0,
+          reposts: item.post.repostCount ?? 0,
+          replies: item.post.replyCount ?? 0,
+          quotes: item.post.quoteCount ?? 0,
+        });
+      }
+      cursor = result.data.cursor;
+      if (!cursor) break;
+    }
+
+    // Extract hashtags from all posts
+    const hashtagRegex = /#([a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]+)/g;
+    type HashtagStats = {
+      tag: string;
+      postCount: number;
+      totalLikes: number;
+      totalReposts: number;
+      totalReplies: number;
+      totalEngagement: number;
+      avgEngagement: number;
+      avgLikes: number;
+      topPost: { text: string; likes: number; reposts: number } | null;
+    };
+    const tagMap = new Map<string, HashtagStats>();
+
+    for (const post of posts) {
+      const matches = [...post.text.matchAll(hashtagRegex)];
+      const engagement = post.likes + post.reposts + post.replies + post.quotes;
+      const seenInPost = new Set<string>();
+      for (const match of matches) {
+        const tag = match[1].toLowerCase();
+        if (seenInPost.has(tag)) continue; // count each tag once per post
+        seenInPost.add(tag);
+        if (!tagMap.has(tag)) {
+          tagMap.set(tag, { tag, postCount: 0, totalLikes: 0, totalReposts: 0, totalReplies: 0, totalEngagement: 0, avgEngagement: 0, avgLikes: 0, topPost: null });
+        }
+        const s = tagMap.get(tag)!;
+        s.postCount++;
+        s.totalLikes += post.likes;
+        s.totalReposts += post.reposts;
+        s.totalReplies += post.replies;
+        s.totalEngagement += engagement;
+        if (!s.topPost || post.likes > s.topPost.likes) {
+          s.topPost = { text: post.text.slice(0, 140), likes: post.likes, reposts: post.reposts };
+        }
+      }
+    }
+
+    // Compute averages and sort
+    const hashtags = [...tagMap.values()].map(s => ({
+      ...s,
+      avgEngagement: Math.round((s.totalEngagement / s.postCount) * 100) / 100,
+      avgLikes: Math.round((s.totalLikes / s.postCount) * 100) / 100,
+    })).sort((a, b) => b.avgEngagement - a.avgEngagement);
+
+    const totalPostsAnalyzed = posts.length;
+    const postsWithHashtags = posts.filter(p => hashtagRegex.test(p.text)).length;
+    // reset lastIndex since we used test()
+    hashtagRegex.lastIndex = 0;
+
+    res.json({ hashtags, totalPostsAnalyzed, postsWithHashtags });
+  } catch (err) {
+    req.log.error({ err }, "getHashtagAnalysis failed");
+    res.status(500).json({ error: "Failed to compute hashtag analysis" });
+  }
+});
+
 export default router;

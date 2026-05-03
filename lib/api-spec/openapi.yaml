@@ -729,6 +729,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/BestTimeResponse"
 
+  /bluesky/hashtag-analysis:
+    get:
+      operationId: getHashtagAnalysis
+      tags: [stats]
+      summary: Analyse hashtag engagement across recent posts
+      responses:
+        "200":
+          description: Hashtag engagement data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HashtagAnalysisResponse"
+
   /bluesky/follower-growth:
     get:
       operationId: getFollowerGrowth
@@ -1377,6 +1390,62 @@ components:
       required:
         - text
         - scheduledAt
+
+    HashtagStat:
+      type: object
+      properties:
+        tag:
+          type: string
+        postCount:
+          type: integer
+        totalLikes:
+          type: integer
+        totalReposts:
+          type: integer
+        totalReplies:
+          type: integer
+        totalEngagement:
+          type: integer
+        avgEngagement:
+          type: number
+        avgLikes:
+          type: number
+        topPost:
+          type: object
+          nullable: true
+          properties:
+            text:
+              type: string
+            likes:
+              type: integer
+            reposts:
+              type: integer
+          required: [text, likes, reposts]
+      required:
+        - tag
+        - postCount
+        - totalLikes
+        - totalReposts
+        - totalReplies
+        - totalEngagement
+        - avgEngagement
+        - avgLikes
+
+    HashtagAnalysisResponse:
+      type: object
+      properties:
+        hashtags:
+          type: array
+          items:
+            $ref: "#/components/schemas/HashtagStat"
+        totalPostsAnalyzed:
+          type: integer
+        postsWithHashtags:
+          type: integer
+      required:
+        - hashtags
+        - totalPostsAnalyzed
+        - postsWithHashtags
 
     BestTimeSlot:
       type: object

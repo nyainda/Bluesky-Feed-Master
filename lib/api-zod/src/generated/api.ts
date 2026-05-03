@@ -609,6 +609,33 @@ export const GetBestTimeToPostResponse = zod.object({
 });
 
 /**
+ * @summary Analyse hashtag engagement across recent posts
+ */
+export const GetHashtagAnalysisResponse = zod.object({
+  hashtags: zod.array(
+    zod.object({
+      tag: zod.string(),
+      postCount: zod.number(),
+      totalLikes: zod.number(),
+      totalReposts: zod.number(),
+      totalReplies: zod.number(),
+      totalEngagement: zod.number(),
+      avgEngagement: zod.number(),
+      avgLikes: zod.number(),
+      topPost: zod
+        .object({
+          text: zod.string(),
+          likes: zod.number(),
+          reposts: zod.number(),
+        })
+        .nullish(),
+    }),
+  ),
+  totalPostsAnalyzed: zod.number(),
+  postsWithHashtags: zod.number(),
+});
+
+/**
  * @summary Get follower growth snapshots
  */
 export const GetFollowerGrowthResponseItem = zod.object({

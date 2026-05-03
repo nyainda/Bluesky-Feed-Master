@@ -3,9 +3,9 @@ import {
   useListFeeds, useGetRecentActivity, useGet7DayActivity, useGetTopFeeds,
   useGetFeedKeywordStats, useGetFeedTopAuthors, useGetFeedHourly, useGetBlueskyFeedInfo,
   useGetMyPosts, useGetTopPosts, useGetEngagementOverview, useSyncEngagement,
-  useGetBestTimeToPost,
+  useGetBestTimeToPost, useGetHashtagAnalysis,
 } from "@workspace/api-client-react";
-import type { MyPost, Feed, TopPost } from "@workspace/api-client-react";
+import type { MyPost, Feed, TopPost, HashtagStat } from "@workspace/api-client-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -15,7 +15,7 @@ import { format, formatDistanceToNow } from "date-fns";
 import {
   TrendingUp, Users, ExternalLink, Heart, Repeat2, MessageCircle, Quote,
   ArrowUpRight, Image, RefreshCw, ChevronLeft, ChevronRight, Zap,
-  BarChart2, Activity, Clock, Download, Sun,
+  BarChart2, Activity, Clock, Download, Sun, Hash, Trophy, Flame,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -1131,9 +1131,201 @@ function BestTimeTab() {
   );
 }
 
+// ─── Hashtag Analyzer Tab ─────────────────────────────────────────────────────
+
+function HashtagCard({ stat, rank, max }: { stat: HashtagStat; rank: number; max: number }) {
+  const pct = max > 0 ? (stat.avgEngagement / max) * 100 : 0;
+  const isTop3 = rank <= 3;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: rank * 0.04 }}
+      className={cn(
+        "bg-card border rounded-xl p-4 space-y-3",
+        isTop3 ? "border-primary/25 bg-primary/3" : "border-card-border",
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={cn(
+            "w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0",
+            rank === 1 ? "bg-amber-400/20 text-amber-500" :
+            rank === 2 ? "bg-slate-400/20 text-slate-400" :
+            rank === 3 ? "bg-orange-400/20 text-orange-500" :
+            "bg-muted text-muted-foreground",
+          )}>{rank}</span>
+          <span className={cn("text-sm font-bold truncate", isTop3 ? "text-primary" : "text-foreground")}>
+            #{stat.tag}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0 text-[11px] text-muted-foreground">
+          <span className="flex items-center gap-0.5">
+            <Heart className="w-3 h-3 text-rose-500" /> {stat.totalLikes.toLocaleString()}
+          </span>
+          <span className="flex items-center gap-0.5">
+            <Repeat2 className="w-3 h-3 text-emerald-500" /> {stat.totalReposts.toLocaleString()}
+          </span>
+        </div>
+      </div>
+
+      {/* Engagement bar */}
+      <div className="space-y-1">
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="text-muted-foreground">{stat.postCount} post{stat.postCount !== 1 ? "s" : ""}</span>
+          <span className="font-semibold text-foreground">{stat.avgEngagement.toFixed(1)} avg engagement</span>
+        </div>
+        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+          <motion.div
+            className={cn("h-full rounded-full", isTop3 ? "bg-primary" : "bg-muted-foreground/40")}
+            initial={{ width: 0 }}
+            animate={{ width: `${pct}%` }}
+            transition={{ duration: 0.6, delay: rank * 0.04 }}
+          />
+        </div>
+      </div>
+
+      {/* Top post preview */}
+      {stat.topPost && (
+        <p className="text-[11px] text-muted-foreground/70 line-clamp-2 border-t border-border/40 pt-2">
+          "{stat.topPost.text}"
+        </p>
+      )}
+    </motion.div>
+  );
+}
+
+function HashtagTab() {
+  const [sortBy, setSortBy] = useState<"avgEngagement" | "totalEngagement" | "postCount" | "avgLikes">("avgEngagement");
+  const { data, isLoading, isError, refetch } = useGetHashtagAnalysis({
+    query: { queryKey: ["hashtag-analysis"], staleTime: 10 * 60_000 },
+  });
+
+  const hashtags = [...(data?.hashtags ?? [])].sort((a, b) => b[sortBy] - a[sortBy]);
+  const max = hashtags[0]?.[sortBy] ?? 1;
+  const usageRate = data && data.totalPostsAnalyzed > 0
+    ? Math.round((data.postsWithHashtags / data.totalPostsAnalyzed) * 100)
+    : 0;
+
+  return (
+    <div className="space-y-5">
+      {isLoading ? (
+        <div className="space-y-3">
+          <div className="h-20 bg-card border border-card-border rounded-xl animate-pulse" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-28 bg-card border border-card-border rounded-xl animate-pulse" />
+            ))}
+          </div>
+        </div>
+      ) : isError ? (
+        <div className="flex flex-col items-center justify-center h-48 gap-3 text-center">
+          <div className="w-12 h-12 rounded-2xl bg-destructive/10 border border-destructive/20 flex items-center justify-center">
+            <RefreshCw className="w-5 h-5 text-destructive/60" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-foreground">Could not load data</p>
+            <p className="text-xs text-muted-foreground mt-1">Make sure your Bluesky credentials are configured.</p>
+          </div>
+          <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => refetch()}>
+            <RefreshCw className="w-3 h-3" /> Retry
+          </Button>
+        </div>
+      ) : hashtags.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-52 gap-3 text-center px-8">
+          <div className="w-12 h-12 rounded-2xl bg-muted border border-border flex items-center justify-center">
+            <Hash className="w-5 h-5 text-muted-foreground/50" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-foreground">No hashtags found yet</p>
+            <p className="text-xs text-muted-foreground mt-1">Start adding hashtags like #AI, #Kenya, or #tech to your posts — they'll appear here with engagement data.</p>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Summary row */}
+          <div className="grid grid-cols-3 gap-3">
+            <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+              className="bg-primary/5 border border-primary/15 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-1.5">
+                <Hash className="w-4 h-4 text-primary" />
+                <span className="text-xs font-semibold text-primary">Unique Tags</span>
+              </div>
+              <p className="text-2xl font-bold text-foreground">{hashtags.length}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">across {data?.totalPostsAnalyzed} posts</p>
+            </motion.div>
+            <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
+              className="bg-emerald-500/5 border border-emerald-500/15 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-1.5">
+                <Trophy className="w-4 h-4 text-emerald-600" />
+                <span className="text-xs font-semibold text-emerald-600">Best Tag</span>
+              </div>
+              <p className="text-xl font-bold text-foreground truncate">#{hashtags[0]?.tag}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{hashtags[0]?.avgEngagement.toFixed(1)} avg engagement</p>
+            </motion.div>
+            <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+              className="bg-muted border border-border rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-1.5">
+                <Flame className="w-4 h-4 text-orange-500" />
+                <span className="text-xs font-semibold text-muted-foreground">Hashtag Usage</span>
+              </div>
+              <p className="text-2xl font-bold text-foreground">{usageRate}%</p>
+              <p className="text-xs text-muted-foreground mt-0.5">of posts use hashtags</p>
+            </motion.div>
+          </div>
+
+          {/* Tip banner */}
+          <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl px-4 py-3 flex items-start gap-3">
+            <Zap className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-semibold text-amber-600">How to use this</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Tags with high <span className="font-medium text-foreground">avg engagement</span> but low post count are your hidden gems — use them more.
+                Tags with high <span className="font-medium text-foreground">total engagement</span> are proven performers. Combine 2–3 top tags per post for maximum reach.
+              </p>
+            </div>
+          </div>
+
+          {/* Sort controls + grid */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h3 className="text-sm font-semibold text-foreground">All Hashtags ({hashtags.length})</h3>
+            <div className="flex items-center gap-1.5">
+              {([
+                { key: "avgEngagement", label: "Avg Eng." },
+                { key: "totalEngagement", label: "Total Eng." },
+                { key: "avgLikes", label: "Avg Likes" },
+                { key: "postCount", label: "Usage" },
+              ] as const).map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setSortBy(key)}
+                  className={cn(
+                    "text-[11px] px-2.5 py-1 rounded-lg border transition-colors",
+                    sortBy === key
+                      ? "bg-primary/10 border-primary/30 text-primary font-medium"
+                      : "border-border text-muted-foreground hover:bg-muted/50",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {hashtags.map((stat, i) => (
+              <HashtagCard key={stat.tag} stat={stat} rank={i + 1} max={Number(max)} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-type AnalyticsTab = "my-posts" | "feed-posts" | "feeds" | "best-time";
+type AnalyticsTab = "my-posts" | "feed-posts" | "feeds" | "best-time" | "hashtags";
 
 export default function Analytics() {
   const [tab, setTab] = useState<AnalyticsTab>("my-posts");
@@ -1153,6 +1345,7 @@ export default function Analytics() {
           { id: "feed-posts" as AnalyticsTab, label: "Feed Posts", icon: TrendingUp },
           { id: "feeds" as AnalyticsTab, label: "Feed Stats", icon: BarChart2 },
           { id: "best-time" as AnalyticsTab, label: "Best Time", icon: Clock },
+          { id: "hashtags" as AnalyticsTab, label: "Hashtags", icon: Hash },
         ].map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -1189,6 +1382,11 @@ export default function Analytics() {
         {tab === "best-time" && (
           <motion.div key="best-time" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             <BestTimeTab />
+          </motion.div>
+        )}
+        {tab === "hashtags" && (
+          <motion.div key="hashtags" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <HashtagTab />
           </motion.div>
         )}
       </AnimatePresence>

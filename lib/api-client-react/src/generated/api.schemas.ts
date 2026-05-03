@@ -283,6 +283,30 @@ export interface CreateScheduledPostBody {
   scheduledAt: string;
 }
 
+export type HashtagStatTopPost = {
+  text: string;
+  likes: number;
+  reposts: number;
+} | null;
+
+export interface HashtagStat {
+  tag: string;
+  postCount: number;
+  totalLikes: number;
+  totalReposts: number;
+  totalReplies: number;
+  totalEngagement: number;
+  avgEngagement: number;
+  avgLikes: number;
+  topPost?: HashtagStatTopPost;
+}
+
+export interface HashtagAnalysisResponse {
+  hashtags: HashtagStat[];
+  totalPostsAnalyzed: number;
+  postsWithHashtags: number;
+}
+
 export interface BestTimeSlot {
   hour: number;
   dayOfWeek: number;
