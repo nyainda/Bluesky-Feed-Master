@@ -25,13 +25,15 @@ route.get("/bluesky/followers", async (c) => {
 
     const result = await agent.getFollowers({ actor: publisherDid, limit, cursor });
     return c.json({
-      followers: result.data.followers.map((f) => ({
+      users: result.data.followers.map((f) => ({
         did: f.did,
         handle: f.handle,
         displayName: f.displayName ?? null,
         avatar: f.avatar ?? null,
         description: f.description ?? null,
         followersCount: f.followersCount ?? 0,
+        followsCount: f.followsCount ?? 0,
+        followedAt: null,
       })),
       cursor: result.data.cursor,
     });
@@ -53,11 +55,15 @@ route.get("/bluesky/following", async (c) => {
 
     const result = await agent.getFollows({ actor: publisherDid, limit, cursor });
     return c.json({
-      following: result.data.follows.map((f) => ({
+      users: result.data.follows.map((f) => ({
         did: f.did,
         handle: f.handle,
         displayName: f.displayName ?? null,
         avatar: f.avatar ?? null,
+        description: f.description ?? null,
+        followersCount: f.followersCount ?? 0,
+        followsCount: f.followsCount ?? 0,
+        followedAt: null,
       })),
       cursor: result.data.cursor,
     });
