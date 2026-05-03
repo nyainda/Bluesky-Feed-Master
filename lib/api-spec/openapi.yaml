@@ -447,6 +447,55 @@ paths:
         "404":
           description: Not found or not published
 
+  /stats/top-posts:
+    get:
+      operationId: getTopPosts
+      tags: [stats]
+      summary: Get top indexed posts by engagement (likes + reposts + replies + quotes)
+      parameters:
+        - name: feedId
+          in: query
+          schema:
+            type: ["integer", "null"]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+            enum: [total, likes, reposts, replies]
+            default: total
+      responses:
+        "200":
+          description: Top posts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TopPost"
+
+  /stats/engagement-overview:
+    get:
+      operationId: getEngagementOverview
+      tags: [stats]
+      summary: Get aggregate engagement stats for all indexed posts, optionally filtered by feed
+      parameters:
+        - name: feedId
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: Aggregate engagement stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EngagementOverview"
+
   /bluesky/sync-engagement:
     post:
       operationId: syncEngagement
@@ -988,6 +1037,80 @@ components:
         - succeeded
         - failed
         - errors
+
+    TopPost:
+      type: object
+      properties:
+        id:
+          type: integer
+        uri:
+          type: string
+        cid:
+          type: string
+        author:
+          type: string
+        text:
+          type: string
+        algoTags:
+          type: string
+        indexedAt:
+          type: string
+        likes:
+          type: integer
+        reposts:
+          type: integer
+        replies:
+          type: integer
+        quotes:
+          type: integer
+        totalEngagement:
+          type: integer
+        engagementSyncedAt:
+          type: ["string", "null"]
+      required:
+        - id
+        - uri
+        - cid
+        - author
+        - text
+        - algoTags
+        - indexedAt
+        - likes
+        - reposts
+        - replies
+        - quotes
+        - totalEngagement
+
+    EngagementOverview:
+      type: object
+      properties:
+        totalPosts:
+          type: integer
+        syncedPosts:
+          type: integer
+        totalLikes:
+          type: integer
+        totalReposts:
+          type: integer
+        totalReplies:
+          type: integer
+        totalQuotes:
+          type: integer
+        totalEngagement:
+          type: integer
+        avgLikesPerPost:
+          type: number
+        topPostUri:
+          type: ["string", "null"]
+      required:
+        - totalPosts
+        - syncedPosts
+        - totalLikes
+        - totalReposts
+        - totalReplies
+        - totalQuotes
+        - totalEngagement
+        - avgLikesPerPost
 
     MyPost:
       type: object

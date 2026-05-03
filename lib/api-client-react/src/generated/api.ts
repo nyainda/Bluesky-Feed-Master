@@ -28,13 +28,16 @@ import type {
   CreateFeedBody,
   CreateKeywordBody,
   DailyBucket,
+  EngagementOverview,
   Feed,
   FeedRanking,
   FirehoseStatus,
+  GetEngagementOverviewParams,
   GetFeedPostsParams,
   GetFollowersParams,
   GetFollowingParams,
   GetMyPostsParams,
+  GetTopPostsParams,
   HealthStatus,
   Keyword,
   KeywordStat,
@@ -45,6 +48,7 @@ import type {
   StatsOverview,
   SyncEngagementBody,
   SyncResult,
+  TopPost,
   UpdateFeedBody,
 } from "./api.schemas";
 
@@ -1868,6 +1872,203 @@ export function useGetBlueskyFeedInfo<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetBlueskyFeedInfoQueryOptions(recordName, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get top indexed posts by engagement (likes + reposts + replies + quotes)
+ */
+export const getGetTopPostsUrl = (params?: GetTopPostsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/stats/top-posts?${stringifiedParams}`
+    : `/api/stats/top-posts`;
+};
+
+export const getTopPosts = async (
+  params?: GetTopPostsParams,
+  options?: RequestInit,
+): Promise<TopPost[]> => {
+  return customFetch<TopPost[]>(getGetTopPostsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetTopPostsQueryKey = (params?: GetTopPostsParams) => {
+  return [`/api/stats/top-posts`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetTopPostsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getTopPosts>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetTopPostsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getTopPosts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetTopPostsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getTopPosts>>> = ({
+    signal,
+  }) => getTopPosts(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getTopPosts>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetTopPostsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getTopPosts>>
+>;
+export type GetTopPostsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get top indexed posts by engagement (likes + reposts + replies + quotes)
+ */
+
+export function useGetTopPosts<
+  TData = Awaited<ReturnType<typeof getTopPosts>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetTopPostsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getTopPosts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetTopPostsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get aggregate engagement stats for all indexed posts, optionally filtered by feed
+ */
+export const getGetEngagementOverviewUrl = (
+  params?: GetEngagementOverviewParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/stats/engagement-overview?${stringifiedParams}`
+    : `/api/stats/engagement-overview`;
+};
+
+export const getEngagementOverview = async (
+  params?: GetEngagementOverviewParams,
+  options?: RequestInit,
+): Promise<EngagementOverview> => {
+  return customFetch<EngagementOverview>(getGetEngagementOverviewUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetEngagementOverviewQueryKey = (
+  params?: GetEngagementOverviewParams,
+) => {
+  return [
+    `/api/stats/engagement-overview`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetEngagementOverviewQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEngagementOverview>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetEngagementOverviewParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getEngagementOverview>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetEngagementOverviewQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getEngagementOverview>>
+  > = ({ signal }) =>
+    getEngagementOverview(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEngagementOverview>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetEngagementOverviewQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEngagementOverview>>
+>;
+export type GetEngagementOverviewQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get aggregate engagement stats for all indexed posts, optionally filtered by feed
+ */
+
+export function useGetEngagementOverview<
+  TData = Awaited<ReturnType<typeof getEngagementOverview>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetEngagementOverviewParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getEngagementOverview>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetEngagementOverviewQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

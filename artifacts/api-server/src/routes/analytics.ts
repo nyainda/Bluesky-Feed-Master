@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { count, gte, sql, desc, and, like, eq, lt } from "drizzle-orm";
+import { count, sum, avg, gte, sql, desc, and, like, eq, lt, isNotNull } from "drizzle-orm";
 import { db, feedsTable, indexedPostsTable, keywordsTable } from "@workspace/db";
 import { AtpAgent } from "@atproto/api";
 import { logger } from "../lib/logger";
@@ -108,6 +108,118 @@ router.get("/feeds/:id/hourly", async (req, res): Promise<void> => {
     hour: r.hour instanceof Date ? r.hour.toISOString() : String(r.hour),
     count: Number(r.count),
   })));
+});
+
+router.get("/stats/top-posts", async (req, res): Promise<void> => {
+  const feedId = req.query.feedId ? parseInt(req.query.feedId as string) : null;
+  const limit = Math.min(parseInt((req.query.limit as string) || "20"), 50);
+  const sortBy = (req.query.sortBy as string) || "total";
+
+  try {
+    const conditions = [];
+
+    if (feedId && !isNaN(feedId)) {
+      const [feed] = await db.select().from(feedsTable).where(eq(feedsTable.id, feedId));
+      if (!feed) { res.status(404).json({ error: "Feed not found" }); return; }
+      conditions.push(like(indexedPostsTable.algoTags, `%${feed.recordName}%`));
+    }
+
+    // Only return posts that have had engagement synced (so we show meaningful data)
+    // But also include unsynced posts sorted by time if nothing is synced
+    const orderCol =
+      sortBy === "likes" ? desc(indexedPostsTable.likes) :
+      sortBy === "reposts" ? desc(indexedPostsTable.reposts) :
+      sortBy === "replies" ? desc(indexedPostsTable.replies) :
+      desc(sql`${indexedPostsTable.likes} + ${indexedPostsTable.reposts} + ${indexedPostsTable.replies} + ${indexedPostsTable.quotes}`);
+
+    const posts = await db
+      .select()
+      .from(indexedPostsTable)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(orderCol)
+      .limit(limit);
+
+    const result = posts.map(p => ({
+      id: p.id,
+      uri: p.uri,
+      cid: p.cid,
+      author: p.author,
+      text: p.text,
+      algoTags: p.algoTags,
+      indexedAt: p.indexedAt.toISOString(),
+      likes: p.likes,
+      reposts: p.reposts,
+      replies: p.replies,
+      quotes: p.quotes,
+      totalEngagement: p.likes + p.reposts + p.replies + p.quotes,
+      engagementSyncedAt: p.engagementSyncedAt ? p.engagementSyncedAt.toISOString() : null,
+    }));
+
+    res.json(result);
+  } catch (err) {
+    req.log.error({ err }, "getTopPosts failed");
+    res.status(500).json({ error: "Failed to fetch top posts" });
+  }
+});
+
+router.get("/stats/engagement-overview", async (req, res): Promise<void> => {
+  const feedId = req.query.feedId ? parseInt(req.query.feedId as string) : null;
+
+  try {
+    const conditions = [];
+
+    if (feedId && !isNaN(feedId)) {
+      const [feed] = await db.select().from(feedsTable).where(eq(feedsTable.id, feedId));
+      if (!feed) { res.status(404).json({ error: "Feed not found" }); return; }
+      conditions.push(like(indexedPostsTable.algoTags, `%${feed.recordName}%`));
+    }
+
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [overview] = await db
+      .select({
+        totalPosts: count(),
+        syncedPosts: count(indexedPostsTable.engagementSyncedAt),
+        totalLikes: sum(indexedPostsTable.likes),
+        totalReposts: sum(indexedPostsTable.reposts),
+        totalReplies: sum(indexedPostsTable.replies),
+        totalQuotes: sum(indexedPostsTable.quotes),
+      })
+      .from(indexedPostsTable)
+      .where(where);
+
+    const totalLikes = Number(overview.totalLikes ?? 0);
+    const totalReposts = Number(overview.totalReposts ?? 0);
+    const totalReplies = Number(overview.totalReplies ?? 0);
+    const totalQuotes = Number(overview.totalQuotes ?? 0);
+    const totalEngagement = totalLikes + totalReposts + totalReplies + totalQuotes;
+    const totalPosts = overview.totalPosts;
+    const syncedPosts = overview.syncedPosts;
+    const avgLikesPerPost = syncedPosts > 0 ? Math.round((totalLikes / syncedPosts) * 100) / 100 : 0;
+
+    // Top post by total engagement
+    const [topPost] = await db
+      .select({ uri: indexedPostsTable.uri })
+      .from(indexedPostsTable)
+      .where(where)
+      .orderBy(desc(sql`${indexedPostsTable.likes} + ${indexedPostsTable.reposts} + ${indexedPostsTable.replies} + ${indexedPostsTable.quotes}`))
+      .limit(1);
+
+    res.json({
+      totalPosts,
+      syncedPosts,
+      totalLikes,
+      totalReposts,
+      totalReplies,
+      totalQuotes,
+      totalEngagement,
+      avgLikesPerPost,
+      topPostUri: topPost?.uri ?? null,
+    });
+  } catch (err) {
+    req.log.error({ err }, "getEngagementOverview failed");
+    res.status(500).json({ error: "Failed to fetch engagement overview" });
+  }
 });
 
 router.get("/bluesky/my-posts", async (req, res): Promise<void> => {

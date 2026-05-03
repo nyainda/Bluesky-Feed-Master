@@ -337,6 +337,56 @@ export const GetBlueskyFeedInfoResponse = zod.object({
 });
 
 /**
+ * @summary Get top indexed posts by engagement (likes + reposts + replies + quotes)
+ */
+export const getTopPostsQueryLimitDefault = 20;
+export const getTopPostsQuerySortByDefault = `total`;
+
+export const GetTopPostsQueryParams = zod.object({
+  feedId: zod.coerce.number().nullish(),
+  limit: zod.coerce.number().default(getTopPostsQueryLimitDefault),
+  sortBy: zod
+    .enum(["total", "likes", "reposts", "replies"])
+    .default(getTopPostsQuerySortByDefault),
+});
+
+export const GetTopPostsResponseItem = zod.object({
+  id: zod.number(),
+  uri: zod.string(),
+  cid: zod.string(),
+  author: zod.string(),
+  text: zod.string(),
+  algoTags: zod.string(),
+  indexedAt: zod.string(),
+  likes: zod.number(),
+  reposts: zod.number(),
+  replies: zod.number(),
+  quotes: zod.number(),
+  totalEngagement: zod.number(),
+  engagementSyncedAt: zod.string().nullish(),
+});
+export const GetTopPostsResponse = zod.array(GetTopPostsResponseItem);
+
+/**
+ * @summary Get aggregate engagement stats for all indexed posts, optionally filtered by feed
+ */
+export const GetEngagementOverviewQueryParams = zod.object({
+  feedId: zod.coerce.number().nullish(),
+});
+
+export const GetEngagementOverviewResponse = zod.object({
+  totalPosts: zod.number(),
+  syncedPosts: zod.number(),
+  totalLikes: zod.number(),
+  totalReposts: zod.number(),
+  totalReplies: zod.number(),
+  totalQuotes: zod.number(),
+  totalEngagement: zod.number(),
+  avgLikesPerPost: zod.number(),
+  topPostUri: zod.string().nullish(),
+});
+
+/**
  * @summary Sync real engagement data (likes, reposts, replies, quotes) from Bluesky for recent indexed posts
  */
 export const syncEngagementBodyLimitDefault = 100;

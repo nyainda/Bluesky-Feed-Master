@@ -190,6 +190,36 @@ export interface BulkActionResult {
   errors: string[];
 }
 
+export interface TopPost {
+  id: number;
+  uri: string;
+  cid: string;
+  author: string;
+  text: string;
+  algoTags: string;
+  indexedAt: string;
+  likes: number;
+  reposts: number;
+  replies: number;
+  quotes: number;
+  totalEngagement: number;
+  /** @nullable */
+  engagementSyncedAt?: string | null;
+}
+
+export interface EngagementOverview {
+  totalPosts: number;
+  syncedPosts: number;
+  totalLikes: number;
+  totalReposts: number;
+  totalReplies: number;
+  totalQuotes: number;
+  totalEngagement: number;
+  avgLikesPerPost: number;
+  /** @nullable */
+  topPostUri?: string | null;
+}
+
 export interface MyPost {
   uri: string;
   cid: string;
@@ -237,6 +267,32 @@ export type ListPostsParams = {
    * @nullable
    */
   search?: string | null;
+};
+
+export type GetTopPostsParams = {
+  /**
+   * @nullable
+   */
+  feedId?: number | null;
+  limit?: number;
+  sortBy?: GetTopPostsSortBy;
+};
+
+export type GetTopPostsSortBy =
+  (typeof GetTopPostsSortBy)[keyof typeof GetTopPostsSortBy];
+
+export const GetTopPostsSortBy = {
+  total: "total",
+  likes: "likes",
+  reposts: "reposts",
+  replies: "replies",
+} as const;
+
+export type GetEngagementOverviewParams = {
+  /**
+   * @nullable
+   */
+  feedId?: number | null;
 };
 
 export type SyncEngagementBody = {

@@ -2,9 +2,9 @@ import { useState } from "react";
 import {
   useListFeeds, useGetRecentActivity, useGet7DayActivity, useGetTopFeeds,
   useGetFeedKeywordStats, useGetFeedTopAuthors, useGetFeedHourly, useGetBlueskyFeedInfo,
-  useGetMyPosts,
+  useGetMyPosts, useGetTopPosts, useGetEngagementOverview, useSyncEngagement,
 } from "@workspace/api-client-react";
-import type { MyPost, Feed } from "@workspace/api-client-react";
+import type { MyPost, Feed, TopPost } from "@workspace/api-client-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -660,9 +660,301 @@ function FeedAnalyticsTab({ feeds }: { feeds: Feed[] | undefined }) {
   );
 }
 
+// ─── Feed Posts Tab ───────────────────────────────────────────────────────────
+
+function TopPostCard({ post, rank, maxEngagement }: {
+  post: TopPost; rank: number; maxEngagement: number;
+}) {
+  const authorHandle = post.author.includes(".") ? `@${post.author}` : post.author.replace("did:plc:", "@");
+  const authorDid = post.uri.split("/")[2];
+  const postId = post.uri.split("/").pop() ?? "";
+  const pctLikes = maxEngagement > 0 ? Math.min((post.likes / maxEngagement) * 100, 100) : 0;
+  const pctReposts = maxEngagement > 0 ? Math.min((post.reposts / maxEngagement) * 100, 100) : 0;
+  const pctReplies = maxEngagement > 0 ? Math.min((post.replies / maxEngagement) * 100, 100) : 0;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: rank * 0.03 }}
+      className="group bg-card border border-card-border rounded-xl p-4 md:p-5 hover:shadow-sm hover:border-border transition-all duration-150"
+    >
+      <div className="flex items-start gap-3 md:gap-4">
+        {/* Rank badge */}
+        <div className={cn(
+          "flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center mt-0.5 text-[10px] font-bold tabular-nums",
+          rank === 1 ? "bg-yellow-500/15 border border-yellow-500/30 text-yellow-600" :
+          rank === 2 ? "bg-zinc-400/15 border border-zinc-400/30 text-zinc-500" :
+          rank === 3 ? "bg-amber-600/15 border border-amber-600/30 text-amber-700" :
+          "bg-muted border border-border text-muted-foreground"
+        )}>
+          {rank}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          {/* Author row */}
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <a
+              href={`https://bsky.app/profile/${authorDid}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs font-semibold text-primary/80 hover:text-primary truncate transition-colors"
+            >
+              {authorHandle}
+            </a>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <span className="text-[10px] text-muted-foreground/60">
+                {formatDistanceToNow(new Date(post.indexedAt), { addSuffix: true })}
+              </span>
+              <a
+                href={`https://bsky.app/profile/${authorDid}/post/${postId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="p-1 rounded text-muted-foreground hover:text-primary transition-colors"
+              >
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          </div>
+
+          {/* Post text */}
+          <p className="text-sm text-foreground leading-relaxed line-clamp-2 mb-3">{post.text}</p>
+
+          {/* Engagement bars */}
+          <div className="space-y-1.5 mb-3">
+            {[
+              { label: "Likes", value: post.likes, pct: pctLikes, color: "hsl(338 80% 58%)" },
+              { label: "Reposts", value: post.reposts, pct: pctReposts, color: "hsl(168 84% 42%)" },
+              { label: "Replies", value: post.replies, pct: pctReplies, color: "hsl(210 100% 58%)" },
+            ].map(({ label, value, pct, color }) => (
+              <div key={label} className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground w-11 flex-shrink-0">{label}</span>
+                <div className="h-1 bg-muted rounded-full overflow-hidden flex-1">
+                  <motion.div
+                    className="h-full rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${pct}%` }}
+                    transition={{ duration: 0.5, ease: "easeOut" }}
+                    style={{ background: color }}
+                  />
+                </div>
+                <span className="text-[10px] font-semibold text-foreground tabular-nums w-7 text-right flex-shrink-0">
+                  {value.toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="flex items-center gap-1 text-[11px] text-rose-500 font-medium">
+              <Heart className="w-3 h-3" />{post.likes.toLocaleString()}
+            </span>
+            <span className="flex items-center gap-1 text-[11px] text-emerald-600 font-medium">
+              <Repeat2 className="w-3 h-3" />{post.reposts.toLocaleString()}
+            </span>
+            <span className="flex items-center gap-1 text-[11px] text-blue-500 font-medium">
+              <MessageCircle className="w-3 h-3" />{post.replies.toLocaleString()}
+            </span>
+            {post.quotes > 0 && (
+              <span className="flex items-center gap-1 text-[11px] text-purple-500 font-medium">
+                <Quote className="w-3 h-3" />{post.quotes.toLocaleString()}
+              </span>
+            )}
+            {post.totalEngagement > 0 && (
+              <span className="ml-auto text-[10px] bg-primary/8 text-primary border border-primary/15 px-2 py-0.5 rounded-full font-medium">
+                {post.totalEngagement.toLocaleString()} total
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function FeedPostsTab({ feeds }: { feeds: Feed[] | undefined }) {
+  const [selectedFeedId, setSelectedFeedId] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<"total" | "likes" | "reposts" | "replies">("total");
+  const { toast } = useToast();
+
+  const numericFeedId = selectedFeedId !== "all" ? parseInt(selectedFeedId) : undefined;
+
+  const params = {
+    ...(numericFeedId ? { feedId: numericFeedId } : {}),
+    limit: 20,
+    sortBy,
+  };
+
+  const { data: topPosts, isLoading: loadingPosts, refetch: refetchPosts } = useGetTopPosts(params, {
+    query: { queryKey: ["top-posts", selectedFeedId, sortBy], staleTime: 30_000 },
+  });
+
+  const { data: overview, isLoading: loadingOverview, refetch: refetchOverview } = useGetEngagementOverview(
+    numericFeedId ? { feedId: numericFeedId } : {},
+    { query: { queryKey: ["engagement-overview", selectedFeedId], staleTime: 30_000 } },
+  );
+
+  const { mutate: syncEngagement, isPending: isSyncing } = useSyncEngagement({
+    mutation: {
+      onSuccess: (data) => {
+        toast({
+          title: "Engagement synced",
+          description: `Updated ${data.updated} posts${data.errors > 0 ? `, ${data.errors} errors` : ""}.`,
+        });
+        refetchPosts();
+        refetchOverview();
+      },
+      onError: () => toast({ title: "Sync failed", description: "Could not sync engagement data.", variant: "destructive" }),
+    },
+  });
+
+  const posts = topPosts ?? [];
+  const maxEngagement = Math.max(...posts.map(p => p.likes + p.reposts + p.replies), 1);
+  const hasSyncedData = (overview?.syncedPosts ?? 0) > 0;
+
+  return (
+    <div className="space-y-4 md:space-y-6">
+      {/* Controls row */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+        <Select value={selectedFeedId} onValueChange={setSelectedFeedId}>
+          <SelectTrigger className="w-full sm:w-52 text-sm">
+            <SelectValue placeholder="All Feeds" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Feeds</SelectItem>
+            {(feeds || []).map(f => (
+              <SelectItem key={f.id} value={String(f.id)}>{f.displayName}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={sortBy} onValueChange={v => setSortBy(v as typeof sortBy)}>
+          <SelectTrigger className="w-full sm:w-40 text-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="total">Total Engagement</SelectItem>
+            <SelectItem value="likes">Most Liked</SelectItem>
+            <SelectItem value="reposts">Most Reposted</SelectItem>
+            <SelectItem value="replies">Most Replied</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <div className="sm:ml-auto">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => syncEngagement({ data: { feedId: numericFeedId ?? null } })}
+            disabled={isSyncing}
+            className="text-xs gap-1.5"
+          >
+            <RefreshCw className={cn("w-3.5 h-3.5", isSyncing && "animate-spin")} />
+            {isSyncing ? "Syncing…" : "Sync Engagement"}
+          </Button>
+        </div>
+      </div>
+
+      {/* Aggregate overview */}
+      {overview && (
+        <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+          className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: "Total Likes", value: overview.totalLikes, icon: Heart, color: "text-rose-500", bg: "bg-rose-500/8 border-rose-500/20" },
+            { label: "Total Reposts", value: overview.totalReposts, icon: Repeat2, color: "text-emerald-600", bg: "bg-emerald-500/8 border-emerald-500/20" },
+            { label: "Total Replies", value: overview.totalReplies, icon: MessageCircle, color: "text-blue-500", bg: "bg-blue-500/8 border-blue-500/20" },
+            { label: "Total Quotes", value: overview.totalQuotes, icon: Quote, color: "text-purple-500", bg: "bg-purple-500/8 border-purple-500/20" },
+          ].map(({ label, value, icon: Icon, color, bg }, i) => (
+            <motion.div
+              key={label}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05 }}
+              className={cn("rounded-xl border p-4 flex flex-col gap-2", bg)}
+            >
+              <div className="flex items-center gap-2">
+                <Icon className={cn("w-3.5 h-3.5", color)} />
+                <span className="text-xs text-muted-foreground">{label}</span>
+              </div>
+              <div className="text-2xl font-bold text-foreground tabular-nums">{value.toLocaleString()}</div>
+            </motion.div>
+          ))}
+        </motion.div>
+      )}
+
+      {/* Summary banner */}
+      {overview && (
+        <motion.div
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+          className="bg-card border border-card-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-3"
+        >
+          <div className="flex items-center gap-3 flex-1">
+            <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/15 flex items-center justify-center flex-shrink-0">
+              <Zap className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-foreground">
+                {overview.totalEngagement.toLocaleString()} total engagements
+              </div>
+              <div className="text-xs text-muted-foreground">
+                across {overview.totalPosts.toLocaleString()} indexed posts
+                {overview.syncedPosts > 0 && ` · ${overview.syncedPosts.toLocaleString()} with live data`}
+                {overview.avgLikesPerPost > 0 && ` · ${overview.avgLikesPerPost.toFixed(1)} avg likes`}
+              </div>
+            </div>
+          </div>
+          {!hasSyncedData && (
+            <div className="text-xs text-amber-600 bg-amber-500/8 border border-amber-500/20 rounded-lg px-3 py-2">
+              No engagement data yet — click "Sync Engagement" to fetch live stats from Bluesky.
+            </div>
+          )}
+        </motion.div>
+      )}
+
+      {/* Top posts list */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-foreground">
+            Top Posts by {sortBy === "total" ? "Total Engagement" : sortBy === "likes" ? "Likes" : sortBy === "reposts" ? "Reposts" : "Replies"}
+          </h3>
+          {posts.length > 0 && (
+            <span className="text-xs text-muted-foreground">{posts.length} posts</span>
+          )}
+        </div>
+
+        {loadingPosts ? (
+          <div className="space-y-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-32 bg-card border border-card-border rounded-xl animate-pulse" />
+            ))}
+          </div>
+        ) : posts.length === 0 ? (
+          <div className="text-center py-16 text-muted-foreground">
+            <BarChart2 className="w-10 h-10 mx-auto mb-3 opacity-30" />
+            <p className="text-sm font-medium">No posts indexed yet</p>
+            <p className="text-xs mt-1">Create a feed and let it index posts to see analytics here.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {posts.map((post, i) => (
+              <TopPostCard
+                key={post.uri}
+                post={post}
+                rank={i + 1}
+                maxEngagement={maxEngagement}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-type AnalyticsTab = "my-posts" | "feeds";
+type AnalyticsTab = "my-posts" | "feed-posts" | "feeds";
 
 export default function Analytics() {
   const [tab, setTab] = useState<AnalyticsTab>("my-posts");
@@ -678,8 +970,9 @@ export default function Analytics() {
       {/* Tab Switch */}
       <div className="flex gap-1 border-b border-border mb-6 overflow-x-auto scrollbar-thin -mx-4 px-4 md:mx-0 md:px-0">
         {[
-          { id: "my-posts" as AnalyticsTab, label: "My Posts", icon: Activity, desc: "Your post performance" },
-          { id: "feeds" as AnalyticsTab, label: "Feeds", icon: BarChart2, desc: "Feed indexing stats" },
+          { id: "my-posts" as AnalyticsTab, label: "My Posts", icon: Activity },
+          { id: "feed-posts" as AnalyticsTab, label: "Feed Posts", icon: TrendingUp },
+          { id: "feeds" as AnalyticsTab, label: "Feed Stats", icon: BarChart2 },
         ].map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -701,6 +994,11 @@ export default function Analytics() {
         {tab === "my-posts" && (
           <motion.div key="my-posts" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             <MyPostsTab />
+          </motion.div>
+        )}
+        {tab === "feed-posts" && (
+          <motion.div key="feed-posts" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <FeedPostsTab feeds={feeds} />
           </motion.div>
         )}
         {tab === "feeds" && (
