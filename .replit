@@ -1,4 +1,4 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-24", "postgresql-16"]
 
 [deployment]
 router = "application"
@@ -43,3 +43,6 @@ externalPort = 3000
 
 [userenv.shared]
 FEEDGEN_HOSTNAME = "feedforge-api.manmysterious2020.workers.dev"
+
+[nix]
+channel = "stable-25_05"
