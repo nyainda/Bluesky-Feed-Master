@@ -4,7 +4,8 @@ import {
   LayoutDashboard, Rss, FileText, Settings, Wifi, WifiOff,
   BarChart3, Users2, Menu, X, ChevronRight, PenLine, Bell,
 } from "lucide-react";
-import { useGetFirehoseStatus, useGetStatsOverview, useGetBlueskyProfile } from "@workspace/api-client-react";
+import { useGetFirehoseStatus, useGetStatsOverview, useGetBlueskyProfile, customFetch } from "@workspace/api-client-react";
+import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -19,6 +20,17 @@ const navItems = [
   { href: "/posts", label: "Posts", icon: FileText },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
+
+function useUnreadCount() {
+  const { data } = useQuery<{ count: number }>({
+    queryKey: ["notifications-unread"],
+    queryFn: () => customFetch<{ count: number }>("/api/bluesky/notifications/unread-count"),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: false,
+  });
+  return data?.count ?? 0;
+}
 
 function FirehoseIndicator() {
   const { data: firehose } = useGetFirehoseStatus({
@@ -116,6 +128,8 @@ function ProfileCard() {
 
 function NavContent({ onNavClick }: { onNavClick?: () => void }) {
   const [location] = useLocation();
+  const unread = useUnreadCount();
+
   return (
     <>
       <div className="px-3 pt-4 pb-2">
@@ -135,6 +149,7 @@ function NavContent({ onNavClick }: { onNavClick?: () => void }) {
       <nav className="flex-1 px-2 py-3 space-y-px overflow-y-auto scrollbar-thin">
         {navItems.map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? location === "/" : location.startsWith(href);
+          const isNotifications = href === "/notifications";
           return (
             <Link key={href} href={href} onClick={onNavClick}>
               <div
@@ -145,7 +160,17 @@ function NavContent({ onNavClick }: { onNavClick?: () => void }) {
                     : "text-sidebar-foreground/55 hover:text-sidebar-foreground hover:bg-sidebar-accent",
                 )}
               >
-                <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+                <div className="relative flex-shrink-0">
+                  <Icon className="w-3.5 h-3.5" />
+                  {isNotifications && unread > 0 && (
+                    <span className={cn(
+                      "absolute -top-1.5 -right-1.5 min-w-[14px] h-3.5 rounded-full text-[9px] font-bold flex items-center justify-center px-0.5 tabular-nums",
+                      active ? "bg-white text-sidebar-primary" : "bg-primary text-white",
+                    )}>
+                      {unread > 99 ? "99+" : unread}
+                    </span>
+                  )}
+                </div>
                 <span>{label}</span>
                 {active && <div className="ml-auto w-1 h-1 rounded-full bg-white/50" />}
               </div>
@@ -161,19 +186,28 @@ function NavContent({ onNavClick }: { onNavClick?: () => void }) {
 
 function BottomNav() {
   const [location] = useLocation();
+  const unread = useUnreadCount();
   const mainItems = navItems.slice(0, 5);
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-border md:hidden safe-area-pb">
       <div className="flex items-stretch h-14">
         {mainItems.map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? location === "/" : location.startsWith(href);
+          const isNotifications = href === "/notifications";
           return (
             <Link key={href} href={href} className="flex-1">
               <div className={cn(
-                "flex flex-col items-center justify-center h-full gap-0.5 transition-colors",
+                "flex flex-col items-center justify-center h-full gap-0.5 transition-colors relative",
                 active ? "text-primary" : "text-muted-foreground",
               )}>
-                <Icon className="w-5 h-5" />
+                <div className="relative">
+                  <Icon className="w-5 h-5" />
+                  {isNotifications && unread > 0 && (
+                    <span className="absolute -top-1 -right-1.5 min-w-[14px] h-3.5 rounded-full bg-primary text-white text-[9px] font-bold flex items-center justify-center px-0.5 tabular-nums">
+                      {unread > 99 ? "99+" : unread}
+                    </span>
+                  )}
+                </div>
                 <span className="text-[10px] font-medium">{label}</span>
                 {active && <div className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary" />}
               </div>

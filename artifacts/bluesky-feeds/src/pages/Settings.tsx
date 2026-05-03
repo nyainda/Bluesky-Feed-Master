@@ -93,7 +93,7 @@ const ENV_DESCRIPTIONS: Record<string, string> = {
   DATABASE_URL: "PostgreSQL connection string. Used by the Replit dev environment.",
 };
 
-type DeployOption = "cf-full" | "cf-render" | "replit";
+type DeployOption = "cf-full" | "cf-render" | "vercel" | "replit";
 
 function Badge({ children, color = "gray" }: {
   children: React.ReactNode;
@@ -171,6 +171,12 @@ export default function Settings() {
       id: "cf-render",
       label: "Cloudflare Pages + Render.com",
       tagline: "Real-time firehose — Cloudflare frontend + Render API + Neon PostgreSQL",
+      badges: [{ label: "Free", color: "green" }],
+    },
+    {
+      id: "vercel",
+      label: "Vercel + Cloudflare Worker",
+      tagline: "Deploy the frontend on Vercel, API on Cloudflare Worker — both free tiers",
       badges: [{ label: "Free", color: "green" }],
     },
     {
@@ -388,6 +394,64 @@ export default function Settings() {
               <a href="https://neon.tech" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1 font-medium">Neon free Postgres <ExternalLink className="w-3 h-3" /></a>
               <span className="text-muted-foreground/30 text-xs">·</span>
               <a href="https://render.com" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1 font-medium">Render.com <ExternalLink className="w-3 h-3" /></a>
+            </div>
+          </motion.div>
+        )}
+
+        {activeOption === "vercel" && (
+          <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+            <div className="text-xs text-blue-600 bg-blue-500/8 border border-blue-500/15 rounded-lg p-3 flex gap-2">
+              <Cloud className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-500" />
+              <span>
+                The Cloudflare Worker (<code className="bg-muted px-1 rounded font-mono">{workerUrl}</code>) handles the API.
+                Vercel hosts the React frontend only — no server-side code needed.
+              </span>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold text-foreground mb-2">1 — Deploy the Worker (already done)</p>
+              <div className="flex items-center gap-3 p-3.5 bg-emerald-500/6 border border-emerald-500/20 rounded-xl">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-semibold text-emerald-600">Worker live</div>
+                  <a href={`https://${workerUrl}/api/healthz`} target="_blank" rel="noreferrer"
+                    className="text-xs font-mono text-emerald-700 hover:underline break-all">
+                    https://{workerUrl}
+                  </a>
+                </div>
+                <a href={`https://${workerUrl}/api/healthz`} target="_blank" rel="noreferrer">
+                  <ExternalLink className="w-3.5 h-3.5 text-emerald-600" />
+                </a>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold text-foreground mb-2">2 — Deploy frontend to Vercel</p>
+              <ol className="space-y-2 text-xs list-none">
+                {[
+                  <>Push this repo to GitHub, then go to <a href="https://vercel.com/new" target="_blank" rel="noreferrer" className="text-primary underline">vercel.com/new</a> and import it</>,
+                  <>Set <strong>Root Directory</strong> to <code className="bg-muted px-1 rounded font-mono">artifacts/bluesky-feeds</code></>,
+                  <>Set <strong>Build Command</strong> to <code className="bg-muted px-1 rounded font-mono">pnpm --filter @workspace/bluesky-feeds run build</code></>,
+                  <>Set <strong>Output Directory</strong> to <code className="bg-muted px-1 rounded font-mono">dist/public</code></>,
+                  <>Add environment variable: <code className="bg-muted px-1 rounded font-mono">VITE_API_BASE_URL=https://{workerUrl}</code></>,
+                  "Deploy — Vercel handles SPA routing automatically via the included vercel.json",
+                ].map((step, i) => <Step key={i} i={i}>{step}</Step>)}
+              </ol>
+            </div>
+
+            <div className="bg-amber-500/6 border border-amber-500/15 rounded-lg p-3 text-xs text-amber-700 flex gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-500" />
+              <span>
+                The Vercel frontend calls the Cloudflare Worker for all API requests.
+                The XRPC feed endpoints (did.json, describeFeedGenerator, getFeedSkeleton) are served by the Worker at <code className="bg-muted px-1 rounded font-mono">{workerUrl}</code>.
+                Set <code className="bg-muted px-1 rounded font-mono">FEEDGEN_HOSTNAME={workerUrl}</code> in your Worker secrets.
+              </span>
+            </div>
+
+            <div className="flex gap-3 flex-wrap">
+              <a href="https://vercel.com/new" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1 font-medium">Vercel dashboard <ExternalLink className="w-3 h-3" /></a>
+              <span className="text-muted-foreground/30 text-xs">·</span>
+              <a href={`https://${workerUrl}/api/healthz`} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1 font-medium">Check Worker health <ExternalLink className="w-3 h-3" /></a>
             </div>
           </motion.div>
         )}

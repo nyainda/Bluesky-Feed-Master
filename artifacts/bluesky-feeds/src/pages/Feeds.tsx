@@ -1,9 +1,12 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useListFeeds, useCreateFeed, useUpdateFeed, useDeleteFeed, getListFeedsQueryKey, customFetch } from "@workspace/api-client-react";
 import type { Feed } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Trash2, ChevronRight, CheckCircle, XCircle, Rss, Sparkles, Tag, Check } from "lucide-react";
+import {
+  Plus, Trash2, ChevronRight, CheckCircle, XCircle, Rss,
+  Sparkles, Tag, Check, Search, Edit2, X, RotateCcw,
+} from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -61,7 +64,50 @@ const FEED_TEMPLATES: FeedTemplate[] = [
     description: "Illustrations, digital art, design work, and creative process posts",
     keywords: ["art", "illustration", "digitalart", "design", "mastoart", "artistsonbluesky", "drawing"],
   },
+  {
+    emoji: "🔬",
+    name: "Science",
+    recordName: "science",
+    description: "Research, discoveries, papers, and scientific discussions across all disciplines",
+    keywords: ["science", "research", "physics", "biology", "chemistry", "scicomm", "arxiv", "climate"],
+  },
+  {
+    emoji: "🚀",
+    name: "Startups & Indie",
+    recordName: "startups-indie",
+    description: "Startup founders, indie hackers, product launches, and entrepreneurship",
+    keywords: ["startup", "indiehacker", "buildinpublic", "saas", "founder", "entrepreneur", "productlaunch", "sideproject"],
+  },
+  {
+    emoji: "🎵",
+    name: "Music",
+    recordName: "music",
+    description: "Music releases, production, recommendations, and music news",
+    keywords: ["music", "newmusic", "musicproduction", "musician", "album", "nowplaying", "hiphop", "indiemusic"],
+  },
+  {
+    emoji: "📸",
+    name: "Photography",
+    recordName: "photography",
+    description: "Photography, photo editing, camera gear, and visual storytelling",
+    keywords: ["photography", "photo", "photographer", "shotoniphone", "streetphotography", "landscape", "portrait", "fujifilm"],
+  },
+  {
+    emoji: "💰",
+    name: "Crypto & Web3",
+    recordName: "crypto-web3",
+    description: "Cryptocurrency, DeFi, NFTs, blockchain, and Web3 developments",
+    keywords: ["crypto", "bitcoin", "ethereum", "defi", "web3", "blockchain", "nft", "solana"],
+  },
 ];
+
+const templateFormSchema = z.object({
+  recordName: z.string().min(1, "Required").regex(/^[a-z0-9-]+$/, "Lowercase letters, numbers, hyphens only"),
+  displayName: z.string().min(1, "Required"),
+  description: z.string().optional(),
+  keywordsText: z.string().min(1, "At least one keyword required"),
+});
+type TemplateFormValues = z.infer<typeof templateFormSchema>;
 
 function TemplatesDialog({
   open,
@@ -75,92 +121,201 @@ function TemplatesDialog({
   const createFeed = useCreateFeed();
   const [, navigate] = useLocation();
   const [loading, setLoading] = useState<string | null>(null);
+  const [editingTemplate, setEditingTemplate] = useState<FeedTemplate | null>(null);
 
-  async function applyTemplate(template: FeedTemplate) {
-    setLoading(template.recordName);
+  const form = useForm<TemplateFormValues>({
+    resolver: zodResolver(templateFormSchema),
+    defaultValues: { recordName: "", displayName: "", description: "", keywordsText: "" },
+  });
+
+  function openEditor(template: FeedTemplate) {
+    form.reset({
+      recordName: template.recordName,
+      displayName: `${template.emoji} ${template.name}`,
+      description: template.description,
+      keywordsText: template.keywords.join(", "),
+    });
+    setEditingTemplate(template);
+  }
+
+  async function applyRaw(recordName: string, displayName: string, description: string, keywords: string[]) {
+    setLoading(recordName);
     try {
       const feed = await createFeed.mutateAsync({
-        data: {
-          recordName: template.recordName,
-          displayName: `${template.emoji} ${template.name}`,
-          description: template.description,
-        },
+        data: { recordName, displayName, description: description || null },
       });
-
-      // Add all keywords in sequence
-      for (const keyword of template.keywords) {
+      for (const keyword of keywords) {
         await customFetch(`/api/feeds/${feed.id}/keywords`, {
           method: "POST",
           body: JSON.stringify({ keyword }),
         });
       }
-
       await queryClient.invalidateQueries({ queryKey: getListFeedsQueryKey() });
-      toast({ title: `${template.emoji} ${template.name} feed created with ${template.keywords.length} keywords!` });
+      toast({ title: `${displayName} created with ${keywords.length} keywords!` });
+      setEditingTemplate(null);
       onOpenChange(false);
       navigate(`/feeds/${feed.id}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      toast({ title: "Failed to create feed from template", description: msg.includes("unique") ? "A feed with that record name already exists." : msg, variant: "destructive" });
+      toast({
+        title: "Failed to create feed from template",
+        description: msg.toLowerCase().includes("unique") ? "A feed with that record name already exists." : msg,
+        variant: "destructive",
+      });
     } finally {
       setLoading(null);
     }
   }
 
+  async function onSubmitEditor(values: TemplateFormValues) {
+    const keywords = values.keywordsText.split(",").map((k) => k.trim()).filter(Boolean);
+    await applyRaw(values.recordName, values.displayName, values.description ?? "", keywords);
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) setEditingTemplate(null); }}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="text-base flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-primary" />
-            Feed Templates
+            {editingTemplate ? (
+              <>
+                <button
+                  onClick={() => setEditingTemplate(null)}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+                Customize Template
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4 text-primary" />
+                Feed Templates
+              </>
+            )}
           </DialogTitle>
-          <p className="text-xs text-muted-foreground mt-1">
-            Start from a pre-configured feed with curated keywords — ready to index posts instantly.
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {editingTemplate
+              ? "Edit the name, description, and keywords before creating."
+              : "Pre-configured feeds with curated keywords — ready to index posts instantly."}
           </p>
         </DialogHeader>
-        <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
-          {FEED_TEMPLATES.map((t) => (
-            <div
-              key={t.recordName}
-              className="flex items-start gap-3 p-3.5 rounded-xl border border-border hover:border-primary/30 hover:bg-primary/3 transition-all group"
+
+        <AnimatePresence mode="wait">
+          {editingTemplate ? (
+            <motion.div
+              key="editor"
+              initial={{ opacity: 0, x: 16 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -16 }}
             >
-              <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center text-xl flex-shrink-0">
-                {t.emoji}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold text-sm text-foreground">{t.name}</div>
-                <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{t.description}</p>
-                <div className="flex flex-wrap gap-1 mt-2">
-                  {t.keywords.slice(0, 4).map((kw) => (
-                    <span key={kw} className="inline-flex items-center gap-0.5 text-[10px] bg-muted px-1.5 py-0.5 rounded-full text-muted-foreground">
-                      <Tag className="w-2 h-2" />{kw}
-                    </span>
-                  ))}
-                  {t.keywords.length > 4 && (
-                    <span className="text-[10px] text-muted-foreground/60 px-1">+{t.keywords.length - 4} more</span>
-                  )}
+              <Form {...form}>
+                <form onSubmit={form.handleSubmit(onSubmitEditor)} className="space-y-3.5">
+                  <FormField control={form.control} name="displayName" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-medium">Display Name</FormLabel>
+                      <FormControl><Input {...field} className="text-sm" /></FormControl>
+                      <FormMessage className="text-xs" />
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="recordName" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-medium">Record Name</FormLabel>
+                      <FormControl><Input {...field} className="text-sm font-mono" /></FormControl>
+                      <FormMessage className="text-xs" />
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="description" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-medium">Description <span className="text-muted-foreground font-normal">(optional)</span></FormLabel>
+                      <FormControl><Textarea {...field} rows={2} className="text-sm resize-none" /></FormControl>
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="keywordsText" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-medium">Keywords <span className="text-muted-foreground font-normal">(comma-separated)</span></FormLabel>
+                      <FormControl>
+                        <Textarea {...field} rows={3} className="text-sm resize-none font-mono" placeholder="keyword1, keyword2, keyword3" />
+                      </FormControl>
+                      <FormMessage className="text-xs" />
+                    </FormItem>
+                  )} />
+                  <DialogFooter className="gap-2 pt-1">
+                    <Button type="button" variant="outline" size="sm" onClick={() => setEditingTemplate(null)}>Back</Button>
+                    <Button type="submit" size="sm" disabled={loading !== null} className="gap-1.5">
+                      {loading ? (
+                        <><div className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />Creating…</>
+                      ) : (
+                        <><Check className="w-3 h-3" />Create Feed</>
+                      )}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </Form>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="list"
+              initial={{ opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 8 }}
+              className="space-y-2 max-h-[420px] overflow-y-auto pr-1"
+            >
+              {FEED_TEMPLATES.map((t) => (
+                <div
+                  key={t.recordName}
+                  className="flex items-start gap-3 p-3.5 rounded-xl border border-border hover:border-primary/30 hover:bg-primary/[0.02] transition-all"
+                >
+                  <div className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center text-lg flex-shrink-0">
+                    {t.emoji}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-sm text-foreground">{t.name}</div>
+                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{t.description}</p>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {t.keywords.slice(0, 3).map((kw) => (
+                        <span key={kw} className="inline-flex items-center gap-0.5 text-[10px] bg-muted px-1.5 py-0.5 rounded-full text-muted-foreground">
+                          <Tag className="w-2 h-2" />{kw}
+                        </span>
+                      ))}
+                      {t.keywords.length > 3 && (
+                        <span className="text-[10px] text-muted-foreground/50 self-center">+{t.keywords.length - 3} more</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5 flex-shrink-0">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs gap-1 px-2.5"
+                      onClick={() => openEditor(t)}
+                    >
+                      <Edit2 className="w-3 h-3" />
+                      Edit
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs gap-1 px-2.5"
+                      onClick={() => applyRaw(t.recordName, `${t.emoji} ${t.name}`, t.description, t.keywords)}
+                      disabled={loading !== null}
+                    >
+                      {loading === t.recordName ? (
+                        <div className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                      ) : (
+                        <><Check className="w-3 h-3" />Use</>
+                      )}
+                    </Button>
+                  </div>
                 </div>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="flex-shrink-0 gap-1.5 self-center"
-                onClick={() => applyTemplate(t)}
-                disabled={loading !== null}
-              >
-                {loading === t.recordName ? (
-                  <><div className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />Creating…</>
-                ) : (
-                  <><Check className="w-3 h-3" />Use</>
-                )}
-              </Button>
-            </div>
-          ))}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Close</Button>
-        </DialogFooter>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+        {!editingTemplate && (
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Close</Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -323,10 +478,23 @@ export default function Feeds() {
   const [createOpen, setCreateOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Feed | null>(null);
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(() => {
+    if (!feeds) return [];
+    if (!search.trim()) return feeds;
+    const q = search.toLowerCase();
+    return feeds.filter(
+      (f) =>
+        f.displayName.toLowerCase().includes(q) ||
+        f.recordName.toLowerCase().includes(q) ||
+        (f.description ?? "").toLowerCase().includes(q),
+    );
+  }, [feeds, search]);
 
   return (
     <div className="px-4 py-5 md:px-8 md:py-8 max-w-5xl mx-auto">
-      <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between mb-6 md:mb-8">
+      <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between mb-5 md:mb-6">
         <div>
           <h1 className="text-xl md:text-2xl font-bold text-foreground tracking-tight">Feeds</h1>
           <p className="text-muted-foreground text-sm mt-0.5">Manage your Bluesky custom feed algorithms</p>
@@ -344,6 +512,27 @@ export default function Feeds() {
         </div>
       </motion.div>
 
+      {/* Search bar — only visible when there are feeds */}
+      {!isLoading && feeds && feeds.length > 0 && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="relative mb-4">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Search feeds…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8 h-9 text-sm"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </motion.div>
+      )}
+
       {isLoading ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -359,15 +548,30 @@ export default function Feeds() {
             <p className="font-semibold text-foreground">No feeds yet</p>
             <p className="text-sm text-muted-foreground mt-1">Create your first feed to start indexing Bluesky posts</p>
           </div>
-          <Button onClick={() => setCreateOpen(true)} className="mt-1" size="sm">
-            <Plus className="w-4 h-4 mr-1.5" />
-            Create First Feed
+          <div className="flex items-center gap-2">
+            <Button onClick={() => setTemplatesOpen(true)} variant="outline" size="sm" className="gap-1.5">
+              <Sparkles className="w-3.5 h-3.5" /> Browse Templates
+            </Button>
+            <Button onClick={() => setCreateOpen(true)} size="sm">
+              <Plus className="w-4 h-4 mr-1.5" /> Create Feed
+            </Button>
+          </div>
+        </motion.div>
+      ) : filtered.length === 0 ? (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center h-48 gap-3 text-center">
+          <Search className="w-8 h-8 text-muted-foreground/30" />
+          <div>
+            <p className="font-medium text-foreground">No feeds match "{search}"</p>
+            <p className="text-sm text-muted-foreground mt-0.5">Try a different search term</p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => setSearch("")} className="gap-1.5">
+            <RotateCcw className="w-3.5 h-3.5" /> Clear search
           </Button>
         </motion.div>
       ) : (
         <div className="space-y-2.5">
           <AnimatePresence>
-            {feeds.map((feed, i) => (
+            {filtered.map((feed, i) => (
               <motion.div
                 key={feed.id}
                 initial={{ opacity: 0, y: 10 }}
@@ -420,6 +624,11 @@ export default function Feeds() {
               </motion.div>
             ))}
           </AnimatePresence>
+          {search && (
+            <p className="text-center text-xs text-muted-foreground/50 pt-1">
+              Showing {filtered.length} of {feeds.length} feeds
+            </p>
+          )}
         </div>
       )}
 
