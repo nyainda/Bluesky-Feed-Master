@@ -47,11 +47,12 @@ export const followerSnapshotsTable = sqliteTable("follower_snapshots", {
 export const scheduledPostsTable = sqliteTable("scheduled_posts", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   text: text("text").notNull(),
-  threadPosts: text("thread_posts"),
+  threadParts: text("thread_parts"),
+  isThread: integer("is_thread", { mode: "boolean" }).notNull().default(false),
   scheduledAt: text("scheduled_at").notNull(),
-  postedAt: text("posted_at"),
+  sentAt: text("sent_at"),
   status: text("status").notNull().default("pending"),
-  error: text("error"),
+  errorMessage: text("error_message"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 });
 

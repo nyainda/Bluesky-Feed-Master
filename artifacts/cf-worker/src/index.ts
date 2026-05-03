@@ -30,12 +30,18 @@ app.use(
 
 app.get("/api/healthz", (c) => c.json({ status: "ok", runtime: "cloudflare-workers" }));
 
-// One-time migration endpoint — creates tables that may not exist yet
+// Migration endpoint — idempotent table setup
 app.post("/api/admin/migrate", async (c) => {
   try {
     const db = c.env.DB;
     await db.prepare("CREATE TABLE IF NOT EXISTS follower_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, followers_count INTEGER NOT NULL, follows_count INTEGER NOT NULL, posts_count INTEGER NOT NULL, recorded_at TEXT NOT NULL DEFAULT (datetime('now')))").run();
-    await db.prepare("CREATE TABLE IF NOT EXISTS scheduled_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, thread_posts TEXT, scheduled_at TEXT NOT NULL, posted_at TEXT, status TEXT NOT NULL DEFAULT 'pending', error TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))").run();
+    // Drop old scheduled_posts if it has wrong schema (thread_posts / posted_at columns), then recreate
+    const tableInfo = await db.prepare("PRAGMA table_info(scheduled_posts)").all();
+    const cols = (tableInfo.results as Array<{ name: string }>).map(r => r.name);
+    if (cols.includes("thread_posts") || cols.includes("posted_at")) {
+      await db.prepare("DROP TABLE scheduled_posts").run();
+    }
+    await db.prepare("CREATE TABLE IF NOT EXISTS scheduled_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, thread_parts TEXT, is_thread INTEGER NOT NULL DEFAULT 0, scheduled_at TEXT NOT NULL, sent_at TEXT, status TEXT NOT NULL DEFAULT 'pending', error_message TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))").run();
     return c.json({ ok: true, message: "Migration applied successfully" });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

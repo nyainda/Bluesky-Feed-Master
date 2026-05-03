@@ -10,12 +10,13 @@ CREATE TABLE IF NOT EXISTS follower_snapshots (
 );
 
 CREATE TABLE IF NOT EXISTS scheduled_posts (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  text         TEXT NOT NULL,
-  thread_posts TEXT,
-  scheduled_at TEXT NOT NULL,
-  posted_at    TEXT,
-  status       TEXT NOT NULL DEFAULT 'pending',
-  error        TEXT,
-  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  text          TEXT NOT NULL,
+  thread_parts  TEXT,
+  is_thread     INTEGER NOT NULL DEFAULT 0,
+  scheduled_at  TEXT NOT NULL,
+  sent_at       TEXT,
+  status        TEXT NOT NULL DEFAULT 'pending',
+  error_message TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
