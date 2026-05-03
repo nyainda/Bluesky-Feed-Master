@@ -36,6 +36,26 @@ export const indexedPostsTable = sqliteTable("indexed_posts", {
   engagementSyncedAt: text("engagement_synced_at"),
 });
 
+export const followerSnapshotsTable = sqliteTable("follower_snapshots", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  followersCount: integer("followers_count").notNull(),
+  followsCount: integer("follows_count").notNull(),
+  postsCount: integer("posts_count").notNull(),
+  recordedAt: text("recorded_at").notNull().default(sql`(datetime('now'))`),
+});
+
+export const scheduledPostsTable = sqliteTable("scheduled_posts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  text: text("text").notNull(),
+  threadPosts: text("thread_posts"),
+  scheduledAt: text("scheduled_at").notNull(),
+  postedAt: text("posted_at"),
+  status: text("status").notNull().default("pending"),
+  error: text("error"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+});
+
 export type Feed = typeof feedsTable.$inferSelect;
 export type Keyword = typeof keywordsTable.$inferSelect;
 export type IndexedPost = typeof indexedPostsTable.$inferSelect;
+export type FollowerSnapshot = typeof followerSnapshotsTable.$inferSelect;
