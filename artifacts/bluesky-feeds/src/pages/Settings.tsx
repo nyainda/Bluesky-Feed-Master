@@ -3,7 +3,7 @@ import { Copy, ExternalLink, CheckCircle, XCircle, AlertTriangle, Server, Globe,
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { useGetFirehoseStatus } from "@workspace/api-client-react";
+import { useGetFirehoseStatus, customFetch } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 
 function CopyableCode({ value, label }: { value: string; label: string }) {
@@ -107,7 +107,7 @@ export default function Settings() {
   const { data: firehose } = useGetFirehoseStatus({ query: { queryKey: ["firehose-settings"] } });
   const { data: configStatus } = useQuery<Record<string, boolean>>({
     queryKey: ["config-status"],
-    queryFn: () => fetch("/api/config/status").then(r => r.json()),
+    queryFn: () => customFetch("/api/config/status"),
     staleTime: 30_000,
   });
   const [activeOption, setActiveOption] = useState<DeployOption>("cf-full");

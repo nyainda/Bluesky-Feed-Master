@@ -4,6 +4,7 @@ import {
   useGetFollowers, useGetFollowing, useGetNotFollowingBack,
   useSyncEngagement, useBulkFollow, useBulkUnfollow,
   useGetBlueskyProfile, useListFeeds, useGetFeedTopAuthors,
+  customFetch,
 } from "@workspace/api-client-react";
 import type { AudienceUser } from "@workspace/api-client-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -182,7 +183,7 @@ function SearchFollowTab() {
     queryFn: () => {
       const params = new URLSearchParams({ q: submittedQuery, limit: "25" });
       if (cursor) params.set("cursor", cursor);
-      return fetch(`/api/bluesky/search-users?${params}`).then(r => r.json());
+      return customFetch(`/api/bluesky/search-users?${params}`);
     },
     enabled,
     staleTime: 60_000,
