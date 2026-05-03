@@ -2,16 +2,23 @@ import { useState } from "react";
 import {
   useListFeeds, useGetRecentActivity, useGet7DayActivity, useGetTopFeeds,
   useGetFeedKeywordStats, useGetFeedTopAuthors, useGetFeedHourly, useGetBlueskyFeedInfo,
+  useGetMyPosts,
 } from "@workspace/api-client-react";
-import { motion } from "framer-motion";
+import type { MyPost, Feed } from "@workspace/api-client-react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell,
 } from "recharts";
 import { format, formatDistanceToNow } from "date-fns";
-import { TrendingUp, Users, ExternalLink } from "lucide-react";
+import {
+  TrendingUp, Users, ExternalLink, Heart, Repeat2, MessageCircle, Quote,
+  ArrowUpRight, Image, RefreshCw, ChevronLeft, ChevronRight, Zap,
+  BarChart2, Activity,
+} from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 const CHART_COLORS = [
@@ -39,6 +46,347 @@ function tooltipStyle() {
   };
 }
 
+function formatDay(iso: string) {
+  try { return format(new Date(iso), "MMM d"); } catch { return iso; }
+}
+function formatHour(iso: string) {
+  try { return format(new Date(iso), "HH:mm"); } catch { return iso; }
+}
+function postIdFromUri(uri: string) {
+  return uri.split("/").pop() ?? "";
+}
+
+// ─── My Posts Tab ────────────────────────────────────────────────────────────
+
+function EngagementBar({ value, max, color }: { value: number; max: number; color: string }) {
+  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
+  return (
+    <div className="h-1 bg-muted rounded-full overflow-hidden flex-1">
+      <motion.div
+        className="h-full rounded-full"
+        initial={{ width: 0 }}
+        animate={{ width: `${pct}%` }}
+        transition={{ duration: 0.5, ease: "easeOut" }}
+        style={{ background: color }}
+      />
+    </div>
+  );
+}
+
+function PostCard({ post, rank, maxLikes, maxReposts, maxReplies }: {
+  post: MyPost; rank: number; maxLikes: number; maxReposts: number; maxReplies: number;
+}) {
+  const totalEngagement = post.likes + post.reposts + post.replies + post.quotes;
+  const authorDid = post.uri.split("/")[2];
+  const postId = postIdFromUri(post.uri);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: rank * 0.03 }}
+      className="group bg-card border border-card-border rounded-xl p-4 md:p-5 hover:shadow-sm hover:border-border transition-all duration-150"
+    >
+      <div className="flex items-start gap-3 md:gap-4">
+        {/* Rank */}
+        <div className="flex-shrink-0 w-6 h-6 rounded-full bg-muted border border-border flex items-center justify-center mt-0.5">
+          <span className="text-[10px] font-bold text-muted-foreground tabular-nums">{rank}</span>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2 mb-2.5">
+            <p className="text-sm text-foreground leading-relaxed line-clamp-3">{post.text}</p>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              {post.hasImages && <Image className="w-3.5 h-3.5 text-muted-foreground/50" />}
+              <a
+                href={`https://bsky.app/profile/${authorDid}/post/${postId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="p-1 rounded text-muted-foreground hover:text-primary transition-colors"
+              >
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          </div>
+
+          {/* Stat bars */}
+          <div className="space-y-1.5 mb-3">
+            {[
+              { label: "Likes", value: post.likes, max: maxLikes, color: "hsl(338 80% 58%)" },
+              { label: "Reposts", value: post.reposts, max: maxReposts, color: "hsl(168 84% 42%)" },
+              { label: "Replies", value: post.replies, max: maxReplies, color: "hsl(210 100% 58%)" },
+            ].map(({ label, value, max, color }) => (
+              <div key={label} className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground w-11 flex-shrink-0">{label}</span>
+                <EngagementBar value={value} max={max} color={color} />
+                <span className="text-[10px] font-semibold text-foreground tabular-nums w-7 text-right flex-shrink-0">{value.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Footer row */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2.5">
+              <span className="flex items-center gap-1 text-[11px] text-rose-500 font-medium">
+                <Heart className="w-3 h-3" />{post.likes}
+              </span>
+              <span className="flex items-center gap-1 text-[11px] text-emerald-600 font-medium">
+                <Repeat2 className="w-3 h-3" />{post.reposts}
+              </span>
+              <span className="flex items-center gap-1 text-[11px] text-blue-500 font-medium">
+                <MessageCircle className="w-3 h-3" />{post.replies}
+              </span>
+              {post.quotes > 0 && (
+                <span className="flex items-center gap-1 text-[11px] text-purple-500 font-medium">
+                  <Quote className="w-3 h-3" />{post.quotes}
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] text-muted-foreground/50 ml-auto">
+              {formatDistanceToNow(new Date(post.createdAt), { addSuffix: true })}
+            </span>
+            {totalEngagement > 0 && (
+              <span className="text-[10px] bg-primary/8 text-primary border border-primary/15 px-2 py-0.5 rounded-full font-medium">
+                {totalEngagement} engagements
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function MyPostsTab() {
+  const [cursor, setCursor] = useState<string | undefined>();
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+
+  const { data, isLoading, isFetching, refetch } = useGetMyPosts(
+    { limit: 20, cursor },
+    { query: { queryKey: ["my-posts", cursor], staleTime: 60_000 } },
+  );
+
+  const posts = data?.posts ?? [];
+  const stats = data?.stats;
+
+  const maxLikes = Math.max(...posts.map(p => p.likes), 1);
+  const maxReposts = Math.max(...posts.map(p => p.reposts), 1);
+  const maxReplies = Math.max(...posts.map(p => p.replies), 1);
+
+  // Engagement chart: posts by date with their engagement
+  const engagementChart = posts
+    .slice()
+    .reverse()
+    .map(p => ({
+      date: formatDay(p.createdAt),
+      likes: p.likes,
+      reposts: p.reposts,
+      replies: p.replies,
+    }));
+
+  const topPost = posts.reduce((best, p) => {
+    const score = p.likes + p.reposts * 2 + p.replies + p.quotes;
+    const bestScore = best.likes + best.reposts * 2 + best.replies + best.quotes;
+    return score > bestScore ? p : best;
+  }, posts[0]);
+
+  return (
+    <div className="space-y-4 md:space-y-6">
+      {/* Top Stats */}
+      {stats && (
+        <motion.div
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="grid grid-cols-2 sm:grid-cols-4 gap-3"
+        >
+          {[
+            { label: "Total Likes", value: stats.totalLikes, icon: Heart, color: "text-rose-500", bg: "bg-rose-500/8 border-rose-500/20" },
+            { label: "Total Reposts", value: stats.totalReposts, icon: Repeat2, color: "text-emerald-600", bg: "bg-emerald-500/8 border-emerald-500/20" },
+            { label: "Total Replies", value: stats.totalReplies, icon: MessageCircle, color: "text-blue-500", bg: "bg-blue-500/8 border-blue-500/20" },
+            { label: "Total Quotes", value: stats.totalQuotes, icon: Quote, color: "text-purple-500", bg: "bg-purple-500/8 border-purple-500/20" },
+          ].map(({ label, value, icon: Icon, color, bg }, i) => (
+            <motion.div
+              key={label}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05 }}
+              className={cn("rounded-xl border p-4 text-center", bg)}
+            >
+              <Icon className={cn("w-4 h-4 mx-auto mb-2", color)} />
+              <div className={cn("text-xl md:text-2xl font-bold tabular-nums", color)}>{value.toLocaleString()}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">{label}</div>
+            </motion.div>
+          ))}
+        </motion.div>
+      )}
+
+      {/* Top post highlight */}
+      {topPost && (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="bg-gradient-to-r from-primary/5 via-primary/3 to-transparent border border-primary/20 rounded-xl p-4 md:p-5"
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <Zap className="w-4 h-4 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-semibold text-primary mb-1">Top Performing Post</div>
+              <p className="text-sm text-foreground line-clamp-2 leading-relaxed">{topPost.text}</p>
+              <div className="flex items-center gap-3 mt-2 flex-wrap">
+                <span className="flex items-center gap-1 text-xs text-rose-500 font-medium"><Heart className="w-3 h-3" />{topPost.likes}</span>
+                <span className="flex items-center gap-1 text-xs text-emerald-600 font-medium"><Repeat2 className="w-3 h-3" />{topPost.reposts}</span>
+                <span className="flex items-center gap-1 text-xs text-blue-500 font-medium"><MessageCircle className="w-3 h-3" />{topPost.replies}</span>
+                <span className="text-[11px] text-muted-foreground ml-auto">{formatDistanceToNow(new Date(topPost.createdAt), { addSuffix: true })}</span>
+              </div>
+            </div>
+            <a
+              href={`https://bsky.app/profile/${topPost.uri.split("/")[2]}/post/${postIdFromUri(topPost.uri)}`}
+              target="_blank"
+              rel="noreferrer"
+              className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/8 transition-colors"
+            >
+              <ArrowUpRight className="w-4 h-4" />
+            </a>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Engagement chart */}
+      {engagementChart.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+          className="bg-card border border-card-border rounded-xl p-5 md:p-6"
+        >
+          <h3 className="text-sm font-semibold text-foreground mb-4">Engagement Across Recent Posts</h3>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={engagementChart} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 6% 90% / .5)" />
+              <XAxis dataKey="date" tick={{ fontSize: 9, fill: "hsl(240 4% 46%)" }} tickLine={false} axisLine={false} />
+              <YAxis tick={{ fontSize: 10, fill: "hsl(240 4% 46%)" }} tickLine={false} axisLine={false} />
+              <Tooltip {...tooltipStyle()} />
+              <Bar dataKey="likes" name="Likes" fill="hsl(338 80% 58%)" radius={[3, 3, 0, 0]} stackId="a" />
+              <Bar dataKey="reposts" name="Reposts" fill="hsl(168 84% 42%)" radius={[0, 0, 0, 0]} stackId="a" />
+              <Bar dataKey="replies" name="Replies" fill="hsl(210 100% 58%)" radius={[3, 3, 0, 0]} stackId="a" />
+            </BarChart>
+          </ResponsiveContainer>
+          <div className="flex items-center gap-4 mt-3 justify-center">
+            {[
+              { label: "Likes", color: "hsl(338 80% 58%)" },
+              { label: "Reposts", color: "hsl(168 84% 42%)" },
+              { label: "Replies", color: "hsl(210 100% 58%)" },
+            ].map(({ label, color }) => (
+              <div key={label} className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: color }} />
+                <span className="text-[11px] text-muted-foreground">{label}</span>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
+
+      {/* Posts list header */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground">All Posts</h3>
+        <div className="flex items-center gap-2">
+          {isFetching && <RefreshCw className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1.5"
+            onClick={() => refetch()}
+          >
+            <RefreshCw className="w-3 h-3" />
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {/* Posts */}
+      {isLoading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="h-36 bg-card border border-card-border rounded-xl animate-pulse" />
+          ))}
+        </div>
+      ) : posts.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-48 gap-3 text-center">
+          <div className="w-12 h-12 rounded-2xl bg-muted border border-border flex items-center justify-center">
+            <BarChart2 className="w-6 h-6 text-muted-foreground/40" />
+          </div>
+          <p className="text-sm text-muted-foreground">No posts found. Make sure <code className="text-xs bg-muted px-1 rounded font-mono">FEEDGEN_PUBLISHER_DID</code> is set.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {posts.map((post, i) => (
+            <PostCard
+              key={post.uri}
+              post={post}
+              rank={i + 1 + cursorStack.length * 20}
+              maxLikes={maxLikes}
+              maxReposts={maxReposts}
+              maxReplies={maxReplies}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Pagination */}
+      {(cursorStack.length > 0 || data?.cursor) && (
+        <div className="flex items-center justify-between pt-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={cursorStack.length === 0}
+            onClick={() => {
+              const s = [...cursorStack];
+              const p = s.pop();
+              setCursorStack(s);
+              setCursor(p === "" ? undefined : p);
+            }}
+            className="gap-1 text-xs h-8"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" /> Newer
+          </Button>
+          <span className="text-xs text-muted-foreground">Page {cursorStack.length + 1}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!data?.cursor}
+            onClick={() => {
+              if (data?.cursor) {
+                setCursorStack(s => [...s, cursor ?? ""]);
+                setCursor(data.cursor!);
+              }
+            }}
+            className="gap-1 text-xs h-8"
+          >
+            Older <ChevronRight className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Feed Analytics Tab ───────────────────────────────────────────────────────
+
+function EmptyChart({ message }: { message: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-40 gap-3">
+      <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
+        <TrendingUp className="w-5 h-5 text-muted-foreground/30" />
+      </div>
+      <p className="text-xs text-muted-foreground text-center max-w-[200px]">{message}</p>
+    </div>
+  );
+}
+
 function SectionCard({ title, subtitle, children, className }: {
   title: string; subtitle?: string; children: React.ReactNode; className?: string;
 }) {
@@ -57,30 +405,7 @@ function SectionCard({ title, subtitle, children, className }: {
   );
 }
 
-function formatDay(iso: string) {
-  try { return format(new Date(iso), "MMM d"); } catch { return iso; }
-}
-function formatHour(iso: string) {
-  try { return format(new Date(iso), "HH:mm"); } catch { return iso; }
-}
-function shortenDid(did: string) {
-  if (did.length <= 20) return did;
-  return did.substring(0, 12) + "…" + did.substring(did.length - 6);
-}
-
-function EmptyChart({ message }: { message: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center h-40 gap-3">
-      <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
-        <TrendingUp className="w-5 h-5 text-muted-foreground/30" />
-      </div>
-      <p className="text-xs text-muted-foreground text-center max-w-[200px]">{message}</p>
-    </div>
-  );
-}
-
-export default function Analytics() {
-  const { data: feeds } = useListFeeds();
+function FeedAnalyticsTab({ feeds }: { feeds: Feed[] | undefined }) {
   const [selectedFeedId, setSelectedFeedId] = useState<string>("all");
 
   const { data: activity24h } = useGetRecentActivity();
@@ -112,12 +437,9 @@ export default function Analytics() {
   const totalForAllFeeds = (topFeeds || []).reduce((s, f) => s + f.postCount, 0);
 
   return (
-    <div className="px-4 py-5 md:px-8 md:py-8 max-w-7xl mx-auto">
-      <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6 md:mb-8">
-        <div>
-          <h1 className="text-xl md:text-2xl font-bold text-foreground tracking-tight">Analytics</h1>
-          <p className="text-muted-foreground text-sm mt-0.5">Feed performance and audience insights</p>
-        </div>
+    <div className="space-y-4">
+      {/* Feed selector */}
+      <div className="flex items-center gap-3">
         <Select value={selectedFeedId} onValueChange={setSelectedFeedId}>
           <SelectTrigger className="w-full sm:w-52 text-sm" data-testid="select-feed">
             <SelectValue placeholder="All Feeds" />
@@ -129,12 +451,12 @@ export default function Analytics() {
             ))}
           </SelectContent>
         </Select>
-      </motion.div>
+      </div>
 
       {selectedFeed && bskyFeedInfo && (
         <motion.div
           initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
-          className="mb-6 bg-card border border-card-border rounded-xl p-4 md:p-5"
+          className="bg-card border border-card-border rounded-xl p-4 md:p-5"
         >
           <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
             <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/15 flex items-center justify-center flex-shrink-0">
@@ -150,7 +472,7 @@ export default function Analytics() {
                 <div className="text-xs text-muted-foreground">People Saved</div>
               </div>
               <a
-                href={`https://bsky.app/profile/${process.env.FEEDGEN_PUBLISHER_DID}/feed/${selectedFeed.recordName}`}
+                href={`https://bsky.app/profile/did:plc:oobxeg4vljlqpp62k7fd6flp/feed/${selectedFeed.recordName}`}
                 target="_blank"
                 rel="noreferrer"
                 className="p-2 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/8 transition-colors"
@@ -164,7 +486,7 @@ export default function Analytics() {
 
       {selectedFeedId === "all" ? (
         <>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <SectionCard title="24-Hour Activity" subtitle="Posts indexed per hour across all feeds">
               {chart24h.length === 0 ? (
                 <EmptyChart message="No activity in the last 24 hours." />
@@ -239,7 +561,7 @@ export default function Analytics() {
         </>
       ) : (
         <>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <SectionCard title="Feed Activity (24h)" subtitle={`Hourly posts for ${selectedFeed?.displayName ?? "this feed"}`}>
               {!feedHourly || feedHourlyChart.length === 0 ? (
                 <EmptyChart message="No activity in the last 24 hours for this feed." />
@@ -311,13 +633,13 @@ export default function Analytics() {
                       <Users className="w-3 h-3 text-primary" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-mono text-foreground truncate">{shortenDid(author.did)}</div>
+                      <div className="text-xs font-mono text-foreground truncate">{author.did.substring(0, 24)}…</div>
                       <div className="text-[10px] text-muted-foreground">
-                        Last post {formatDistanceToNow(new Date(author.latestPostAt), { addSuffix: true })}
+                        Last {formatDistanceToNow(new Date(author.latestPostAt), { addSuffix: true })}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      <Badge variant="secondary" className="text-xs tabular-nums px-2 py-0.5">{author.postCount} posts</Badge>
+                      <span className="text-xs bg-secondary text-secondary-foreground border border-border px-2 py-0.5 rounded-full tabular-nums">{author.postCount} posts</span>
                       <a
                         href={`https://bsky.app/profile/${author.did}`}
                         target="_blank"
@@ -334,6 +656,59 @@ export default function Analytics() {
           </SectionCard>
         </>
       )}
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+type AnalyticsTab = "my-posts" | "feeds";
+
+export default function Analytics() {
+  const [tab, setTab] = useState<AnalyticsTab>("my-posts");
+  const { data: feeds } = useListFeeds();
+
+  return (
+    <div className="px-4 py-5 md:px-8 md:py-8 max-w-7xl mx-auto">
+      <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="mb-6 md:mb-8">
+        <h1 className="text-xl md:text-2xl font-bold text-foreground tracking-tight">Analytics</h1>
+        <p className="text-muted-foreground text-sm mt-0.5">Post performance and feed audience insights</p>
+      </motion.div>
+
+      {/* Tab Switch */}
+      <div className="flex gap-1 border-b border-border mb-6 overflow-x-auto scrollbar-thin -mx-4 px-4 md:mx-0 md:px-0">
+        {[
+          { id: "my-posts" as AnalyticsTab, label: "My Posts", icon: Activity, desc: "Your post performance" },
+          { id: "feeds" as AnalyticsTab, label: "Feeds", icon: BarChart2, desc: "Feed indexing stats" },
+        ].map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={cn(
+              "flex items-center gap-2 px-4 md:px-5 py-3 text-sm font-medium border-b-2 -mb-px transition-all whitespace-nowrap flex-shrink-0",
+              tab === id
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:border-border",
+            )}
+          >
+            <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <AnimatePresence mode="wait">
+        {tab === "my-posts" && (
+          <motion.div key="my-posts" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <MyPostsTab />
+          </motion.div>
+        )}
+        {tab === "feeds" && (
+          <motion.div key="feeds" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <FeedAnalyticsTab feeds={feeds} />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

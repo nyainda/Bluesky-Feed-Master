@@ -190,6 +190,35 @@ export interface BulkActionResult {
   errors: string[];
 }
 
+export interface MyPost {
+  uri: string;
+  cid: string;
+  text: string;
+  createdAt: string;
+  indexedAt: string;
+  likes: number;
+  reposts: number;
+  replies: number;
+  quotes: number;
+  hasImages: boolean;
+  langs: string[];
+}
+
+export interface MyPostStats {
+  totalLikes: number;
+  totalReposts: number;
+  totalReplies: number;
+  totalQuotes: number;
+  postCount: number;
+}
+
+export interface MyPostsResponse {
+  posts: MyPost[];
+  /** @nullable */
+  cursor?: string | null;
+  stats: MyPostStats;
+}
+
 export type GetFeedPostsParams = {
   limit?: number;
   /**
@@ -225,6 +254,14 @@ export type GetFollowersParams = {
 };
 
 export type GetFollowingParams = {
+  /**
+   * @nullable
+   */
+  cursor?: string | null;
+  limit?: number;
+};
+
+export type GetMyPostsParams = {
   /**
    * @nullable
    */

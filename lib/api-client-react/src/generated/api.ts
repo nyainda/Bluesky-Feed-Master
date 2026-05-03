@@ -34,10 +34,12 @@ import type {
   GetFeedPostsParams,
   GetFollowersParams,
   GetFollowingParams,
+  GetMyPostsParams,
   HealthStatus,
   Keyword,
   KeywordStat,
   ListPostsParams,
+  MyPostsResponse,
   PostsPage,
   PublishFeedResult,
   StatsOverview,
@@ -2394,3 +2396,97 @@ export const useBulkUnfollow = <
 > => {
   return useMutation(getBulkUnfollowMutationOptions(options));
 };
+
+/**
+ * @summary Get the authenticated user's own Bluesky posts with engagement stats
+ */
+export const getGetMyPostsUrl = (params?: GetMyPostsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/bluesky/my-posts?${stringifiedParams}`
+    : `/api/bluesky/my-posts`;
+};
+
+export const getMyPosts = async (
+  params?: GetMyPostsParams,
+  options?: RequestInit,
+): Promise<MyPostsResponse> => {
+  return customFetch<MyPostsResponse>(getGetMyPostsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetMyPostsQueryKey = (params?: GetMyPostsParams) => {
+  return [`/api/bluesky/my-posts`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetMyPostsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMyPosts>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetMyPostsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMyPosts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetMyPostsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getMyPosts>>> = ({
+    signal,
+  }) => getMyPosts(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMyPosts>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetMyPostsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMyPosts>>
+>;
+export type GetMyPostsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the authenticated user's own Bluesky posts with engagement stats
+ */
+
+export function useGetMyPosts<
+  TData = Awaited<ReturnType<typeof getMyPosts>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetMyPostsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMyPosts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetMyPostsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}

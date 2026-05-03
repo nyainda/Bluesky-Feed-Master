@@ -570,6 +570,29 @@ paths:
               schema:
                 $ref: "#/components/schemas/BulkActionResult"
 
+  /bluesky/my-posts:
+    get:
+      operationId: getMyPosts
+      tags: [stats]
+      summary: Get the authenticated user's own Bluesky posts with engagement stats
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 30
+      responses:
+        "200":
+          description: Author posts with engagement stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyPostsResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -965,3 +988,78 @@ components:
         - succeeded
         - failed
         - errors
+
+    MyPost:
+      type: object
+      properties:
+        uri:
+          type: string
+        cid:
+          type: string
+        text:
+          type: string
+        createdAt:
+          type: string
+        indexedAt:
+          type: string
+        likes:
+          type: integer
+        reposts:
+          type: integer
+        replies:
+          type: integer
+        quotes:
+          type: integer
+        hasImages:
+          type: boolean
+        langs:
+          type: array
+          items:
+            type: string
+      required:
+        - uri
+        - cid
+        - text
+        - createdAt
+        - indexedAt
+        - likes
+        - reposts
+        - replies
+        - quotes
+        - hasImages
+        - langs
+
+    MyPostStats:
+      type: object
+      properties:
+        totalLikes:
+          type: integer
+        totalReposts:
+          type: integer
+        totalReplies:
+          type: integer
+        totalQuotes:
+          type: integer
+        postCount:
+          type: integer
+      required:
+        - totalLikes
+        - totalReposts
+        - totalReplies
+        - totalQuotes
+        - postCount
+
+    MyPostsResponse:
+      type: object
+      properties:
+        posts:
+          type: array
+          items:
+            $ref: "#/components/schemas/MyPost"
+        cursor:
+          type: ["string", "null"]
+        stats:
+          $ref: "#/components/schemas/MyPostStats"
+      required:
+        - posts
+        - stats

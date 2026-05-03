@@ -448,3 +448,39 @@ export const BulkUnfollowResponse = zod.object({
   failed: zod.number(),
   errors: zod.array(zod.string()),
 });
+
+/**
+ * @summary Get the authenticated user's own Bluesky posts with engagement stats
+ */
+export const getMyPostsQueryLimitDefault = 30;
+
+export const GetMyPostsQueryParams = zod.object({
+  cursor: zod.coerce.string().nullish(),
+  limit: zod.coerce.number().default(getMyPostsQueryLimitDefault),
+});
+
+export const GetMyPostsResponse = zod.object({
+  posts: zod.array(
+    zod.object({
+      uri: zod.string(),
+      cid: zod.string(),
+      text: zod.string(),
+      createdAt: zod.string(),
+      indexedAt: zod.string(),
+      likes: zod.number(),
+      reposts: zod.number(),
+      replies: zod.number(),
+      quotes: zod.number(),
+      hasImages: zod.boolean(),
+      langs: zod.array(zod.string()),
+    }),
+  ),
+  cursor: zod.string().nullish(),
+  stats: zod.object({
+    totalLikes: zod.number(),
+    totalReposts: zod.number(),
+    totalReplies: zod.number(),
+    totalQuotes: zod.number(),
+    postCount: zod.number(),
+  }),
+});

@@ -110,6 +110,67 @@ router.get("/feeds/:id/hourly", async (req, res): Promise<void> => {
   })));
 });
 
+router.get("/bluesky/my-posts", async (req, res): Promise<void> => {
+  const did = process.env.FEEDGEN_PUBLISHER_DID;
+  if (!did) {
+    res.status(404).json({ error: "FEEDGEN_PUBLISHER_DID not configured" });
+    return;
+  }
+
+  try {
+    const cursor = req.query.cursor as string | undefined;
+    const limit = Math.min(parseInt((req.query.limit as string) || "30"), 50);
+
+    const agent = new AtpAgent({ service: "https://public.api.bsky.app" });
+    const result = await agent.getAuthorFeed({
+      actor: did,
+      limit,
+      cursor,
+      filter: "posts_no_replies",
+    });
+
+    const seen = new Set<string>();
+    const posts = result.data.feed
+      .filter((item) => {
+        if (seen.has(item.post.uri)) return false;
+        seen.add(item.post.uri);
+        return true;
+      })
+      .map((item) => {
+        const p = item.post;
+        const record = p.record as { text?: string; createdAt?: string; langs?: string[] };
+        const embed = p.embed as { $type?: string; images?: unknown[] } | undefined;
+        return {
+          uri: p.uri,
+          cid: p.cid,
+          text: record.text ?? "",
+          createdAt: record.createdAt ?? p.indexedAt,
+          indexedAt: p.indexedAt,
+          likes: p.likeCount ?? 0,
+          reposts: p.repostCount ?? 0,
+          replies: p.replyCount ?? 0,
+          quotes: p.quoteCount ?? 0,
+          hasImages: !!(embed && embed.images && embed.images.length > 0),
+          langs: record.langs ?? [],
+        };
+      });
+
+    const totalLikes = posts.reduce((s, p) => s + p.likes, 0);
+    const totalReposts = posts.reduce((s, p) => s + p.reposts, 0);
+    const totalReplies = posts.reduce((s, p) => s + p.replies, 0);
+    const totalQuotes = posts.reduce((s, p) => s + p.quotes, 0);
+
+    res.json({
+      posts,
+      cursor: result.data.cursor ?? null,
+      stats: { totalLikes, totalReposts, totalReplies, totalQuotes, postCount: posts.length },
+    });
+  } catch (err) {
+    logger.error({ err }, "Failed to fetch author posts");
+    res.status(500).json({ error: "Failed to fetch posts" });
+  }
+});
+
 router.get("/bluesky/profile", async (_req, res): Promise<void> => {
   const publisherDid = process.env.FEEDGEN_PUBLISHER_DID;
   if (!publisherDid) {
