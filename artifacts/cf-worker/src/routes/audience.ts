@@ -226,12 +226,7 @@ route.get("/bluesky/not-following-back", async (c) => {
         followedAt: null,
       }));
 
-    return c.json({
-      users: notFollowingBack,
-      nextFollowingCursor: followingResult.data.cursor ?? null,
-      nextFollowerCursor: followerResult.data.cursor ?? null,
-      hasMore: !!followingResult.data.cursor,
-    });
+    return c.json(notFollowingBack);
   } catch (err) {
     console.error("not-following-back failed:", err);
     return c.json({ error: "Failed to compute not-following-back list" }, 500);
@@ -265,7 +260,7 @@ route.get("/bluesky/search-users", async (c) => {
         followsCount: a.followsCount ?? 0,
       }));
 
-    return c.json(users);
+    return c.json({ users, cursor: result.data.cursor ?? null });
   } catch (err) {
     console.error("Failed to search users:", err);
     return c.json({ error: "Failed to search users" }, 500);
