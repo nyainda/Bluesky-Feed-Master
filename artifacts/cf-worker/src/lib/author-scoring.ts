@@ -6,6 +6,7 @@ import { computeAuthorScore } from "./scoring-formula";
 
 const FORMULA_VERSION = "v1";
 const RECALC_COOLDOWN_MS = 2 * 60 * 1000;
+const MAX_RECALC_ATTEMPTS = 20;
 
 export async function markAuthorDirty(env: Env, did: string): Promise<void> {
   const db = createDb(env.DB);
@@ -30,12 +31,12 @@ export async function markAuthorDirty(env: Env, did: string): Promise<void> {
     });
 }
 
-export async function runAuthorScoring(env: Env, batchSize = 200): Promise<void> {
+export async function runAuthorScoring(env: Env, batchSize = 50): Promise<void> {
   const db = createDb(env.DB);
   const nowIso = new Date().toISOString();
 
   const dirtyAuthors = await db
-    .select({ did: authorsTable.did })
+    .select({ did: authorsTable.did, recalcAttempts: authorsTable.recalcAttempts })
     .from(authorsTable)
     .where(and(eq(authorsTable.needsRecalc, true), lte(authorsTable.nextRecalcAt, nowIso)))
     .limit(batchSize);
@@ -45,8 +46,17 @@ export async function runAuthorScoring(env: Env, batchSize = 200): Promise<void>
     return;
   }
 
-  for (const { did } of dirtyAuthors) {
-    try {
+  const results = await Promise.allSettled(
+    dirtyAuthors.map(async ({ did, recalcAttempts }) => {
+      if (recalcAttempts >= MAX_RECALC_ATTEMPTS) {
+        await db
+          .update(authorsTable)
+          .set({ needsRecalc: false, updatedAt: nowIso })
+          .where(eq(authorsTable.did, did));
+        console.error("[author-scoring] Max retry attempts reached", { did, recalcAttempts });
+        return;
+      }
+
       const [aggregate] = await db
         .select({
           postCount: sql<number>`cast(count(*) as integer)`,
@@ -61,7 +71,7 @@ export async function runAuthorScoring(env: Env, batchSize = 200): Promise<void>
       const totalLikes = Number(aggregate?.totalLikes ?? 0);
       const totalReposts = Number(aggregate?.totalReposts ?? 0);
       const totalReplies = Number(aggregate?.totalReplies ?? 0);
-      const score = computeAuthorScore({ postCount, totalLikes, totalReposts, totalReplies });
+      const score = Math.round(computeAuthorScore({ postCount, totalLikes, totalReposts, totalReplies }));
 
       await db
         .insert(authorScoresTable)
@@ -86,7 +96,14 @@ export async function runAuthorScoring(env: Env, batchSize = 200): Promise<void>
         .where(eq(authorsTable.did, did));
 
       console.log("[author-scoring] author_score_updated", { did, score, postCount });
-    } catch (err) {
+    }),
+  );
+
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    if (result.status === "rejected") {
+      const did = dirtyAuthors[i]?.did;
+      if (!did) continue;
       const nextAttemptAt = new Date(Date.now() + RECALC_COOLDOWN_MS).toISOString();
       await db
         .update(authorsTable)
@@ -97,7 +114,7 @@ export async function runAuthorScoring(env: Env, batchSize = 200): Promise<void>
         })
         .where(eq(authorsTable.did, did));
 
-      console.error("[author-scoring] Failed for author", did, err);
+      console.error("[author-scoring] Failed for author", did, result.reason);
     }
   }
 }

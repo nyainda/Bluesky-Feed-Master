@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, uniqueIndex, index } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 export const feedsTable = sqliteTable("feeds", {
@@ -56,7 +56,6 @@ export const scheduledPostsTable = sqliteTable("scheduled_posts", {
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 });
 
-
 export const authorsTable = sqliteTable("authors", {
   did: text("did").primaryKey(),
   needsRecalc: integer("needs_recalc", { mode: "boolean" }).notNull().default(false),
@@ -78,22 +77,28 @@ export const authorScoresTable = sqliteTable("author_scores", {
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
 
-
-export const feedRankedPostsTable = sqliteTable("feed_ranked_posts", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  feedId: integer("feed_id").notNull().references(() => feedsTable.id, { onDelete: "cascade" }),
-  postUri: text("post_uri").notNull().references(() => indexedPostsTable.uri, { onDelete: "cascade" }),
-  rank: integer("rank").notNull(),
-  finalScore: real("final_score").notNull().default(0),
-  qualityScore: real("quality_score").notNull().default(0),
-  computedAt: text("computed_at").notNull().default(sql`(datetime('now'))`),
-});
+export const feedRankedPostsTable = sqliteTable(
+  "feed_ranked_posts",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    feedId: integer("feed_id").notNull().references(() => feedsTable.id, { onDelete: "cascade" }),
+    postUri: text("post_uri").notNull().references(() => indexedPostsTable.uri, { onDelete: "cascade" }),
+    rank: integer("rank").notNull(),
+    finalScore: real("final_score").notNull().default(0),
+    qualityScore: real("quality_score").notNull().default(0),
+    computedAt: text("computed_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => ({
+    feedPostUnique: uniqueIndex("feed_ranked_posts_feed_post_unique").on(table.feedId, table.postUri),
+    feedRankIdx: index("idx_feed_ranked_posts_feed_rank").on(table.feedId, table.rank),
+    postUriIdx: index("idx_feed_ranked_posts_post_uri").on(table.postUri),
+  }),
+);
 
 export type Feed = typeof feedsTable.$inferSelect;
 export type Keyword = typeof keywordsTable.$inferSelect;
 export type IndexedPost = typeof indexedPostsTable.$inferSelect;
 export type FollowerSnapshot = typeof followerSnapshotsTable.$inferSelect;
-
 export type Author = typeof authorsTable.$inferSelect;
 export type AuthorScore = typeof authorScoresTable.$inferSelect;
 export type FeedRankedPost = typeof feedRankedPostsTable.$inferSelect;

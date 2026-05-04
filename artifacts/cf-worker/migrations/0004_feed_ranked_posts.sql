@@ -10,3 +10,5 @@ CREATE TABLE IF NOT EXISTS feed_ranked_posts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_feed_ranked_posts_feed_rank ON feed_ranked_posts(feed_id, rank);
+
+CREATE INDEX IF NOT EXISTS idx_feed_ranked_posts_post_uri ON feed_ranked_posts(post_uri);

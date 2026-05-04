@@ -76,6 +76,10 @@ export default {
   fetch: app.fetch,
 
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(Promise.all([runIndexer(env), runScheduler(env), runAuthorScoring(env), precomputeFeedRankings(env)]));
+    ctx.waitUntil((async () => {
+      await Promise.all([runIndexer(env), runScheduler(env)]);
+      await runAuthorScoring(env);
+      await precomputeFeedRankings(env);
+    })());
   },
 };

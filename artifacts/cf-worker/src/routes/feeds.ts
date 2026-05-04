@@ -154,9 +154,9 @@ route.get("/feeds/:id/posts", async (c) => {
     conditions.push(lt(indexedPostsTable.indexedAt, ts));
   }
 
-  const mode = c.req.query("mode") || "ranked";
+  const mode = c.req.query("mode") || "recent";
 
-  const posts = mode === "ranked"
+  let posts = mode === "ranked"
     ? await db
         .select({ post: indexedPostsTable, rank: feedRankedPostsTable.rank, finalScore: feedRankedPostsTable.finalScore, qualityScore: feedRankedPostsTable.qualityScore })
         .from(feedRankedPostsTable)
@@ -170,6 +170,15 @@ route.get("/feeds/:id/posts", async (c) => {
         .where(and(...conditions))
         .orderBy(desc(indexedPostsTable.indexedAt))
         .limit(limit);
+
+  if (mode === "ranked" && posts.length === 0) {
+    posts = await db
+      .select()
+      .from(indexedPostsTable)
+      .where(and(...conditions))
+      .orderBy(desc(indexedPostsTable.indexedAt))
+      .limit(limit);
+  }
 
   const [{ total }] = await db
     .select({ total: count() })
