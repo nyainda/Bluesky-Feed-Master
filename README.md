@@ -1,7 +1,6 @@
 # FeedForge (Bluesky Feed Master)
 
 FeedForge is a production-focused Bluesky feed platform built as a pnpm monorepo.
-
 It combines:
 - **Data ingestion** from Bluesky streams/search
 - **Author scoring** with async recalculation
@@ -27,11 +26,9 @@ Ranked feed results are precomputed and served through API routes, avoiding heav
 The frontend and API include feed management, post composer, scheduled posts, analytics, audience insights, and notifications.
 
 ## Current App Version
-
 **v1.2.0**
 
 ## Repository Structure
-
 - `artifacts/api-server` — Express API server
 - `artifacts/cf-worker` — Cloudflare Worker + D1 runtime jobs
 - `artifacts/bluesky-feeds` — React/Vite frontend
@@ -39,7 +36,6 @@ The frontend and API include feed management, post composer, scheduled posts, an
 - `docs` — architecture, contributing, release/runbook docs
 
 ## Local Development
-
 ```bash
 pnpm install
 pnpm run typecheck
@@ -47,7 +43,6 @@ pnpm run build
 ```
 
 ## Deploy (Cloudflare Worker)
-
 ```bash
 cd artifacts/cf-worker
 export CLOUDFLARE_API_TOKEN="<token>"
@@ -56,8 +51,12 @@ pnpm run deploy
 ```
 
 ## Quality Gates
-
 ```bash
 pnpm --filter @workspace/scripts run test:author-scoring
 pnpm --filter @workspace/scripts run verify:release
 ```
+
+## Notes
+If your GitHub repository **About** section still shows old Replit text, that value is managed in GitHub UI (not from code files). Update it from:
+
+**GitHub Repo → About (gear icon) → Description / Website**
