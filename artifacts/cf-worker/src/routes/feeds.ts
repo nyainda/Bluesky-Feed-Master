@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { eq, like, desc, and, lt, count, sql } from "drizzle-orm";
-import { createDb, feedsTable, keywordsTable, indexedPostsTable } from "../db";
+import { createDb, feedsTable, keywordsTable, indexedPostsTable, feedRankedPostsTable } from "../db";
 import type { Env } from "../index";
 
 const route = new Hono<{ Bindings: Env }>();
@@ -154,12 +154,31 @@ route.get("/feeds/:id/posts", async (c) => {
     conditions.push(lt(indexedPostsTable.indexedAt, ts));
   }
 
-  const posts = await db
-    .select()
-    .from(indexedPostsTable)
-    .where(and(...conditions))
-    .orderBy(desc(indexedPostsTable.indexedAt))
-    .limit(limit);
+  const mode = c.req.query("mode") || "recent";
+
+  let posts = mode === "ranked"
+    ? await db
+        .select({ post: indexedPostsTable, rank: feedRankedPostsTable.rank, finalScore: feedRankedPostsTable.finalScore, qualityScore: feedRankedPostsTable.qualityScore })
+        .from(feedRankedPostsTable)
+        .innerJoin(indexedPostsTable, eq(feedRankedPostsTable.postUri, indexedPostsTable.uri))
+        .where(eq(feedRankedPostsTable.feedId, feed.id))
+        .orderBy(feedRankedPostsTable.rank)
+        .limit(limit)
+    : await db
+        .select()
+        .from(indexedPostsTable)
+        .where(and(...conditions))
+        .orderBy(desc(indexedPostsTable.indexedAt))
+        .limit(limit);
+
+  if (mode === "ranked" && posts.length === 0) {
+    posts = await db
+      .select()
+      .from(indexedPostsTable)
+      .where(and(...conditions))
+      .orderBy(desc(indexedPostsTable.indexedAt))
+      .limit(limit);
+  }
 
   const [{ total }] = await db
     .select({ total: count() })
@@ -167,12 +186,12 @@ route.get("/feeds/:id/posts", async (c) => {
     .where(like(indexedPostsTable.algoTags, `%${feed.recordName}%`));
 
   let nextCursor: string | undefined;
-  if (posts.length >= limit) {
-    const last = posts[posts.length - 1];
+  if (mode !== "ranked" && posts.length >= limit) {
+    const last = posts[posts.length - 1] as typeof indexedPostsTable.$inferSelect;
     nextCursor = `${last.indexedAt}::${last.cid}`;
   }
 
-  return c.json({ posts, cursor: nextCursor, total });
+  return c.json({ posts, cursor: nextCursor, total, mode });
 });
 
 route.post("/feeds/:id/publish", async (c) => {

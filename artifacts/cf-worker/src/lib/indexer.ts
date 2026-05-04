@@ -1,5 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { createDb, feedsTable, keywordsTable, indexedPostsTable } from "../db";
+import { markAuthorDirty } from "./author-scoring";
 import type { Env } from "../index";
 
 /**
@@ -79,6 +80,7 @@ export async function runIndexer(env: Env): Promise<void> {
                   engagementSyncedAt: new Date().toISOString(),
                 },
               });
+            await markAuthorDirty(env, post.author.did);
             totalIndexed++;
           } catch (insertErr) {
             console.error(`[indexer] Insert failed for ${post.uri}:`, insertErr);
