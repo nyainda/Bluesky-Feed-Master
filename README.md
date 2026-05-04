@@ -26,7 +26,7 @@ Ranked feed results are precomputed and served through API routes, avoiding heav
 ### 5) Provide operational and growth tooling
 The frontend and API include feed management, post composer, scheduled posts, analytics, audience insights, and notifications.
 
-## Current Version
+## Current App Version
 
 **v1.2.0**
 
@@ -46,7 +46,7 @@ pnpm run typecheck
 pnpm run build
 ```
 
-## Cloudflare Deploy (Worker)
+## Deploy (Cloudflare Worker)
 
 ```bash
 cd artifacts/cf-worker
