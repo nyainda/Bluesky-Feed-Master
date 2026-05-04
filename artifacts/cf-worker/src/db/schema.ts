@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 export const feedsTable = sqliteTable("feeds", {
@@ -56,7 +56,44 @@ export const scheduledPostsTable = sqliteTable("scheduled_posts", {
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 });
 
+
+export const authorsTable = sqliteTable("authors", {
+  did: text("did").primaryKey(),
+  needsRecalc: integer("needs_recalc", { mode: "boolean" }).notNull().default(false),
+  recalcAttempts: integer("recalc_attempts").notNull().default(0),
+  nextRecalcAt: text("next_recalc_at").notNull().default(sql`(datetime('now'))`),
+  lastScoredAt: text("last_scored_at"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
+export const authorScoresTable = sqliteTable("author_scores", {
+  did: text("did").primaryKey().references(() => authorsTable.did, { onDelete: "cascade" }),
+  score: integer("score").notNull().default(0),
+  postCount: integer("post_count").notNull().default(0),
+  totalLikes: integer("total_likes").notNull().default(0),
+  totalReposts: integer("total_reposts").notNull().default(0),
+  totalReplies: integer("total_replies").notNull().default(0),
+  formulaVersion: text("formula_version").notNull().default("v1"),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
+
+export const feedRankedPostsTable = sqliteTable("feed_ranked_posts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  feedId: integer("feed_id").notNull().references(() => feedsTable.id, { onDelete: "cascade" }),
+  postUri: text("post_uri").notNull().references(() => indexedPostsTable.uri, { onDelete: "cascade" }),
+  rank: integer("rank").notNull(),
+  finalScore: real("final_score").notNull().default(0),
+  qualityScore: real("quality_score").notNull().default(0),
+  computedAt: text("computed_at").notNull().default(sql`(datetime('now'))`),
+});
+
 export type Feed = typeof feedsTable.$inferSelect;
 export type Keyword = typeof keywordsTable.$inferSelect;
 export type IndexedPost = typeof indexedPostsTable.$inferSelect;
 export type FollowerSnapshot = typeof followerSnapshotsTable.$inferSelect;
+
+export type Author = typeof authorsTable.$inferSelect;
+export type AuthorScore = typeof authorScoresTable.$inferSelect;
+export type FeedRankedPost = typeof feedRankedPostsTable.$inferSelect;

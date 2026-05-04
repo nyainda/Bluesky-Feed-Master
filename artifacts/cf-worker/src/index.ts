@@ -10,6 +10,8 @@ import notificationsRoute from "./routes/notifications";
 import xrpcRoute from "./routes/xrpc";
 import { runIndexer } from "./lib/indexer";
 import { runScheduler } from "./lib/scheduler";
+import { runAuthorScoring } from "./lib/author-scoring";
+import { precomputeFeedRankings } from "./lib/feed-ranking";
 
 export interface Env {
   DB: D1Database;
@@ -74,6 +76,6 @@ export default {
   fetch: app.fetch,
 
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(Promise.all([runIndexer(env), runScheduler(env)]));
+    ctx.waitUntil(Promise.all([runIndexer(env), runScheduler(env), runAuthorScoring(env), precomputeFeedRankings(env)]));
   },
 };
