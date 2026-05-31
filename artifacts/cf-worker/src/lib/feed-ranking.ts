@@ -10,6 +10,10 @@ const RANK_WEIGHTS = {
   recency: 0.1,
 } as const;
 
+function safeFinite(n: number, fallback = 0): number {
+  return Number.isFinite(n) ? n : fallback;
+}
+
 export async function precomputeFeedRankings(env: Env, candidateLimit = 200): Promise<void> {
   const db = createDb(env.DB);
   const feeds = await db.select().from(feedsTable).where(eq(feedsTable.isActive, true));
@@ -28,24 +32,52 @@ export async function precomputeFeedRankings(env: Env, candidateLimit = 200): Pr
 
     const scored = candidates
       .map(({ post, authorScore }) => {
-        const ageMinutes = (Date.now() - new Date(post.indexedAt).getTime()) / 60000;
-        const qualityScore = computeQualityScore({ likes: post.likes, reposts: post.reposts, replies: post.replies, quotes: post.quotes, postAgeMinutes: ageMinutes, text: post.text });
-        const recency = computeRecencyDecay(ageMinutes);
-        const engagementVelocity = (post.likes + post.reposts * 2 + post.replies * 3 + post.quotes * 2) / Math.max(1, ageMinutes);
-        const normalizedAuthor = Math.min(1, (authorScore ?? 0) / 1000);
-        const finalScore =
+        const ageMs = Date.now() - new Date(post.indexedAt).getTime();
+        const ageMinutes = Math.max(1, ageMs / 60000);
+        const ageHours = ageMinutes / 60;
+
+        const qualityScore = safeFinite(
+          computeQualityScore({
+            likes: post.likes,
+            reposts: post.reposts,
+            replies: post.replies,
+            quotes: post.quotes,
+            postAgeMinutes: ageMinutes,
+            text: post.text,
+          }),
+        );
+
+        // Exponential recency decay: half-life of 48 hours
+        const recency = safeFinite(Math.exp(-ageHours / 48));
+
+        const rawVelocity =
+          (post.likes + post.reposts * 2 + post.replies * 3 + post.quotes * 2) / ageMinutes;
+        const engagementVelocity = safeFinite(Math.tanh(rawVelocity / 5));
+
+        const normalizedAuthor = safeFinite(Math.min(1, (authorScore ?? 0) / 1000));
+
+        const finalScore = safeFinite(
           RANK_WEIGHTS.author * normalizedAuthor +
-          RANK_WEIGHTS.engagementVelocity * Math.tanh(engagementVelocity / 5) +
-          RANK_WEIGHTS.quality * qualityScore +
-          RANK_WEIGHTS.recency * recency;
+            RANK_WEIGHTS.engagementVelocity * engagementVelocity +
+            RANK_WEIGHTS.quality * qualityScore +
+            RANK_WEIGHTS.recency * recency,
+        );
+
         return { post, finalScore, qualityScore };
       })
-      .sort((a, b) => b.finalScore - a.finalScore)
+      // Primary sort: finalScore desc; tiebreaker: indexedAt desc (most recent wins)
+      .sort((a, b) => {
+        const diff = b.finalScore - a.finalScore;
+        if (Math.abs(diff) > 1e-10) return diff;
+        return new Date(b.post.indexedAt).getTime() - new Date(a.post.indexedAt).getTime();
+      })
       .map((row, i) => ({ ...row, rank: i + 1 }));
 
     await db.delete(feedRankedPostsTable).where(eq(feedRankedPostsTable.feedId, feed.id));
 
     for (const row of scored) {
+      // Skip rows with non-finite scores to prevent DB corruption
+      if (!Number.isFinite(row.finalScore)) continue;
       await db.insert(feedRankedPostsTable).values({
         feedId: feed.id,
         postUri: row.post.uri,
@@ -55,5 +87,7 @@ export async function precomputeFeedRankings(env: Env, candidateLimit = 200): Pr
         computedAt: new Date().toISOString(),
       });
     }
+
+    console.log(`[feed-ranking] Feed "${feed.recordName}" — ${scored.length} ranked posts written.`);
   }
 }

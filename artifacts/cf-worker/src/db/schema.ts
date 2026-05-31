@@ -95,6 +95,12 @@ export const feedRankedPostsTable = sqliteTable(
   }),
 );
 
+export const cronSettingsTable = sqliteTable("cron_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull().default(""),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
 export type Feed = typeof feedsTable.$inferSelect;
 export type Keyword = typeof keywordsTable.$inferSelect;
 export type IndexedPost = typeof indexedPostsTable.$inferSelect;
@@ -102,3 +108,4 @@ export type FollowerSnapshot = typeof followerSnapshotsTable.$inferSelect;
 export type Author = typeof authorsTable.$inferSelect;
 export type AuthorScore = typeof authorScoresTable.$inferSelect;
 export type FeedRankedPost = typeof feedRankedPostsTable.$inferSelect;
+export type CronSetting = typeof cronSettingsTable.$inferSelect;

@@ -15,6 +15,7 @@ import {
   Users, UserMinus, UserPlus, RefreshCw, ExternalLink,
   ChevronLeft, ChevronRight, Search, CheckSquare, Square,
   TrendingUp, Heart, AlertTriangle, Filter, X, ArrowUpRight, BarChart2, Camera,
+  Clock, Shield, Settings2, ToggleLeft, ToggleRight,
 } from "lucide-react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -696,6 +697,173 @@ function FollowerGrowthTab() {
   );
 }
 
+// ─── Auto-Unfollow Card ──────────────────────────────────────────────────────
+
+type AutoUnfollowSettings = {
+  enabled: boolean;
+  intervalDays: number;
+  cap: number;
+  lastRun: string | null;
+};
+
+const INTERVAL_OPTIONS = [
+  { label: "Daily", days: 1 },
+  { label: "Weekly", days: 7 },
+  { label: "Bi-weekly", days: 14 },
+  { label: "Monthly", days: 30 },
+];
+
+function AutoUnfollowCard() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const { data, isLoading } = useQuery<{ ok: boolean; settings: AutoUnfollowSettings }>({
+    queryKey: ["cron-settings"],
+    queryFn: () => customFetch("/api/cron-settings"),
+    staleTime: 30_000,
+  });
+
+  const settings = data?.settings;
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [intervalDays, setIntervalDays] = useState<number | null>(null);
+  const [cap, setCap] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const displayEnabled = enabled ?? settings?.enabled ?? false;
+  const displayInterval = intervalDays ?? settings?.intervalDays ?? 7;
+  const displayCap = cap ?? settings?.cap ?? 50;
+  const isDirty =
+    enabled !== null ||
+    intervalDays !== null ||
+    cap !== null;
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await customFetch("/api/cron-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: displayEnabled, intervalDays: displayInterval, cap: displayCap }),
+      });
+      setEnabled(null);
+      setIntervalDays(null);
+      setCap(null);
+      qc.invalidateQueries({ queryKey: ["cron-settings"] });
+      toast({ title: "Auto-unfollow settings saved" });
+    } catch {
+      toast({ title: "Failed to save settings", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.1 }}
+      className="bg-card border border-card-border rounded-xl mb-5 overflow-hidden"
+    >
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-border/50 flex items-center justify-between bg-muted/10">
+        <div className="flex items-center gap-2">
+          <Shield className="w-4 h-4 text-primary" />
+          <span className="text-sm font-semibold text-foreground">Auto-Unfollow</span>
+          <span className={cn(
+            "text-[10px] px-1.5 py-0.5 rounded-full font-medium tabular-nums",
+            displayEnabled ? "bg-emerald-500/10 text-emerald-500" : "bg-muted text-muted-foreground",
+          )}>
+            {displayEnabled ? "ON" : "OFF"}
+          </span>
+        </div>
+        <button
+          onClick={() => setEnabled(!displayEnabled)}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+          title={displayEnabled ? "Disable auto-unfollow" : "Enable auto-unfollow"}
+        >
+          {displayEnabled
+            ? <ToggleRight className="w-5 h-5 text-emerald-500" />
+            : <ToggleLeft className="w-5 h-5" />
+          }
+        </button>
+      </div>
+
+      {/* Body */}
+      <div className="px-4 py-4">
+        {isLoading ? (
+          <div className="h-16 animate-pulse bg-muted rounded-lg" />
+        ) : (
+          <div className="flex flex-wrap items-end gap-5">
+            {/* Interval */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">Run every</label>
+              <div className="flex gap-1.5 flex-wrap">
+                {INTERVAL_OPTIONS.map(opt => (
+                  <button
+                    key={opt.days}
+                    onClick={() => setIntervalDays(opt.days)}
+                    className={cn(
+                      "text-xs px-3 py-1.5 rounded-lg border transition-colors",
+                      displayInterval === opt.days
+                        ? "bg-primary/10 border-primary/30 text-primary font-medium"
+                        : "border-border text-muted-foreground hover:bg-muted/50",
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Cap */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                Max unfollows per run
+              </label>
+              <div className="flex items-center gap-2.5">
+                <input
+                  type="range"
+                  min={1}
+                  max={200}
+                  step={5}
+                  value={displayCap}
+                  onChange={e => setCap(Number(e.target.value))}
+                  className="w-28 accent-primary"
+                />
+                <span className="text-xs font-mono text-foreground w-8 tabular-nums">{displayCap}</span>
+              </div>
+            </div>
+
+            {/* Last run + save */}
+            <div className="ml-auto flex flex-col items-end gap-2">
+              {settings?.lastRun && (
+                <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                  <Clock className="w-3 h-3" />
+                  Last run: {format(new Date(settings.lastRun), "MMM d, h:mm a")}
+                </div>
+              )}
+              <Button
+                size="sm"
+                onClick={handleSave}
+                disabled={saving || (!isDirty && !settings)}
+                className={cn("h-8 text-xs gap-1.5", isDirty && "ring-1 ring-primary/40")}
+              >
+                {saving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Settings2 className="w-3 h-3" />}
+                {saving ? "Saving…" : "Save Settings"}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <p className="text-[11px] text-muted-foreground/60 mt-3 leading-relaxed">
+          Automatically unfollows accounts that don't follow you back. Runs during the indexing cron once the interval has elapsed.
+          Non-followers-back are processed oldest-first, up to the per-run cap.
+        </p>
+      </div>
+    </motion.div>
+  );
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function Audience() {
@@ -835,6 +1003,9 @@ export default function Audience() {
           <StatBadge label="Not Following Back" value={nfbUsers.length > 0 ? nfbUsers.length : "—"} />
         </motion.div>
       )}
+
+      {/* Auto-Unfollow Card */}
+      <AutoUnfollowCard />
 
       {/* Tabs */}
       <div className="flex border-b border-border mb-0 overflow-x-auto scrollbar-thin -mx-4 px-4 md:mx-0 md:px-0">

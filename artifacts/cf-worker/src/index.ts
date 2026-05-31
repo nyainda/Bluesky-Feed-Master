@@ -8,10 +8,12 @@ import audienceRoute from "./routes/audience";
 import composeRoute from "./routes/compose";
 import notificationsRoute from "./routes/notifications";
 import xrpcRoute from "./routes/xrpc";
+import cronSettingsRoute from "./routes/cron-settings";
 import { runIndexer, runCleanup } from "./lib/indexer";
 import { runScheduler } from "./lib/scheduler";
 import { runAuthorScoring } from "./lib/author-scoring";
 import { precomputeFeedRankings } from "./lib/feed-ranking";
+import { runAutoUnfollow } from "./lib/auto-unfollow";
 
 export interface Env {
   DB: D1Database;
@@ -46,6 +48,7 @@ app.post("/api/admin/migrate", async (c) => {
       await db.prepare("DROP TABLE scheduled_posts").run();
     }
     await db.prepare("CREATE TABLE IF NOT EXISTS scheduled_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, thread_parts TEXT, is_thread INTEGER NOT NULL DEFAULT 0, scheduled_at TEXT NOT NULL, sent_at TEXT, status TEXT NOT NULL DEFAULT 'pending', error_message TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))").run();
+    await db.prepare("CREATE TABLE IF NOT EXISTS cron_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT (datetime('now')))").run();
     return c.json({ ok: true, message: "Migration applied successfully" });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -70,6 +73,7 @@ app.route("/api", analyticsRoute);
 app.route("/api", audienceRoute);
 app.route("/api", composeRoute);
 app.route("/api", notificationsRoute);
+app.route("/api", cronSettingsRoute);
 app.route("/", xrpcRoute);
 
 export default {
@@ -82,10 +86,11 @@ export default {
         await runCleanup(env);
         return;
       }
-      // Every 3 minutes — index + score + rank
+      // Every 3 minutes — index + score + rank + auto-unfollow (gated by its own interval)
       await Promise.all([runIndexer(env), runScheduler(env)]);
       await runAuthorScoring(env);
       await precomputeFeedRankings(env);
+      await runAutoUnfollow(env);
     })());
   },
 };
