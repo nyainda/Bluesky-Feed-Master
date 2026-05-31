@@ -2,10 +2,12 @@ import { motion } from "framer-motion";
 import {
   Copy, ExternalLink, CheckCircle, XCircle, AlertTriangle,
   Server, Globe, Zap, Database, Cloud, ChevronRight,
+  Link2, Eye, EyeOff, Loader2,
 } from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useGetFirehoseStatus, customFetch } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 
@@ -137,6 +139,148 @@ function Cmd({ children }: { children: string }) {
   );
 }
 
+function QuickConnect() {
+  const [handle, setHandle] = useState("");
+  const [appPassword, setAppPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [status, setStatus] = useState<null | { ok: boolean; did?: string; error?: string }>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function testConnection() {
+    if (!handle || !appPassword) return;
+    setLoading(true);
+    setStatus(null);
+    try {
+      const res = await customFetch<{ ok: boolean; did?: string; handle?: string; error?: string }>(
+        "/api/admin/test-connection",
+        { method: "POST", body: JSON.stringify({ handle: handle.replace(/^@/, ""), appPassword }) },
+      );
+      setStatus(res);
+    } catch (err) {
+      setStatus({ ok: false, error: err instanceof Error ? err.message : "Connection failed" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-card border border-card-border rounded-xl overflow-hidden mb-4"
+    >
+      <div className="flex items-center gap-2.5 px-5 md:px-6 py-4 border-b border-border">
+        <div className="w-7 h-7 rounded-lg bg-primary/8 border border-primary/12 flex items-center justify-center flex-shrink-0">
+          <Link2 className="w-3.5 h-3.5 text-primary" />
+        </div>
+        <h2 className="text-sm font-semibold text-foreground">Bluesky Connection</h2>
+        {status?.ok && (
+          <span className="ml-auto flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            Connected
+          </span>
+        )}
+      </div>
+
+      <div className="px-5 md:px-6 py-5 space-y-4">
+        <p className="text-xs text-muted-foreground">
+          Enter your Bluesky credentials to test the connection. Use an{" "}
+          <a
+            href="https://bsky.app/settings/app-passwords"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline"
+          >
+            App Password
+          </a>
+          {" "}— never your real password.
+        </p>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="text-xs font-medium text-foreground mb-1.5 block">Bluesky Handle</label>
+            <Input
+              value={handle}
+              onChange={(e) => { setHandle(e.target.value); setStatus(null); }}
+              placeholder="you.bsky.social"
+              className="text-sm h-9"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-foreground mb-1.5 block">App Password</label>
+            <div className="relative">
+              <Input
+                type={showPassword ? "text" : "password"}
+                value={appPassword}
+                onChange={(e) => { setAppPassword(e.target.value); setStatus(null); }}
+                placeholder="xxxx-xxxx-xxxx-xxxx"
+                className="text-sm h-9 pr-9 font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Button
+            size="sm"
+            onClick={testConnection}
+            disabled={loading || !handle || !appPassword}
+            className="gap-1.5"
+          >
+            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
+            {loading ? "Testing…" : "Test Connection"}
+          </Button>
+          {status && (
+            <motion.div
+              initial={{ opacity: 0, x: -4 }}
+              animate={{ opacity: 1, x: 0 }}
+              className={cn(
+                "flex items-center gap-1.5 text-xs font-medium",
+                status.ok ? "text-emerald-600" : "text-red-500",
+              )}
+            >
+              {status.ok ? (
+                <><CheckCircle className="w-3.5 h-3.5" /> Connected as {status.did}</>
+              ) : (
+                <><XCircle className="w-3.5 h-3.5" /> {status.error}</>
+              )}
+            </motion.div>
+          )}
+        </div>
+
+        {status?.ok && (
+          <motion.div
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-muted/50 rounded-xl border border-border p-4 space-y-2.5"
+          >
+            <p className="text-xs font-semibold text-foreground">Set these as Cloudflare Worker secrets:</p>
+            <div className="space-y-1.5">
+              {[
+                { label: "BLUESKY_HANDLE", value: handle.replace(/^@/, "") },
+                { label: "BLUESKY_APP_PASSWORD", value: appPassword },
+              ].map(({ label }) => {
+                const cmd = `wrangler secret put ${label}`;
+                return <Cmd key={label}>{cmd}</Cmd>;
+              })}
+            </div>
+            <p className="text-[11px] text-muted-foreground/60">
+              Run each command from <code className="bg-muted px-1 rounded">artifacts/cf-worker/</code>, then paste the value when prompted.
+            </p>
+          </motion.div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
 export default function Settings() {
   const { data: firehose } = useGetFirehoseStatus({ query: { queryKey: ["firehose-settings"] } });
   const { data: configStatus } = useQuery<Record<string, boolean>>({
@@ -193,6 +337,9 @@ export default function Settings() {
         <h1 className="text-xl md:text-2xl font-bold text-foreground tracking-tight">Settings</h1>
         <p className="text-muted-foreground text-sm mt-0.5">Configuration, XRPC endpoints, and deployment guides</p>
       </motion.div>
+
+      {/* Quick Connect */}
+      <QuickConnect />
 
       {/* Environment Variables */}
       <Section title="Environment Variables" icon={Database} delay={0}>

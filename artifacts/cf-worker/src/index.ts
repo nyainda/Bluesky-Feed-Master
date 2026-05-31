@@ -8,7 +8,7 @@ import audienceRoute from "./routes/audience";
 import composeRoute from "./routes/compose";
 import notificationsRoute from "./routes/notifications";
 import xrpcRoute from "./routes/xrpc";
-import { runIndexer } from "./lib/indexer";
+import { runIndexer, runCleanup } from "./lib/indexer";
 import { runScheduler } from "./lib/scheduler";
 import { runAuthorScoring } from "./lib/author-scoring";
 import { precomputeFeedRankings } from "./lib/feed-ranking";
@@ -75,8 +75,14 @@ app.route("/", xrpcRoute);
 export default {
   fetch: app.fetch,
 
-  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil((async () => {
+      // 2am daily cron — cleanup only
+      if (event.cron === "0 2 * * *") {
+        await runCleanup(env);
+        return;
+      }
+      // Every 3 minutes — index + score + rank
       await Promise.all([runIndexer(env), runScheduler(env)]);
       await runAuthorScoring(env);
       await precomputeFeedRankings(env);

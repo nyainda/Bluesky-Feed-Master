@@ -22,10 +22,15 @@ export async function runIndexer(env: Env): Promise<void> {
   }
 
   const { AtpAgent } = await import("@atproto/api");
-  const agent = new AtpAgent({ service: "https://public.api.bsky.app" });
+  const agent = new AtpAgent({ service: "https://bsky.social" });
+  await agent.login({
+    identifier: env.BLUESKY_HANDLE,
+    password: env.BLUESKY_APP_PASSWORD,
+  });
 
   let totalIndexed = 0;
   let totalSkipped = 0;
+  let totalKeywords = 0;
 
   for (const feed of feeds) {
     const keywords = await db
@@ -34,20 +39,36 @@ export async function runIndexer(env: Env): Promise<void> {
       .where(eq(keywordsTable.feedId, feed.id));
 
     if (keywords.length === 0) continue;
+    totalKeywords += keywords.length;
 
     for (const kw of keywords) {
       try {
-        const result = await agent.app.bsky.feed.searchPosts({
-          q: kw.keyword,
-          limit: 25,
-          sort: "latest",
-        });
+        // Search both plain text and hashtag variations for better coverage
+        const [plainResult, hashtagResult] = await Promise.allSettled([
+          agent.app.bsky.feed.searchPosts({
+            q: kw.keyword,
+            limit: 25,
+            sort: "latest",
+          }),
+          agent.app.bsky.feed.searchPosts({
+            q: `#${kw.keyword}`,
+            limit: 25,
+            sort: "latest",
+          }),
+        ]);
 
-        for (const post of result.data.posts) {
+        const posts = [
+          ...(plainResult.status === "fulfilled" ? plainResult.value.data.posts : []),
+          ...(hashtagResult.status === "fulfilled" ? hashtagResult.value.data.posts : []),
+        ];
+
+        // Deduplicate by URI
+        const uniquePosts = [...new Map(posts.map((p) => [p.uri, p])).values()];
+
+        const algoTag = feed.recordName;
+
+        for (const post of uniquePosts) {
           const postText = (post.record as { text?: string }).text ?? "";
-
-          // Build the algo_tags — append this feed's record name if not already present
-          const algoTag = feed.recordName;
 
           try {
             await db
@@ -67,7 +88,6 @@ export async function runIndexer(env: Env): Promise<void> {
               .onConflictDoUpdate({
                 target: indexedPostsTable.uri,
                 set: {
-                  // Append feed tag if the post matches multiple feeds
                   algoTags: sql`CASE
                     WHEN algo_tags LIKE ${"%" + algoTag + "%"}
                     THEN algo_tags
@@ -95,6 +115,17 @@ export async function runIndexer(env: Env): Promise<void> {
 
   console.log(
     `[indexer] Done — ${totalIndexed} posts indexed, ${totalSkipped} skipped. ` +
-      `Feeds: ${feeds.length}, Keywords total: ${feeds.reduce(() => 0, 0)}`,
+      `${feeds.length} feeds processed, ${totalKeywords} keywords total.`,
   );
+}
+
+/**
+ * Daily cleanup — deletes posts older than 7 days to prevent D1 filling up.
+ */
+export async function runCleanup(env: Env): Promise<void> {
+  const db = createDb(env.DB);
+  const result = await db.run(
+    sql`DELETE FROM indexed_posts WHERE indexed_at < datetime('now', '-7 days')`,
+  );
+  console.log(`[cleanup] Deleted old posts. Changes: ${result.meta?.changes ?? 0}`);
 }

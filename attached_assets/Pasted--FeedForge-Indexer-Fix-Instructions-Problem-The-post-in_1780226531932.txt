@@ -1,0 +1,163 @@
+# FeedForge — Indexer Fix Instructions
+
+## Problem
+The post indexer cron runs every 3 minutes and reports SUCCESS but indexes 0 posts.
+
+## Root Cause
+In `runIndexer()`, the Bluesky agent uses the **public API endpoint** which does NOT support `searchPosts`. The call fails silently, errors are swallowed, and nothing is written to D1.
+
+```typescript
+// ❌ WRONG — public API does not support searchPosts
+const agent = new AtpAgent({ service: "https://public.api.bsky.app" });
+```
+
+## Fix
+
+### Step 1 — Update AtpAgent in `runIndexer()`
+
+Find the file containing `runIndexer()` (likely `src/indexer.ts` or similar).
+
+Replace:
+```typescript
+const { AtpAgent } = await import("@atproto/api");
+const agent = new AtpAgent({ service: "https://public.api.bsky.app" });
+```
+
+With:
+```typescript
+const { AtpAgent } = await import("@atproto/api");
+const agent = new AtpAgent({ service: "https://bsky.social" });
+await agent.login({
+  identifier: env.BLUESKY_HANDLE,
+  password: env.BLUESKY_APP_PASSWORD,
+});
+```
+
+### Step 2 — Improve keyword search coverage
+
+Currently only exact keyword matches are searched. Improve to catch posts with and without hashtags.
+
+Find the searchPosts call:
+```typescript
+const result = await agent.app.bsky.feed.searchPosts({
+  q: kw.keyword,
+  limit: 25,
+  sort: "latest",
+});
+```
+
+Replace with:
+```typescript
+// Search both plain text and hashtag variations
+const [plainResult, hashtagResult] = await Promise.allSettled([
+  agent.app.bsky.feed.searchPosts({
+    q: kw.keyword,
+    limit: 25,
+    sort: "latest",
+  }),
+  agent.app.bsky.feed.searchPosts({
+    q: `#${kw.keyword}`,
+    limit: 25,
+    sort: "latest",
+  }),
+]);
+
+const posts = [
+  ...(plainResult.status === "fulfilled" ? plainResult.value.data.posts : []),
+  ...(hashtagResult.status === "fulfilled" ? hashtagResult.value.data.posts : []),
+];
+
+// Deduplicate by URI
+const uniquePosts = [...new Map(posts.map(p => [p.uri, p])).values()];
+```
+
+Then replace `result.data.posts` with `uniquePosts` in the insert loop.
+
+### Step 3 — Add cleanup cron to prevent D1 filling up
+
+Add a second cron handler to delete posts older than 7 days.
+
+In `wrangler.toml`, add:
+```toml
+[triggers]
+crons = ["*/3 * * * *", "0 2 * * *"]
+```
+
+In your scheduled handler, add cleanup logic:
+```typescript
+// Daily cleanup at 2am — deletes posts older than 7 days
+await db.run(
+  sql`DELETE FROM indexed_posts WHERE indexed_at < datetime('now', '-7 days')`
+);
+```
+
+### Step 4 — Fix broken log line
+
+In `runIndexer()`, the final log has a broken reduce:
+```typescript
+// ❌ WRONG — always logs 0
+`Keywords total: ${feeds.reduce(() => 0, 0)}`
+
+// ✅ FIX
+`Keywords total: ${feeds.length} feeds processed`
+```
+
+---
+
+## Environment Variables Required
+
+Make sure these secrets are set in Cloudflare Workers:
+
+```bash
+wrangler secret put BLUESKY_HANDLE
+# Value: bruceoyugi.bsky.social
+
+wrangler secret put BLUESKY_APP_PASSWORD  
+# Value: your app password from bsky.social → Settings → App Passwords
+```
+
+> ⚠️ Use an App Password NOT your real Bluesky password.
+> Create one at: bsky.social → Settings → Privacy and Security → App Passwords
+
+---
+
+## Deploy
+
+```bash
+wrangler deploy
+```
+
+---
+
+## Verify Fix
+
+After deploying, wait 3 minutes for the next cron run, then check:
+
+```bash
+# Should return rows now
+wrangler d1 execute feedforge-db --remote \
+  --command "SELECT COUNT(*) FROM indexed_posts;"
+
+# Check feeds are there
+wrangler d1 execute feedforge-db --remote \
+  --command "SELECT * FROM feeds;"
+```
+
+Dashboard should show:
+```
+FIREHOSE STATUS: Connected (or Cron Active)
+SESSION INDEXED: > 0 ✅
+```
+
+---
+
+## Summary of Changes
+
+| File | Change |
+|------|--------|
+| `src/indexer.ts` | Fix AtpAgent endpoint + add login() |
+| `src/indexer.ts` | Improve keyword search (plain + hashtag) |
+| `src/indexer.ts` | Fix broken log reduce |
+| `src/indexer.ts` | Add deduplication for search results |
+| `wrangler.toml` | Add daily cleanup cron |
+| `src/index.ts` | Add cleanup handler for 2am cron |

@@ -13,7 +13,7 @@ database_id = "6d1329cc-e8b9-4183-bbf6-42ede9a83b74"
 
 # ─── Cron Trigger (replaces firehose — indexes posts every 3 minutes) ──────────
 [triggers]
-crons = ["*/3 * * * *"]
+crons = ["*/3 * * * *", "0 2 * * *"]
 
 # ─── Non-secret env vars (set secrets via `wrangler secret put`) ────────────────
 # Secrets to set via CLI:

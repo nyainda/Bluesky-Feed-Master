@@ -87,4 +87,21 @@ router.get("/xrpc/app.bsky.feed.getFeedSkeleton", async (req, res): Promise<void
   }
 });
 
+router.post("/api/admin/test-connection", async (req, res): Promise<void> => {
+  const { handle, appPassword } = req.body as { handle?: string; appPassword?: string };
+  if (!handle || !appPassword) {
+    res.status(400).json({ ok: false, error: "handle and appPassword are required" });
+    return;
+  }
+  try {
+    const { AtpAgent } = await import("@atproto/api");
+    const agent = new AtpAgent({ service: "https://bsky.social" });
+    const result = await agent.login({ identifier: handle, password: appPassword });
+    res.json({ ok: true, did: result.data.did, handle: result.data.handle });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(401).json({ ok: false, error: msg });
+  }
+});
+
 export default router;
