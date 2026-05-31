@@ -95,6 +95,38 @@ export const feedRankedPostsTable = sqliteTable(
   }),
 );
 
+export const syndicationPlatformsTable = sqliteTable("syndication_platforms", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  platform: text("platform").notNull(),
+  label: text("label").notNull(),
+  configJson: text("config_json").notNull().default("{}"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+});
+
+export const syndicationLogTable = sqliteTable("syndication_log", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  postUri: text("post_uri").notNull(),
+  platformId: integer("platform_id").notNull().default(0),
+  platform: text("platform").notNull(),
+  status: text("status").notNull().default("pending"),
+  externalId: text("external_id"),
+  error: text("error"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+});
+
+export const amplificationQueueTable = sqliteTable("amplification_queue", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  postUri: text("post_uri").notNull(),
+  postCid: text("post_cid").notNull(),
+  postText: text("post_text").notNull().default(""),
+  amplifyAt: text("amplify_at").notNull(),
+  status: text("status").notNull().default("pending"),
+  doneAt: text("done_at"),
+  error: text("error"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+});
+
 export const cronSettingsTable = sqliteTable("cron_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull().default(""),
@@ -109,3 +141,6 @@ export type Author = typeof authorsTable.$inferSelect;
 export type AuthorScore = typeof authorScoresTable.$inferSelect;
 export type FeedRankedPost = typeof feedRankedPostsTable.$inferSelect;
 export type CronSetting = typeof cronSettingsTable.$inferSelect;
+export type SyndicationPlatform = typeof syndicationPlatformsTable.$inferSelect;
+export type SyndicationLog = typeof syndicationLogTable.$inferSelect;
+export type AmplificationQueueItem = typeof amplificationQueueTable.$inferSelect;

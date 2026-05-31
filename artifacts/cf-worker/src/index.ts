@@ -9,11 +9,13 @@ import composeRoute from "./routes/compose";
 import notificationsRoute from "./routes/notifications";
 import xrpcRoute from "./routes/xrpc";
 import cronSettingsRoute from "./routes/cron-settings";
+import syndicationRoute from "./routes/syndication";
 import { runIndexer, runCleanup } from "./lib/indexer";
 import { runScheduler } from "./lib/scheduler";
 import { runAuthorScoring } from "./lib/author-scoring";
 import { precomputeFeedRankings } from "./lib/feed-ranking";
 import { runAutoUnfollow } from "./lib/auto-unfollow";
+import { runAmplifier } from "./lib/amplifier";
 
 export interface Env {
   DB: D1Database;
@@ -49,6 +51,9 @@ app.post("/api/admin/migrate", async (c) => {
     }
     await db.prepare("CREATE TABLE IF NOT EXISTS scheduled_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, thread_parts TEXT, is_thread INTEGER NOT NULL DEFAULT 0, scheduled_at TEXT NOT NULL, sent_at TEXT, status TEXT NOT NULL DEFAULT 'pending', error_message TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))").run();
     await db.prepare("CREATE TABLE IF NOT EXISTS cron_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT (datetime('now')))").run();
+    await db.prepare("CREATE TABLE IF NOT EXISTS syndication_platforms (id INTEGER PRIMARY KEY AUTOINCREMENT, platform TEXT NOT NULL, label TEXT NOT NULL, config_json TEXT NOT NULL DEFAULT '{}', enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')))").run();
+    await db.prepare("CREATE TABLE IF NOT EXISTS syndication_log (id INTEGER PRIMARY KEY AUTOINCREMENT, post_uri TEXT NOT NULL, platform_id INTEGER NOT NULL DEFAULT 0, platform TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', external_id TEXT, error TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))").run();
+    await db.prepare("CREATE TABLE IF NOT EXISTS amplification_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, post_uri TEXT NOT NULL, post_cid TEXT NOT NULL, post_text TEXT NOT NULL DEFAULT '', amplify_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', done_at TEXT, error TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))").run();
     return c.json({ ok: true, message: "Migration applied successfully" });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -74,6 +79,7 @@ app.route("/api", audienceRoute);
 app.route("/api", composeRoute);
 app.route("/api", notificationsRoute);
 app.route("/api", cronSettingsRoute);
+app.route("/api", syndicationRoute);
 app.route("/", xrpcRoute);
 
 export default {
@@ -91,6 +97,7 @@ export default {
       await runAuthorScoring(env);
       await precomputeFeedRankings(env);
       await runAutoUnfollow(env);
+      await runAmplifier(env);
     })());
   },
 };

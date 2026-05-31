@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { asc, desc, eq } from "drizzle-orm";
 import { createDb, followerSnapshotsTable, scheduledPostsTable } from "../db";
 import type { Env } from "../index";
+import { syndicatePost } from "../lib/syndication";
 
 const route = new Hono<{ Bindings: Env }>();
 
@@ -178,6 +179,14 @@ route.post("/bluesky/compose", async (c) => {
       });
       if (!rootRef) rootRef = { uri: result.uri, cid: result.cid };
       replyRef = { root: rootRef, parent: { uri: result.uri, cid: result.cid } };
+    }
+
+    // Auto-syndicate to enabled platforms (fire-and-forget — don't block compose response)
+    if (rootRef?.uri) {
+      const firstText = posts[0] ?? "";
+      syndicatePost(c.env, rootRef.uri, firstText).catch((err) =>
+        console.error("[compose] syndication failed:", err),
+      );
     }
 
     return c.json({ success: true, uri: rootRef?.uri });
