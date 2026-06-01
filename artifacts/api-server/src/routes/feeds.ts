@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, sql, count } from "drizzle-orm";
-import { db, feedsTable, keywordsTable, indexedPostsTable } from "@workspace/db";
+import { db, feedsTable, keywordsTable, indexedPostsTable, feedRankedPostsTable } from "@workspace/db";
 import {
   CreateFeedBody,
   GetFeedParams,
@@ -229,6 +229,49 @@ router.get("/feeds/:id/posts", async (req, res): Promise<void> => {
 
   const limit = query.data.limit ?? 50;
   const cursor = query.data.cursor;
+  const mode = (req.query.mode as string) === "ranked" ? "ranked" : "recent";
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(indexedPostsTable)
+    .where(like(indexedPostsTable.algoTags, `%${feed.recordName}%`));
+
+  if (mode === "ranked") {
+    try {
+      const rankedRows = await db
+        .select({
+          post: indexedPostsTable,
+          rank: feedRankedPostsTable.rank,
+          finalScore: feedRankedPostsTable.finalScore,
+          qualityScore: feedRankedPostsTable.qualityScore,
+          computedAt: feedRankedPostsTable.computedAt,
+        })
+        .from(feedRankedPostsTable)
+        .innerJoin(indexedPostsTable, eq(feedRankedPostsTable.postUri, indexedPostsTable.uri))
+        .where(eq(feedRankedPostsTable.feedId, feed.id))
+        .orderBy(feedRankedPostsTable.rank)
+        .limit(limit);
+
+      if (rankedRows.length > 0) {
+        res.json({
+          posts: rankedRows.map(({ post, rank, finalScore, qualityScore, computedAt }) => ({
+            ...post,
+            indexedAt: post.indexedAt.toISOString(),
+            engagementSyncedAt: post.engagementSyncedAt?.toISOString() ?? null,
+            rank,
+            finalScore,
+            qualityScore,
+            computedAt: computedAt.toISOString(),
+          })),
+          cursor: undefined,
+          total,
+          mode: "ranked",
+        });
+        return;
+      }
+    } catch {
+    }
+  }
 
   const conditions = [like(indexedPostsTable.algoTags, `%${feed.recordName}%`)];
   if (cursor) {
@@ -243,11 +286,6 @@ router.get("/feeds/:id/posts", async (req, res): Promise<void> => {
     .orderBy(desc(indexedPostsTable.indexedAt))
     .limit(limit);
 
-  const [{ total }] = await db
-    .select({ total: count() })
-    .from(indexedPostsTable)
-    .where(like(indexedPostsTable.algoTags, `%${feed.recordName}%`));
-
   let nextCursor: string | undefined;
   if (posts.length >= limit) {
     const last = posts[posts.length - 1];
@@ -255,9 +293,14 @@ router.get("/feeds/:id/posts", async (req, res): Promise<void> => {
   }
 
   res.json({
-    posts: posts.map((p) => ({ ...p, indexedAt: p.indexedAt.toISOString() })),
+    posts: posts.map((p) => ({
+      ...p,
+      indexedAt: p.indexedAt.toISOString(),
+      engagementSyncedAt: p.engagementSyncedAt?.toISOString() ?? null,
+    })),
     cursor: nextCursor,
     total,
+    mode: "recent",
   });
 });
 

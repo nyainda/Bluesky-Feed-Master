@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, boolean, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, boolean, integer, real } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -27,3 +27,13 @@ export const keywordsTable = pgTable("keywords", {
 export const insertKeywordSchema = createInsertSchema(keywordsTable).omit({ id: true, createdAt: true });
 export type InsertKeyword = z.infer<typeof insertKeywordSchema>;
 export type Keyword = typeof keywordsTable.$inferSelect;
+
+export const feedRankedPostsTable = pgTable("feed_ranked_posts", {
+  id: serial("id").primaryKey(),
+  feedId: integer("feed_id").notNull().references(() => feedsTable.id, { onDelete: "cascade" }),
+  postUri: text("post_uri").notNull(),
+  rank: integer("rank").notNull(),
+  finalScore: real("final_score").notNull().default(0),
+  qualityScore: real("quality_score").notNull().default(0),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+});

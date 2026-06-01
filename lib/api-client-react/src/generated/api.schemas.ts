@@ -66,11 +66,23 @@ export interface IndexedPost {
   engagementSyncedAt?: string | null;
 }
 
+export type RankedPost = IndexedPost & {
+  /** @nullable */
+  rank?: number | null;
+  /** @nullable */
+  finalScore?: number | null;
+  /** @nullable */
+  qualityScore?: number | null;
+  /** @nullable */
+  computedAt?: string | null;
+};
+
 export interface PostsPage {
-  posts: IndexedPost[];
+  posts: RankedPost[];
   /** @nullable */
   cursor?: string | null;
   total: number;
+  mode?: string;
 }
 
 export interface StatsOverview {
@@ -337,7 +349,16 @@ export type GetFeedPostsParams = {
    * @nullable
    */
   cursor?: string | null;
+  mode?: GetFeedPostsMode;
 };
+
+export type GetFeedPostsMode =
+  (typeof GetFeedPostsMode)[keyof typeof GetFeedPostsMode];
+
+export const GetFeedPostsMode = {
+  recent: "recent",
+  ranked: "ranked",
+} as const;
 
 export type ListPostsParams = {
   limit?: number;

@@ -6,6 +6,7 @@ import {
   useGetFeedKeywordStats, useGetFeedTopAuthors, useGetFeedHourly, useGetBlueskyFeedInfo,
   getGetFeedQueryKey, getGetFeedKeywordsQueryKey, getGetFeedPostsQueryKey, getListFeedsQueryKey,
   customFetch,
+  GetFeedPostsMode,
 } from "@workspace/api-client-react";
 import type { Keyword } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -14,7 +15,7 @@ import {
   Tag, X, Plus, ArrowLeft, ExternalLink, ChevronRight, ChevronLeft,
   Upload, CheckCircle, AlertTriangle, BarChart3, FileText, Hash,
   Users, Heart, TrendingUp, Play, RefreshCw, Rss, ArrowUpRight,
-  Repeat2, MessageCircle, Image, Zap,
+  Repeat2, MessageCircle, Image, Zap, Trophy, Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -417,12 +418,20 @@ export default function FeedDetail() {
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
   const [newKeyword, setNewKeyword] = useState("");
+  const [postMode, setPostMode] = useState<"recent" | "ranked">("recent");
 
   const { data: feed, isLoading: loadingFeed } = useGetFeed(id);
   const { data: keywords } = useGetFeedKeywords(id);
-  const { data: postsPage, isLoading: loadingPosts } = useGetFeedPosts(id, { limit: 25, cursor }, {
-    query: { queryKey: getGetFeedPostsQueryKey(id, { limit: 25, cursor }), enabled: !isNaN(id) },
-  });
+  const { data: postsPage, isLoading: loadingPosts } = useGetFeedPosts(
+    id,
+    { limit: 25, cursor: postMode === "ranked" ? undefined : cursor, mode: postMode as GetFeedPostsMode },
+    {
+      query: {
+        queryKey: getGetFeedPostsQueryKey(id, { limit: 25, cursor: postMode === "ranked" ? undefined : cursor, mode: postMode as GetFeedPostsMode }),
+        enabled: !isNaN(id),
+      },
+    },
+  );
   const { data: keywordStats } = useGetFeedKeywordStats(id, { query: { enabled: !isNaN(id), queryKey: ["kw-stats", id] } });
   const { data: topAuthors } = useGetFeedTopAuthors(id, { query: { enabled: !isNaN(id), queryKey: ["top-authors", id] } });
   const { data: hourly } = useGetFeedHourly(id, { query: { enabled: !isNaN(id), queryKey: ["feed-hourly-detail", id] } });
@@ -583,72 +592,162 @@ export default function FeedDetail() {
         {tab === "posts" && (
           <motion.div key="posts" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             <div className="bg-card border border-card-border rounded-xl overflow-hidden">
-              <div className="px-4 md:px-5 py-3.5 border-b border-border flex items-center justify-between bg-muted/10">
-                <span className="text-sm font-semibold text-foreground">Indexed Posts</span>
-                <span className="text-xs text-muted-foreground tabular-nums">{(postsPage?.total ?? 0).toLocaleString()} total</span>
+              {/* Header with mode toggle */}
+              <div className="px-4 md:px-5 py-3 border-b border-border flex items-center justify-between gap-3 bg-muted/10 flex-wrap">
+                <div className="flex items-center gap-1 bg-muted/50 border border-border rounded-lg p-0.5">
+                  <button
+                    onClick={() => { setPostMode("recent"); setCursor(undefined); setCursorStack([]); }}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                      postMode === "recent"
+                        ? "bg-background text-foreground shadow-sm border border-border"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <Clock className="w-3 h-3" />
+                    Recent
+                  </button>
+                  <button
+                    onClick={() => { setPostMode("ranked"); setCursor(undefined); setCursorStack([]); }}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                      postMode === "ranked"
+                        ? "bg-background text-foreground shadow-sm border border-border"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <Trophy className="w-3 h-3" />
+                    Ranked
+                  </button>
+                </div>
+                <span className="text-xs text-muted-foreground tabular-nums ml-auto">
+                  {(postsPage?.total ?? 0).toLocaleString()} total
+                  {postsPage?.mode && postsPage.mode !== postMode && (
+                    <span className="ml-1 text-amber-500">(showing recent — no ranked scores yet)</span>
+                  )}
+                </span>
               </div>
+
               {loadingPosts ? (
-                <div className="p-4 space-y-3">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-14 bg-muted rounded-lg animate-pulse" />)}</div>
+                <div className="p-4 space-y-3">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-16 bg-muted rounded-lg animate-pulse" />)}</div>
               ) : !postsPage || postsPage.posts.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-52 text-center gap-3 px-6">
                   <div className="w-12 h-12 rounded-2xl bg-muted border border-border flex items-center justify-center">
-                    <FileText className="w-5 h-5 text-muted-foreground/40" />
+                    {postMode === "ranked" ? <Trophy className="w-5 h-5 text-muted-foreground/40" /> : <FileText className="w-5 h-5 text-muted-foreground/40" />}
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-foreground">No posts yet</p>
-                    <p className="text-xs text-muted-foreground mt-1 max-w-xs">Add keywords in the Keywords tab to start matching posts from the Bluesky firehose.</p>
+                    {postMode === "ranked" ? (
+                      <>
+                        <p className="text-sm font-semibold text-foreground">No ranked scores yet</p>
+                        <p className="text-xs text-muted-foreground mt-1 max-w-xs">Scores are precomputed by the feed ranking worker. They appear here once the first ranking pass completes.</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm font-semibold text-foreground">No posts yet</p>
+                        <p className="text-xs text-muted-foreground mt-1 max-w-xs">Add keywords in the Keywords tab to start matching posts from the Bluesky firehose.</p>
+                      </>
+                    )}
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => setTab("keywords")} className="gap-1.5">
-                    <Hash className="w-3.5 h-3.5" /> Add Keywords
-                  </Button>
+                  {postMode !== "ranked" && (
+                    <Button size="sm" variant="outline" onClick={() => setTab("keywords")} className="gap-1.5">
+                      <Hash className="w-3.5 h-3.5" /> Add Keywords
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <>
                   <div className="divide-y divide-border/50">
-                    {postsPage.posts.map((post) => (
-                      <div key={post.id} className="px-4 md:px-5 py-3.5 hover:bg-muted/20 transition-colors">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 mb-1 flex-wrap">
-                              <a href={`https://bsky.app/profile/${post.author}`} target="_blank" rel="noreferrer" className="text-xs font-mono text-muted-foreground hover:text-primary transition-colors">{shortenDid(post.author)}</a>
-                              <span className="text-muted-foreground/30 text-xs">·</span>
-                              <span className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(post.indexedAt), { addSuffix: true })}</span>
-                              {post.likes > 0 && (
-                                <span className="flex items-center gap-0.5 text-[11px] text-rose-500">
-                                  <Heart className="w-2.5 h-2.5" />{post.likes}
-                                </span>
-                              )}
-                              {post.reposts > 0 && (
-                                <span className="flex items-center gap-0.5 text-[11px] text-emerald-600">
-                                  <Repeat2 className="w-2.5 h-2.5" />{post.reposts}
-                                </span>
+                    {postsPage.posts.map((post) => {
+                      const isRanked = postsPage.mode === "ranked" && post.rank != null;
+                      return (
+                        <div key={post.id} className="px-4 md:px-5 py-3.5 hover:bg-muted/20 transition-colors">
+                          <div className="flex items-start gap-3">
+                            {/* Rank badge in ranked mode */}
+                            {isRanked && (
+                              <div className={cn(
+                                "flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold tabular-nums border",
+                                post.rank === 1
+                                  ? "bg-yellow-500/10 border-yellow-500/30 text-yellow-600"
+                                  : post.rank === 2
+                                  ? "bg-slate-400/10 border-slate-400/30 text-slate-500"
+                                  : post.rank === 3
+                                  ? "bg-orange-500/10 border-orange-500/30 text-orange-600"
+                                  : "bg-muted border-border text-muted-foreground",
+                              )}>
+                                #{post.rank}
+                              </div>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                <a href={`https://bsky.app/profile/${post.author}`} target="_blank" rel="noreferrer" className="text-xs font-mono text-muted-foreground hover:text-primary transition-colors">{shortenDid(post.author)}</a>
+                                <span className="text-muted-foreground/30 text-xs">·</span>
+                                <span className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(post.indexedAt), { addSuffix: true })}</span>
+                                {post.likes > 0 && (
+                                  <span className="flex items-center gap-0.5 text-[11px] text-rose-500">
+                                    <Heart className="w-2.5 h-2.5" />{post.likes}
+                                  </span>
+                                )}
+                                {post.reposts > 0 && (
+                                  <span className="flex items-center gap-0.5 text-[11px] text-emerald-600">
+                                    <Repeat2 className="w-2.5 h-2.5" />{post.reposts}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-sm text-foreground leading-relaxed line-clamp-2 mb-1.5">{post.text}</p>
+                              {/* Ranking scores row */}
+                              {isRanked && (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-primary/8 border border-primary/20 text-primary">
+                                    <TrendingUp className="w-2.5 h-2.5" />
+                                    final {post.finalScore?.toFixed(4) ?? "—"}
+                                  </span>
+                                  <span className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/8 border border-emerald-500/20 text-emerald-600">
+                                    <Zap className="w-2.5 h-2.5" />
+                                    quality {post.qualityScore?.toFixed(4) ?? "—"}
+                                  </span>
+                                  {post.computedAt && (
+                                    <span className="text-[10px] text-muted-foreground/60 flex items-center gap-1">
+                                      <Clock className="w-2.5 h-2.5" />
+                                      scored {formatDistanceToNow(new Date(post.computedAt), { addSuffix: true })}
+                                    </span>
+                                  )}
+                                </div>
                               )}
                             </div>
-                            <p className="text-sm text-foreground leading-relaxed line-clamp-2">{post.text}</p>
+                            <a
+                              href={`https://bsky.app/profile/${post.author}/post/${postIdFromUri(post.uri)}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex-shrink-0 text-muted-foreground hover:text-primary transition-colors mt-0.5"
+                            >
+                              <ArrowUpRight className="w-3.5 h-3.5" />
+                            </a>
                           </div>
-                          <a
-                            href={`https://bsky.app/profile/${post.author}/post/${postIdFromUri(post.uri)}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex-shrink-0 text-muted-foreground hover:text-primary transition-colors mt-0.5"
-                          >
-                            <ArrowUpRight className="w-3.5 h-3.5" />
-                          </a>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
-                  <div className="px-4 md:px-5 py-3 border-t border-border flex items-center justify-between bg-muted/10">
-                    <Button variant="outline" size="sm" className="gap-1 h-8 text-xs"
-                      onClick={() => { const s = [...cursorStack]; const p = s.pop(); setCursorStack(s); setCursor(p === "" ? undefined : p); }}
-                      disabled={cursorStack.length === 0}
-                    ><ChevronLeft className="w-3.5 h-3.5" />Prev</Button>
-                    <span className="text-xs text-muted-foreground">{postsPage.posts.length} of {postsPage.total.toLocaleString()}</span>
-                    <Button variant="outline" size="sm" className="gap-1 h-8 text-xs"
-                      onClick={() => { if (postsPage.cursor) { setCursorStack(s => [...s, cursor ?? ""]); setCursor(postsPage.cursor); } }}
-                      disabled={!postsPage.cursor}
-                    >Next<ChevronRight className="w-3.5 h-3.5" /></Button>
-                  </div>
+                  {/* Footer: pagination for recent, summary for ranked */}
+                  {postsPage.mode !== "ranked" ? (
+                    <div className="px-4 md:px-5 py-3 border-t border-border flex items-center justify-between bg-muted/10">
+                      <Button variant="outline" size="sm" className="gap-1 h-8 text-xs"
+                        onClick={() => { const s = [...cursorStack]; const p = s.pop(); setCursorStack(s); setCursor(p === "" ? undefined : p); }}
+                        disabled={cursorStack.length === 0}
+                      ><ChevronLeft className="w-3.5 h-3.5" />Prev</Button>
+                      <span className="text-xs text-muted-foreground">{postsPage.posts.length} of {postsPage.total.toLocaleString()}</span>
+                      <Button variant="outline" size="sm" className="gap-1 h-8 text-xs"
+                        onClick={() => { if (postsPage.cursor) { setCursorStack(s => [...s, cursor ?? ""]); setCursor(postsPage.cursor); } }}
+                        disabled={!postsPage.cursor}
+                      >Next<ChevronRight className="w-3.5 h-3.5" /></Button>
+                    </div>
+                  ) : (
+                    <div className="px-4 md:px-5 py-3 border-t border-border flex items-center gap-2 bg-muted/10">
+                      <Trophy className="w-3.5 h-3.5 text-primary" />
+                      <span className="text-xs text-muted-foreground">
+                        {postsPage.posts.length} ranked post{postsPage.posts.length !== 1 ? "s" : ""} — sorted by final score
+                      </span>
+                    </div>
+                  )}
                 </>
               )}
             </div>

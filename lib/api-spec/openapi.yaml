@@ -238,6 +238,12 @@ paths:
           in: query
           schema:
             type: ["string", "null"]
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum: [recent, ranked]
+            default: recent
       responses:
         "200":
           description: Posts page
@@ -898,17 +904,33 @@ components:
         - replies
         - quotes
 
+    RankedPost:
+      allOf:
+        - $ref: "#/components/schemas/IndexedPost"
+        - type: object
+          properties:
+            rank:
+              type: ["integer", "null"]
+            finalScore:
+              type: ["number", "null"]
+            qualityScore:
+              type: ["number", "null"]
+            computedAt:
+              type: ["string", "null"]
+
     PostsPage:
       type: object
       properties:
         posts:
           type: array
           items:
-            $ref: "#/components/schemas/IndexedPost"
+            $ref: "#/components/schemas/RankedPost"
         cursor:
           type: ["string", "null"]
         total:
           type: integer
+        mode:
+          type: string
       required:
         - posts
         - total

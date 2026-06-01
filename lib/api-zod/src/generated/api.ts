@@ -147,31 +147,43 @@ export const GetFeedPostsParams = zod.object({
 });
 
 export const getFeedPostsQueryLimitDefault = 50;
+export const getFeedPostsQueryModeDefault = `recent`;
 
 export const GetFeedPostsQueryParams = zod.object({
   limit: zod.coerce.number().default(getFeedPostsQueryLimitDefault),
   cursor: zod.coerce.string().nullish(),
+  mode: zod.enum(["recent", "ranked"]).default(getFeedPostsQueryModeDefault),
 });
 
 export const GetFeedPostsResponse = zod.object({
   posts: zod.array(
-    zod.object({
-      id: zod.number(),
-      uri: zod.string(),
-      cid: zod.string(),
-      author: zod.string(),
-      text: zod.string(),
-      algoTags: zod.string(),
-      indexedAt: zod.string(),
-      likes: zod.number(),
-      reposts: zod.number(),
-      replies: zod.number(),
-      quotes: zod.number(),
-      engagementSyncedAt: zod.string().nullish(),
-    }),
+    zod
+      .object({
+        id: zod.number(),
+        uri: zod.string(),
+        cid: zod.string(),
+        author: zod.string(),
+        text: zod.string(),
+        algoTags: zod.string(),
+        indexedAt: zod.string(),
+        likes: zod.number(),
+        reposts: zod.number(),
+        replies: zod.number(),
+        quotes: zod.number(),
+        engagementSyncedAt: zod.string().nullish(),
+      })
+      .and(
+        zod.object({
+          rank: zod.number().nullish(),
+          finalScore: zod.number().nullish(),
+          qualityScore: zod.number().nullish(),
+          computedAt: zod.string().nullish(),
+        }),
+      ),
   ),
   cursor: zod.string().nullish(),
   total: zod.number(),
+  mode: zod.string().optional(),
 });
 
 /**
@@ -187,23 +199,33 @@ export const ListPostsQueryParams = zod.object({
 
 export const ListPostsResponse = zod.object({
   posts: zod.array(
-    zod.object({
-      id: zod.number(),
-      uri: zod.string(),
-      cid: zod.string(),
-      author: zod.string(),
-      text: zod.string(),
-      algoTags: zod.string(),
-      indexedAt: zod.string(),
-      likes: zod.number(),
-      reposts: zod.number(),
-      replies: zod.number(),
-      quotes: zod.number(),
-      engagementSyncedAt: zod.string().nullish(),
-    }),
+    zod
+      .object({
+        id: zod.number(),
+        uri: zod.string(),
+        cid: zod.string(),
+        author: zod.string(),
+        text: zod.string(),
+        algoTags: zod.string(),
+        indexedAt: zod.string(),
+        likes: zod.number(),
+        reposts: zod.number(),
+        replies: zod.number(),
+        quotes: zod.number(),
+        engagementSyncedAt: zod.string().nullish(),
+      })
+      .and(
+        zod.object({
+          rank: zod.number().nullish(),
+          finalScore: zod.number().nullish(),
+          qualityScore: zod.number().nullish(),
+          computedAt: zod.string().nullish(),
+        }),
+      ),
   ),
   cursor: zod.string().nullish(),
   total: zod.number(),
+  mode: zod.string().optional(),
 });
 
 /**
