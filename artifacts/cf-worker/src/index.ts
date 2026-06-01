@@ -71,6 +71,17 @@ app.get("/api/config/status", (c) =>
   }),
 );
 
+// Firehose status stub — CF Worker indexes via scheduled cron, not WebSocket
+app.get("/api/firehose/status", (c) =>
+  c.json({
+    connected: false,
+    mode: "cron",
+    reconnectCount: 0,
+    postsIndexedTotal: 0,
+    message: "Indexing runs every 3 minutes via Cloudflare scheduled cron",
+  }),
+);
+
 app.route("/api", feedsRoute);
 app.route("/api", postsRoute);
 app.route("/api", statsRoute);

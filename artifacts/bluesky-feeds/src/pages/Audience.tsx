@@ -1164,7 +1164,16 @@ export default function Audience() {
                           onToggle={() => toggleSelect(user.did)}
                           actionLabel="Unfollow"
                           actionIcon={UserMinus}
-                          onAction={() => { setSelected(new Set([user.did])); handleBulkUnfollow(); }}
+                          onAction={() => {
+                            const targetDid = user.did;
+                            bulkUnfollow.mutate(
+                              { data: { dids: [targetDid] } },
+                              {
+                                onSuccess: (r) => { toast({ title: `Unfollowed ${r.succeeded} account${r.succeeded !== 1 ? "s" : ""}` }); queryClient.invalidateQueries(); },
+                                onError: () => toast({ title: "Unfollow failed", variant: "destructive" }),
+                              },
+                            );
+                          }}
                           actionPending={bulkUnfollow.isPending}
                         />
                       </motion.div>

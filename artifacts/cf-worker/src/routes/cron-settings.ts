@@ -6,6 +6,10 @@ const route = new Hono<{ Bindings: Env }>();
 
 route.get("/cron-settings", async (c) => {
   try {
+    // Ensure table exists in case migrate hasn't been run yet
+    await c.env.DB.prepare(
+      "CREATE TABLE IF NOT EXISTS cron_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    ).run();
     const settings = await getAutoUnfollowSettings(c.env);
     return c.json({ ok: true, settings });
   } catch (err) {

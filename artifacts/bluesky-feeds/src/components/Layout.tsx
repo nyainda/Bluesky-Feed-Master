@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard, Rss, FileText, Settings, Wifi, WifiOff,
-  BarChart3, Users2, Menu, X, ChevronRight, PenLine, Bell,
+  BarChart3, Users2, Menu, X, ChevronRight, PenLine, Bell, Globe,
 } from "lucide-react";
 import { useGetFirehoseStatus, useGetStatsOverview, useGetBlueskyProfile, customFetch } from "@workspace/api-client-react";
 import { useQuery } from "@tanstack/react-query";
@@ -18,6 +18,7 @@ const navItems = [
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/audience", label: "Audience", icon: Users2 },
   { href: "/posts", label: "Posts", icon: FileText },
+  { href: "/reach", label: "Global Reach", icon: Globe },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -50,12 +51,25 @@ function FirehoseIndicator() {
                 <Wifi className="w-3.5 h-3.5 text-emerald-400" />
                 <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               </>
+            ) : (firehose as { mode?: string } | undefined)?.mode === "cron" ? (
+              <Wifi className="w-3.5 h-3.5 text-blue-400" />
             ) : (
               <WifiOff className="w-3.5 h-3.5 text-red-400" />
             )}
           </div>
-          <span className={cn("text-xs font-medium tracking-tight", firehose?.connected ? "text-emerald-400" : "text-red-400")}>
-            {firehose?.connected ? "Firehose Live" : "Offline"}
+          <span className={cn(
+            "text-xs font-medium tracking-tight",
+            firehose?.connected
+              ? "text-emerald-400"
+              : (firehose as { mode?: string } | undefined)?.mode === "cron"
+              ? "text-blue-400"
+              : "text-red-400",
+          )}>
+            {firehose?.connected
+              ? "Firehose Live"
+              : (firehose as { mode?: string } | undefined)?.mode === "cron"
+              ? "Cron Indexing"
+              : "Offline"}
           </span>
           <span className="text-sidebar-foreground/30 text-[10px] ml-auto tabular-nums">
             {firehose?.reconnectCount ?? 0} rc
