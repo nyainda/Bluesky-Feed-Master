@@ -1108,6 +1108,48 @@ function QueueProgressBanner({
   );
 }
 
+// ─── Queue persistence helpers (localStorage) ────────────────────────────────
+
+const QUEUE_STORAGE_KEY = "feedforge_unfollow_queue_v1";
+
+type PersistedQueue = {
+  items: Array<{ did: string; followUri?: string }>;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  savedAt: number;
+};
+
+function saveQueueToStorage(
+  items: Array<{ did: string; followUri?: string }>,
+  processed: number,
+  succeeded: number,
+  failed: number,
+) {
+  try {
+    const data: PersistedQueue = { items, processed, succeeded, failed, savedAt: Date.now() };
+    localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(data));
+  } catch { /* storage quota — ignore */ }
+}
+
+function loadQueueFromStorage(): PersistedQueue | null {
+  try {
+    const raw = localStorage.getItem(QUEUE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PersistedQueue;
+    // Discard saves older than 48h (stale)
+    if (Date.now() - parsed.savedAt > 48 * 60 * 60 * 1000) {
+      localStorage.removeItem(QUEUE_STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch { return null; }
+}
+
+function clearQueueFromStorage() {
+  try { localStorage.removeItem(QUEUE_STORAGE_KEY); } catch {}
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 // Bluesky rate limit: 3000 req/300s = 10/s. CF worker uses concurrency-20 for deleteFollow.
@@ -1200,6 +1242,53 @@ export default function Audience() {
     status: "", startedAt: 0,
   });
 
+  // ── Restore persisted queue on mount + auto-resume ───────────────────────
+  // We use a ref to hold runQueue since it isn't defined yet at this point;
+  // runQueueRef is assigned right after runQueue is created below.
+  const runQueueRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    const saved = loadQueueFromStorage();
+    if (!saved) return;
+    const remaining = saved.items.length - saved.processed;
+    if (remaining <= 0) { clearQueueFromStorage(); return; }
+    // Restore refs
+    queueItemsRef.current = saved.items;
+    queueProcessedRef.current = saved.processed;
+    // Restore display — auto-resume immediately
+    setQueueDisplay({
+      total: saved.items.length,
+      processed: saved.processed,
+      succeeded: saved.succeeded,
+      failed: saved.failed,
+      running: true,
+      paused: false,
+      status: `Resuming — ${remaining.toLocaleString()} accounts still to unfollow`,
+      startedAt: Date.now(),
+    });
+    // Small delay so the banner renders before processing starts
+    setTimeout(() => { runQueueRef.current(); }, 800);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Warn before closing when queue is running ────────────────────────────
+  useEffect(() => {
+    function handleBeforeUnload(e: BeforeUnloadEvent) {
+      if (isProcessingRef.current) {
+        // Save latest state so we can resume after reopen
+        saveQueueToStorage(
+          queueItemsRef.current,
+          queueProcessedRef.current,
+          queueDisplay.succeeded,
+          queueDisplay.failed,
+        );
+        e.preventDefault();
+        e.returnValue = "Unfollow queue is running — progress is saved and will auto-resume when you reopen.";
+      }
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [queueDisplay.succeeded, queueDisplay.failed]);
+
   const runQueue = useCallback(async () => {
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
@@ -1287,14 +1376,16 @@ export default function Audience() {
 
       // Advance queue pointer and update display
       queueProcessedRef.current += batch.length;
-      setQueueDisplay(p => ({
-        ...p,
-        running: true,
-        processed: queueProcessedRef.current,
-        succeeded: p.succeeded + batchSucceeded,
-        failed: p.failed + batchFailed,
-        status: "",
-      }));
+      const newSucceeded = queueDisplay.succeeded + batchSucceeded;
+      const newFailed = queueDisplay.failed + batchFailed;
+      setQueueDisplay(p => {
+        const ns = p.succeeded + batchSucceeded;
+        const nf = p.failed + batchFailed;
+        // Persist after every batch so a close/crash can resume from here
+        saveQueueToStorage(queueItemsRef.current, queueProcessedRef.current, ns, nf);
+        return { ...p, running: true, processed: queueProcessedRef.current, succeeded: ns, failed: nf, status: "" };
+      });
+      void newSucceeded; void newFailed; // suppress unused warning
 
       // Normal inter-batch delay (skip if cancelled/paused)
       if (!isCancelledRef.current && !isPausedRef.current && queueProcessedRef.current < allItems.length) {
@@ -1303,8 +1394,13 @@ export default function Audience() {
     }
 
     isProcessingRef.current = false;
+    // Queue fully done — clear the persisted state
+    if (!isPausedRef.current) clearQueueFromStorage();
     queryClient.invalidateQueries();
-  }, [queryClient]);
+  }, [queryClient]); // queueDisplay.succeeded/failed intentionally excluded — stale closure OK here, setQueueDisplay(p=>) handles it
+
+  // Assign ref so the mount effect can call runQueue without a stale closure
+  runQueueRef.current = runQueue;
 
   function buildFollowUriMap() {
     const m = new Map<string, string>();
@@ -1330,7 +1426,11 @@ export default function Audience() {
 
   function pauseQueue() {
     isPausedRef.current = true;
-    setQueueDisplay(p => ({ ...p, paused: true, running: false }));
+    setQueueDisplay(p => {
+      // Persist on pause so a close after pause can still resume
+      saveQueueToStorage(queueItemsRef.current, queueProcessedRef.current, p.succeeded, p.failed);
+      return { ...p, paused: true, running: false };
+    });
   }
 
   function resumeQueue() {
@@ -1344,6 +1444,7 @@ export default function Audience() {
     queueItemsRef.current = [];
     queueProcessedRef.current = 0;
     isProcessingRef.current = false;
+    clearQueueFromStorage();
     setQueueDisplay({ total: 0, processed: 0, succeeded: 0, failed: 0, running: false, paused: false, status: "", startedAt: 0 });
   }
 
