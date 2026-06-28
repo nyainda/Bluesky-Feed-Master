@@ -1,7 +1,5 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { startFirehose } from "./lib/firehose";
-import { startScheduler } from "./routes/compose";
 
 const rawPort = process.env["PORT"];
 
@@ -24,9 +22,4 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
-
-  startFirehose();
-  logger.info("Firehose started");
-
-  startScheduler();
 });

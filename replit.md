@@ -1,93 +1,45 @@
-# FeedForge — Bluesky Feed Master
+# [Project name]
 
-## Overview
+_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
 
-Production-focused pnpm monorepo for building, ranking, and serving custom Bluesky feeds.
+## Run & Operate
 
-This project includes:
-- Post ingestion + indexing
-- Async author scoring pipeline
-- Smart quality scoring layer
-- Precomputed ranked feed tables for fast API responses
-- Dashboard + creator tooling (analytics, audience, compose, notifications)
-
-## Current Version
-
-- **v1.2.0**
+- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm run typecheck` — full typecheck across all packages
+- `pnpm run build` — typecheck + build all packages
+- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
+- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
+- Required env: `DATABASE_URL` — Postgres connection string
 
 ## Stack
 
-- **Monorepo**: pnpm workspaces
-- **Node.js**: 22+
-- **TypeScript**: 5.9
-- **API server**: Express 5
-- **Worker runtime**: Cloudflare Workers + Hono
-- **Databases**:
-  - PostgreSQL + Drizzle ORM (API server path)
-  - Cloudflare D1 + Drizzle ORM (Worker path)
-- **Frontend**: React + Vite + Tailwind + shadcn/ui
+- pnpm workspaces, Node.js 24, TypeScript 5.9
+- API: Express 5
+- DB: PostgreSQL + Drizzle ORM
+- Validation: Zod (`zod/v4`), `drizzle-zod`
+- API codegen: Orval (from OpenAPI spec)
+- Build: esbuild (CJS bundle)
 
-## Architecture (What we implemented)
+## Where things live
 
-### 1) Ingestion layer
-- Collects/updates posts into `indexed_posts`
-- Marks touched authors as dirty for async score recompute
+_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
 
-### 2) Author scoring layer (async)
-- `authors` + `author_scores` tables
-- Batched worker recompute with retry/cooldown controls
-- Scores derived from post count + engagement aggregates
+## Architecture decisions
 
-### 3) Smart quality layer
-- Post quality scoring utilities (engagement velocity, reply-depth proxy, recency)
+_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
 
-### 4) Ranking precompute layer
-- Computes weighted final scores per feed
-- Writes rankings into `feed_ranked_posts`
-- Clears stale rows per feed before writing new snapshot
+## Product
 
-### 5) Serving layer
-- `/api/feeds/:id/posts?mode=ranked` serves precomputed ranked rows
-- Fallback to recent chronological posts if ranked cache is empty
+_Describe the high-level user-facing capabilities of this app once they exist._
 
-## Key Worker Migrations
+## User preferences
 
-- `0001_init.sql`
-- `0002_follower_snapshots.sql`
-- `0003_author_scoring.sql`
-- `0004_feed_ranked_posts.sql`
+_Populate as you build — explicit user instructions worth remembering across sessions._
 
-## Key Commands
+## Gotchas
 
-### Workspace
-- `pnpm run typecheck`
-- `pnpm run build`
+_Populate as you build — sharp edges, "always run X before Y" rules._
 
-### Scripts / validation
-- `pnpm --filter @workspace/scripts run test:author-scoring`
-- `pnpm --filter @workspace/scripts run verify:release`
+## Pointers
 
-### Cloudflare Worker
-- `pnpm --filter @workspace/cf-worker run db:migrate:all`
-- `pnpm --filter @workspace/cf-worker run db:migrate:remote:all`
-- `pnpm --filter @workspace/cf-worker run deploy`
-
-## Deploy Notes
-
-If Cloudflare deploy logs show old code signatures:
-1. Confirm deployment commit SHA matches latest branch SHA.
-2. Run `verify:release` before deploy.
-3. Re-run remote migrations and deploy from `artifacts/cf-worker`.
-
-## API Highlights
-
-### Feed endpoints
-- `GET /api/feeds`
-- `POST /api/feeds`
-- `GET /api/feeds/:id/posts?mode=recent|ranked`
-
-### Analytics / audience
-- Stats, follower insights, top authors, growth snapshots
-
-### Compose
-- Publish now, thread builder, scheduled posts
+- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
