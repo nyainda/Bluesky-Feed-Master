@@ -41,11 +41,11 @@ export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === "web";
 
-  const overview = useGetStatsOverview();
-  const firehose = useGetFirehoseStatus();
-  const topFeeds = useGetTopFeeds();
-  const activity = useGet7DayActivity();
-  const profile = useGetBlueskyProfile();
+  const overview = useGetStatsOverview({ query: { refetchInterval: 30_000 } });
+  const firehose = useGetFirehoseStatus({ query: { refetchInterval: 30_000 } });
+  const topFeeds = useGetTopFeeds({ query: { refetchInterval: 60_000 } });
+  const activity = useGet7DayActivity({ query: { refetchInterval: 60_000 } });
+  const profile = useGetBlueskyProfile({ query: { refetchInterval: 60_000 } });
 
   const isLoading =
     overview.isLoading &&

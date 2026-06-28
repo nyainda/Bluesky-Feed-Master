@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   useSyncEngagement, useBulkFollow, useBulkUnfollow,
@@ -16,6 +16,7 @@ import {
   ChevronLeft, ChevronRight, Search, CheckSquare, Square,
   TrendingUp, Heart, AlertTriangle, Filter, X, ArrowUpRight, BarChart2, Camera,
   Clock, Shield, Settings2, ToggleLeft, ToggleRight, History,
+  ListOrdered, Pause, Play, Ban, Loader2,
 } from "lucide-react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -974,7 +975,109 @@ function UnfollowLogPanel() {
   );
 }
 
+// ─── Unfollow Queue Banner ───────────────────────────────────────────────────
+
+type UnfollowQueueDisplay = {
+  total: number;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  running: boolean;
+  paused: boolean;
+};
+
+function QueueProgressBanner({
+  queue,
+  onPause,
+  onResume,
+  onCancel,
+}: {
+  queue: UnfollowQueueDisplay;
+  onPause: () => void;
+  onResume: () => void;
+  onCancel: () => void;
+}) {
+  if (queue.total === 0) return null;
+  const pct = queue.total > 0 ? Math.round((queue.processed / queue.total) * 100) : 0;
+  const remaining = queue.total - queue.processed;
+  const isDone = queue.processed >= queue.total;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8 }}
+      className={cn(
+        "rounded-xl border px-4 py-3 mb-4 overflow-hidden",
+        isDone
+          ? "bg-emerald-500/8 border-emerald-500/25"
+          : queue.paused
+          ? "bg-amber-500/8 border-amber-500/25"
+          : "bg-primary/6 border-primary/20",
+      )}
+    >
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <div className="flex items-center gap-2">
+          {isDone ? (
+            <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            </div>
+          ) : queue.running ? (
+            <Loader2 className="w-4 h-4 text-primary animate-spin flex-shrink-0" />
+          ) : (
+            <Pause className="w-4 h-4 text-amber-500 flex-shrink-0" />
+          )}
+          <span className="text-xs font-semibold text-foreground">
+            {isDone
+              ? `Done — unfollowed ${queue.succeeded.toLocaleString()} accounts`
+              : queue.paused
+              ? `Paused — ${remaining.toLocaleString()} remaining`
+              : `Unfollowing ${queue.total.toLocaleString()} accounts…`}
+          </span>
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {queue.processed.toLocaleString()} / {queue.total.toLocaleString()} ({pct}%)
+          </span>
+          {queue.failed > 0 && (
+            <span className="text-xs text-destructive tabular-nums">{queue.failed} failed</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          {!isDone && (
+            queue.paused ? (
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={onResume}>
+                <Play className="w-3 h-3" /> Resume
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={onPause}>
+                <Pause className="w-3 h-3" /> Pause
+              </Button>
+            )
+          )}
+          <Button size="sm" variant="ghost" className="h-7 text-xs gap-1 text-muted-foreground" onClick={onCancel}>
+            <Ban className="w-3 h-3" /> {isDone ? "Clear" : "Cancel"}
+          </Button>
+        </div>
+      </div>
+      <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
+        <motion.div
+          className={cn("h-full rounded-full", isDone ? "bg-emerald-500" : "bg-primary")}
+          animate={{ width: `${pct}%` }}
+          transition={{ ease: "easeOut", duration: 0.4 }}
+        />
+      </div>
+      {!isDone && (
+        <p className="text-[10px] text-muted-foreground mt-1.5">
+          Processing 200 per batch · 1.5s between batches · respects Bluesky rate limits
+        </p>
+      )}
+    </motion.div>
+  );
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
+
+const QUEUE_BATCH_SIZE = 200;
+const QUEUE_BATCH_DELAY_MS = 1500;
 
 export default function Audience() {
   const [tab, setTab] = useState<Tab>("followers");
@@ -1046,6 +1149,108 @@ export default function Audience() {
   const bulkFollow = useBulkFollow();
   const bulkUnfollow = useBulkUnfollow();
 
+  // ── Unfollow queue (client-side, batched, rate-limited) ──────────────────
+  const queueItemsRef = useRef<Array<{ did: string; followUri?: string }>>([]);
+  const queueProcessedRef = useRef(0);
+  const isProcessingRef = useRef(false);
+  const isPausedRef = useRef(false);
+  const isCancelledRef = useRef(false);
+
+  const [queueDisplay, setQueueDisplay] = useState<UnfollowQueueDisplay>({
+    total: 0, processed: 0, succeeded: 0, failed: 0, running: false, paused: false,
+  });
+
+  const runQueue = useCallback(async () => {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+    isPausedRef.current = false;
+    isCancelledRef.current = false;
+
+    while (true) {
+      if (isCancelledRef.current) break;
+      if (isPausedRef.current) {
+        setQueueDisplay(p => ({ ...p, running: false, paused: true }));
+        break;
+      }
+      const allItems = queueItemsRef.current;
+      const idx = queueProcessedRef.current;
+      if (idx >= allItems.length) {
+        setQueueDisplay(p => ({ ...p, running: false, paused: false }));
+        break;
+      }
+      const batch = allItems.slice(idx, idx + QUEUE_BATCH_SIZE);
+      const followUris = batch.map(x => x.followUri).filter(Boolean) as string[];
+      const fallbackDids = batch.filter(x => !x.followUri).map(x => x.did);
+      try {
+        const res = await customFetch<{ succeeded: number; failed: number }>(
+          "/api/bluesky/bulk-unfollow",
+          { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ followUris, dids: fallbackDids }) },
+        );
+        queueProcessedRef.current += batch.length;
+        setQueueDisplay(p => ({
+          ...p,
+          processed: queueProcessedRef.current,
+          succeeded: p.succeeded + (res.succeeded ?? 0),
+          failed: p.failed + (res.failed ?? 0),
+        }));
+      } catch {
+        queueProcessedRef.current += batch.length;
+        setQueueDisplay(p => ({
+          ...p,
+          processed: queueProcessedRef.current,
+          failed: p.failed + batch.length,
+        }));
+      }
+      await new Promise(r => setTimeout(r, QUEUE_BATCH_DELAY_MS));
+    }
+
+    isProcessingRef.current = false;
+    queryClient.invalidateQueries();
+  }, [queryClient]);
+
+  function buildFollowUriMap() {
+    const m = new Map<string, string>();
+    for (const u of following?.users ?? []) { if (u.followUri) m.set(u.did, u.followUri); }
+    for (const u of nfbUsers) { if (u.followUri) m.set(u.did, u.followUri); }
+    return m;
+  }
+
+  function enqueueSelected() {
+    const selectedDids = Array.from(selected);
+    const uriMap = buildFollowUriMap();
+    const newItems = selectedDids.map(did => ({ did, followUri: uriMap.get(did) }));
+    // Deduplicate
+    const existingDids = new Set(queueItemsRef.current.map(x => x.did));
+    const toAdd = newItems.filter(x => !existingDids.has(x.did));
+    queueItemsRef.current = [...queueItemsRef.current, ...toAdd];
+    const total = queueItemsRef.current.length;
+    setQueueDisplay(p => ({ ...p, total, running: true, paused: false }));
+    clearSelection();
+    toast({ title: `${toAdd.length.toLocaleString()} added to unfollow queue (${total.toLocaleString()} total)` });
+    runQueue();
+  }
+
+  function pauseQueue() {
+    isPausedRef.current = true;
+    setQueueDisplay(p => ({ ...p, paused: true, running: false }));
+  }
+
+  function resumeQueue() {
+    setQueueDisplay(p => ({ ...p, paused: false, running: true }));
+    runQueue();
+  }
+
+  function cancelQueue() {
+    isCancelledRef.current = true;
+    isPausedRef.current = false;
+    queueItemsRef.current = [];
+    queueProcessedRef.current = 0;
+    isProcessingRef.current = false;
+    setQueueDisplay({ total: 0, processed: 0, succeeded: 0, failed: 0, running: false, paused: false });
+  }
+  // ────────────────────────────────────────────────────────────────────────
+
   const toggleSelect = (did: string) => setSelected(prev => { const n = new Set(prev); n.has(did) ? n.delete(did) : n.add(did); return n; });
   const selectAll = (users: AudienceUser[]) => setSelected(new Set(users.map(u => u.did)));
   const clearSelection = () => setSelected(new Set());
@@ -1058,17 +1263,8 @@ export default function Audience() {
   }
   function handleBulkUnfollow() {
     const selectedDids = Array.from(selected);
-    // Build DID → followUri from all loaded users (avoids per-profile API lookups)
-    const followUriMap = new Map<string, string>();
-    for (const u of following?.users ?? []) {
-      if (u.followUri) followUriMap.set(u.did, u.followUri);
-    }
-    for (const u of nfbUsers) {
-      if (u.followUri) followUriMap.set(u.did, u.followUri);
-    }
-    const followUris = selectedDids
-      .map(did => followUriMap.get(did))
-      .filter((uri): uri is string => !!uri);
+    const followUriMap = buildFollowUriMap();
+    const followUris = selectedDids.map(did => followUriMap.get(did)).filter((uri): uri is string => !!uri);
     const fallbackDids = selectedDids.filter(did => !followUriMap.has(did));
     bulkUnfollow.mutate({ data: { dids: fallbackDids, followUris } }, {
       onSuccess: (r) => { toast({ title: `Unfollowed ${r.succeeded} accounts` }); clearSelection(); queryClient.invalidateQueries(); },
@@ -1129,6 +1325,18 @@ export default function Audience() {
 
       {/* Auto-Unfollow Card */}
       <AutoUnfollowCard />
+
+      {/* Mass Unfollow Queue Progress */}
+      <AnimatePresence>
+        {queueDisplay.total > 0 && (
+          <QueueProgressBanner
+            queue={queueDisplay}
+            onPause={pauseQueue}
+            onResume={resumeQueue}
+            onCancel={cancelQueue}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Tabs */}
       <div className="flex border-b border-border mb-0 overflow-x-auto scrollbar-thin -mx-4 px-4 md:mx-0 md:px-0">
@@ -1199,7 +1407,7 @@ export default function Audience() {
                 )}
 
                 {selected.size > 0 && (
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="text-xs text-muted-foreground font-medium">{selected.size} selected</span>
                     {tab === "followers" && (
                       <Button size="sm" className="h-7 text-xs gap-1" onClick={handleBulkFollow} disabled={bulkFollow.isPending}>
@@ -1208,10 +1416,22 @@ export default function Audience() {
                       </Button>
                     )}
                     {(tab === "not-following-back" || tab === "following") && (
-                      <Button size="sm" variant="destructive" className="h-7 text-xs gap-1" onClick={handleBulkUnfollow} disabled={bulkUnfollow.isPending}>
-                        <UserMinus className="w-3 h-3" />
-                        {bulkUnfollow.isPending ? "Unfollowing…" : `Unfollow ${selected.size}`}
-                      </Button>
+                      <>
+                        <Button size="sm" variant="destructive" className="h-7 text-xs gap-1" onClick={handleBulkUnfollow} disabled={bulkUnfollow.isPending}>
+                          <UserMinus className="w-3 h-3" />
+                          {bulkUnfollow.isPending ? "Unfollowing…" : `Unfollow ${selected.size}`}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs gap-1 border-amber-500/40 text-amber-600 hover:bg-amber-500/8"
+                          onClick={enqueueSelected}
+                          title="Queue for gradual unfollow — processes 200 at a time with rate-limit delays"
+                        >
+                          <ListOrdered className="w-3 h-3" />
+                          Queue {selected.size.toLocaleString()}
+                        </Button>
+                      </>
                     )}
                     {tab === "top-authors" && (
                       <Button size="sm" className="h-7 text-xs gap-1" onClick={handleBulkFollow} disabled={bulkFollow.isPending}>
