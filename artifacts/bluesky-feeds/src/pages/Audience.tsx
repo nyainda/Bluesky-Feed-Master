@@ -16,7 +16,7 @@ import {
   ChevronLeft, ChevronRight, Search, CheckSquare, Square,
   TrendingUp, Heart, AlertTriangle, Filter, X, ArrowUpRight, BarChart2, Camera,
   Clock, Shield, Settings2, ToggleLeft, ToggleRight, History,
-  ListOrdered, Pause, Play, Ban, Loader2,
+  ListOrdered, Pause, Play, Ban, Loader2, Download,
 } from "lucide-react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -1249,6 +1249,63 @@ export default function Audience() {
     isProcessingRef.current = false;
     setQueueDisplay({ total: 0, processed: 0, succeeded: 0, failed: 0, running: false, paused: false });
   }
+
+  // ── Load-all-pages-and-queue ──────────────────────────────────────────────
+  const [loadAllState, setLoadAllState] = useState<{
+    loading: boolean;
+    found: number;
+    source: "following" | "not-following-back" | null;
+  }>({ loading: false, found: 0, source: null });
+  const loadAllAbortRef = useRef(false);
+
+  async function loadAllAndQueue(source: "following" | "not-following-back") {
+    setLoadAllState({ loading: true, found: 0, source });
+    loadAllAbortRef.current = false;
+
+    const accumulated: Array<{ did: string; followUri?: string }> = [];
+    let cursor: string | undefined;
+
+    try {
+      while (true) {
+        if (loadAllAbortRef.current) break;
+        const endpoint = source === "following"
+          ? `/api/bluesky/following?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`
+          : `/api/bluesky/not-following-back${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`;
+
+        const res = await customFetch<{ users: AudienceUser[]; cursor?: string | null }>(endpoint);
+        for (const u of res.users) {
+          accumulated.push({ did: u.did, followUri: u.followUri ?? undefined });
+        }
+        setLoadAllState(p => ({ ...p, found: accumulated.length }));
+
+        if (!res.cursor) break;
+        cursor = res.cursor;
+        // Small delay to avoid hammering the API
+        await new Promise(r => setTimeout(r, 200));
+      }
+    } catch (err) {
+      toast({ title: "Failed to load all pages", variant: "destructive" });
+    }
+
+    setLoadAllState({ loading: false, found: 0, source: null });
+
+    if (accumulated.length === 0 || loadAllAbortRef.current) return;
+
+    // Deduplicate and add to queue
+    const existingDids = new Set(queueItemsRef.current.map(x => x.did));
+    const toAdd = accumulated.filter(x => !existingDids.has(x.did));
+    queueItemsRef.current = [...queueItemsRef.current, ...toAdd];
+    queueProcessedRef.current = Math.min(queueProcessedRef.current, queueItemsRef.current.length - toAdd.length);
+    const total = queueItemsRef.current.length;
+    setQueueDisplay(p => ({ ...p, total, running: true, paused: false }));
+    toast({ title: `${toAdd.length.toLocaleString()} accounts queued for unfollow` });
+    runQueue();
+  }
+
+  function cancelLoadAll() {
+    loadAllAbortRef.current = true;
+    setLoadAllState({ loading: false, found: 0, source: null });
+  }
   // ────────────────────────────────────────────────────────────────────────
 
   const toggleSelect = (did: string) => setSelected(prev => { const n = new Set(prev); n.has(did) ? n.delete(did) : n.add(did); return n; });
@@ -1456,6 +1513,45 @@ export default function Audience() {
                     <CheckSquare className="w-3 h-3" />
                     All ({currentNFB.length})
                   </Button>
+                )}
+
+                {/* Queue All — loads every page automatically */}
+                {tab === "following" && selected.size === 0 && !loadAllState.loading && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs gap-1 border-amber-500/40 text-amber-600 hover:bg-amber-500/8 ml-auto"
+                    onClick={() => loadAllAndQueue("following")}
+                    title="Automatically loads all following pages and queues them for unfollow"
+                  >
+                    <Download className="w-3 h-3" />
+                    Queue All {profile?.followsCount ? `(${profile.followsCount.toLocaleString()})` : "Following"}
+                  </Button>
+                )}
+                {tab === "not-following-back" && selected.size === 0 && !loadAllState.loading && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs gap-1 border-amber-500/40 text-amber-600 hover:bg-amber-500/8 ml-auto"
+                    onClick={() => loadAllAndQueue("not-following-back")}
+                    title="Automatically loads all NFB pages and queues them for unfollow"
+                  >
+                    <Download className="w-3 h-3" />
+                    Queue All NFB
+                  </Button>
+                )}
+
+                {/* Loading-all-pages indicator */}
+                {loadAllState.loading && (loadAllState.source === tab || (tab === "not-following-back" && loadAllState.source === "not-following-back")) && (
+                  <div className="flex items-center gap-2 ml-auto text-xs text-amber-600">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span className="font-medium">
+                      Loading all pages… {loadAllState.found > 0 ? `${loadAllState.found.toLocaleString()} found` : ""}
+                    </span>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs gap-1 text-muted-foreground" onClick={cancelLoadAll}>
+                      <X className="w-3 h-3" /> Cancel
+                    </Button>
+                  </div>
                 )}
               </div>
 
