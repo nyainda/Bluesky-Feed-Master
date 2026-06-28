@@ -2,18 +2,19 @@ import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   useComposePost, useListScheduledPosts, useCreateScheduledPost, useDeleteScheduledPost,
-  useListFeeds,
+  useListFeeds, customFetch,
 } from "@workspace/api-client-react";
-import type { ScheduledPost } from "@workspace/api-client-react";
+import type { ScheduledPost, Feed } from "@workspace/api-client-react";
 import {
   PenLine, Send, Clock, Plus, Trash2, CheckCircle2, AlertCircle,
-  ArrowUpRight, Layers, RefreshCw, Calendar, Hash,
+  ArrowUpRight, Layers, RefreshCw, Calendar, Hash, ChevronDown,
+  Copy, Flame, Zap, MessageCircle, Clock3, CheckCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow, format } from "date-fns";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { getListScheduledPostsQueryKey } from "@workspace/api-client-react";
 
 const CHAR_LIMIT = 300;
@@ -28,21 +29,90 @@ function CharCounter({ text }: { text: string }) {
 }
 
 // ─── Post Now Tab ─────────────────────────────────────────────────────────────
+const VIRAL_TIPS = [
+  {
+    icon: Clock3,
+    color: "text-blue-500",
+    title: "Best time to post",
+    body: "8–11 am or 5–8 pm in your audience's timezone. Bluesky's peak engagement is morning US/EU overlap.",
+  },
+  {
+    icon: Zap,
+    color: "text-amber-500",
+    title: "Lead with a hook",
+    body: "Your first 120 characters decide whether people stop scrolling. Open with a question, bold claim, or surprising stat.",
+  },
+  {
+    icon: Layers,
+    color: "text-violet-500",
+    title: "Threads get 3× more reach",
+    body: "Split a long thought into a thread. Each reply keeps the thread alive in timelines longer than a single post.",
+  },
+  {
+    icon: Hash,
+    color: "text-emerald-500",
+    title: "2–4 hashtags max",
+    body: "Bluesky's community finds hashtag spam annoying. Pick 1 broad (#tech) + 1–2 specific (#buildinpublic, #bluesky).",
+  },
+  {
+    icon: MessageCircle,
+    color: "text-rose-500",
+    title: "Always end with a CTA",
+    body: "\"What do you think?\", \"Drop a reply\", or \"RT if this helped\" — even one question dramatically increases replies.",
+  },
+];
+
 function PostNowTab() {
   const [text, setText] = useState("");
   const [posted, setPosted] = useState<{ uri: string } | null>(null);
+  const [showHashtags, setShowHashtags] = useState(true);
+  const [showTips, setShowTips] = useState(false);
+  const [copiedBundle, setCopiedBundle] = useState(false);
   const { toast } = useToast();
 
   const { data: feeds = [] } = useListFeeds();
 
+  // Load all feed keywords in one parallel batch
+  const { data: feedKeywords = {} } = useQuery<Record<number, Array<{ id: number; keyword: string; feedId: number }>>>({
+    queryKey: ["all-feed-keywords", feeds.map((f: Feed) => f.id).join(",")],
+    queryFn: async () => {
+      if (!feeds.length) return {};
+      const results = await Promise.all(
+        feeds.map((f: Feed) =>
+          (customFetch as (url: string) => Promise<Array<{ id: number; keyword: string; feedId: number }>>)(`/api/feeds/${f.id}/keywords`)
+        ),
+      );
+      return Object.fromEntries(feeds.map((f: Feed, i: number) => [f.id, results[i] ?? []]));
+    },
+    enabled: feeds.length > 0,
+    staleTime: 5 * 60_000,
+  });
+
+  // Detect which hashtags are already in the text
+  const tagsInText = new Set(
+    (text.match(/#([a-zA-Z0-9_]+)/g) ?? []).map(t => t.slice(1).toLowerCase()),
+  );
+
   const appendHashtag = (tag: string) => {
     const cleaned = tag.replace(/[^a-zA-Z0-9_]/g, "");
+    if (tagsInText.has(cleaned.toLowerCase())) return; // already present
     const hashtag = `#${cleaned}`;
     setText(prev => {
       const trimmed = prev.trimEnd();
       return trimmed ? `${trimmed} ${hashtag}` : hashtag;
     });
     setPosted(null);
+  };
+
+  // Collect all unique keywords across all feeds for the "copy bundle" feature
+  const allKeywords = Object.values(feedKeywords).flat().map(k => k.keyword);
+  const uniqueKeywords = [...new Set(allKeywords)].slice(0, 6);
+
+  const copyBundle = async () => {
+    const bundle = uniqueKeywords.map(k => `#${k}`).join(" ");
+    await navigator.clipboard.writeText(bundle);
+    setCopiedBundle(true);
+    setTimeout(() => setCopiedBundle(false), 2000);
   };
 
   const { mutate: compose, isPending } = useComposePost({
@@ -67,8 +137,12 @@ function PostNowTab() {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handlePost();
   };
 
+  // Sweet-spot hint
+  const len = text.length;
+  const sweetSpot = len >= 100 && len <= 200;
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {posted && (
         <motion.div
           initial={{ opacity: 0, y: -6 }}
@@ -88,20 +162,26 @@ function PostNowTab() {
         </motion.div>
       )}
 
+      {/* Composer card */}
       <div className="bg-card border border-card-border rounded-xl overflow-hidden">
         <textarea
           value={text}
           onChange={e => { setText(e.target.value); setPosted(null); }}
           onKeyDown={handleKeyDown}
-          placeholder="What's on your mind?"
+          placeholder="Write something worth sharing…"
           rows={6}
           className="w-full px-5 py-4 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none leading-relaxed"
         />
-        <div className="flex items-center justify-between px-4 py-3 border-t border-card-border bg-muted/20">
+        <div className="flex items-center justify-between px-4 py-3 border-t border-card-border bg-muted/20 flex-wrap gap-2">
           <div className="flex items-center gap-3">
             <CharCounter text={text} />
-            <span className="text-muted-foreground/30 text-xs">•</span>
-            <span className="text-xs text-muted-foreground/50">⌘ + Enter to post</span>
+            {sweetSpot && (
+              <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/8 border border-emerald-500/20 rounded-full px-2 py-0.5">
+                ✓ sweet spot
+              </span>
+            )}
+            <span className="text-muted-foreground/30 text-xs hidden sm:inline">•</span>
+            <span className="text-xs text-muted-foreground/50 hidden sm:inline">⌘ + Enter to post</span>
           </div>
           <Button
             size="sm"
@@ -114,24 +194,135 @@ function PostNowTab() {
           </Button>
         </div>
       </div>
+
+      {/* Hashtag Library */}
       {feeds.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          <span className="flex items-center gap-1 text-xs text-muted-foreground/60 flex-shrink-0">
-            <Hash className="w-3 h-3" />
-            Add to feed:
-          </span>
-          {feeds.map((feed: import("@workspace/api-client-react").Feed) => (
-            <button
-              key={feed.id}
-              onClick={() => appendHashtag(feed.recordName)}
-              className="text-xs px-2.5 py-0.5 rounded-full border border-border bg-muted hover:bg-primary/10 hover:border-primary/30 hover:text-primary transition-colors font-mono"
-            >
-              #{feed.recordName}
-            </button>
-          ))}
+        <div className="bg-card border border-card-border rounded-xl overflow-hidden">
+          <button
+            onClick={() => setShowHashtags(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors"
+          >
+            <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <Hash className="w-3.5 h-3.5 text-primary" />
+              Hashtag Library
+              <span className="text-[10px] text-muted-foreground font-normal">
+                ({Object.values(feedKeywords).flat().length} keywords from {feeds.length} feed{feeds.length !== 1 ? "s" : ""})
+              </span>
+            </span>
+            <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200", showHashtags && "rotate-180")} />
+          </button>
+
+          <AnimatePresence>
+            {showHashtags && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.18 }}
+                className="overflow-hidden"
+              >
+                <div className="px-4 pb-4 space-y-4 border-t border-border">
+                  {/* Per-feed keyword groups */}
+                  {feeds.map((feed: Feed) => {
+                    const keywords = feedKeywords[feed.id] ?? [];
+                    if (!keywords.length) return null;
+                    return (
+                      <div key={feed.id} className="pt-3">
+                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-medium mb-2">
+                          {feed.displayName}
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {keywords.map(kw => {
+                            const active = tagsInText.has(kw.keyword.toLowerCase());
+                            return (
+                              <button
+                                key={kw.id}
+                                onClick={() => appendHashtag(kw.keyword)}
+                                disabled={active}
+                                className={cn(
+                                  "text-xs px-2.5 py-1 rounded-full border font-mono transition-all",
+                                  active
+                                    ? "border-primary/40 bg-primary/10 text-primary cursor-default"
+                                    : "border-border bg-muted hover:bg-primary/10 hover:border-primary/30 hover:text-primary",
+                                )}
+                              >
+                                {active && <CheckCheck className="w-2.5 h-2.5 inline mr-1" />}
+                                #{kw.keyword}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Copy bundle */}
+                  {uniqueKeywords.length >= 2 && (
+                    <div className="flex items-center gap-2 pt-1 border-t border-border">
+                      <p className="text-xs text-muted-foreground flex-1">
+                        Copy all as a bundle to paste at the end of your post
+                      </p>
+                      <button
+                        onClick={copyBundle}
+                        className={cn(
+                          "flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-all font-medium",
+                          copiedBundle
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600"
+                            : "border-border bg-muted hover:bg-primary/10 hover:border-primary/30 hover:text-primary",
+                        )}
+                      >
+                        {copiedBundle
+                          ? <><CheckCheck className="w-3 h-3" /> Copied!</>
+                          : <><Copy className="w-3 h-3" /> Copy bundle</>}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       )}
-      <p className="text-xs text-muted-foreground/60">Links and mentions will be auto-detected as rich text.</p>
+
+      {/* Viral Tips panel */}
+      <div className="bg-card border border-card-border rounded-xl overflow-hidden">
+        <button
+          onClick={() => setShowTips(v => !v)}
+          className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors"
+        >
+          <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <Flame className="w-3.5 h-3.5 text-orange-500" />
+            How to go viral on Bluesky
+          </span>
+          <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200", showTips && "rotate-180")} />
+        </button>
+
+        <AnimatePresence>
+          {showTips && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="overflow-hidden"
+            >
+              <div className="border-t border-border divide-y divide-border/60">
+                {VIRAL_TIPS.map((tip, i) => (
+                  <div key={i} className="flex items-start gap-3 px-4 py-3">
+                    <tip.icon className={cn("w-4 h-4 flex-shrink-0 mt-0.5", tip.color)} />
+                    <div>
+                      <p className="text-xs font-semibold text-foreground mb-0.5">{tip.title}</p>
+                      <p className="text-xs text-muted-foreground leading-relaxed">{tip.body}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      <p className="text-xs text-muted-foreground/60">Links and @mentions are auto-detected as rich text.</p>
     </div>
   );
 }
