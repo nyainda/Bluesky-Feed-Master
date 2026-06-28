@@ -133,6 +133,19 @@ export const cronSettingsTable = sqliteTable("cron_settings", {
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
 
+export const autoUnfollowLogTable = sqliteTable(
+  "auto_unfollow_log",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    did: text("did").notNull(),
+    handle: text("handle").notNull().default(""),
+    unfollowedAt: text("unfollowed_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => ({
+    unfollowedAtIdx: index("idx_auto_unfollow_log_unfollowed_at").on(table.unfollowedAt),
+  }),
+);
+
 export type Feed = typeof feedsTable.$inferSelect;
 export type Keyword = typeof keywordsTable.$inferSelect;
 export type IndexedPost = typeof indexedPostsTable.$inferSelect;
@@ -144,3 +157,4 @@ export type CronSetting = typeof cronSettingsTable.$inferSelect;
 export type SyndicationPlatform = typeof syndicationPlatformsTable.$inferSelect;
 export type SyndicationLog = typeof syndicationLogTable.$inferSelect;
 export type AmplificationQueueItem = typeof amplificationQueueTable.$inferSelect;
+export type AutoUnfollowLogEntry = typeof autoUnfollowLogTable.$inferSelect;

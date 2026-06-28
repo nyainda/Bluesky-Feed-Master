@@ -90,7 +90,7 @@ export async function runAutoUnfollow(env: Env): Promise<void> {
     });
 
     // Fetch following list (all pages, up to 2000 to be safe)
-    const following: { did: string; followUri: string }[] = [];
+    const following: { did: string; handle: string; followUri: string }[] = [];
     let followCursor: string | undefined;
     do {
       const result = await agent.getFollows({
@@ -101,7 +101,7 @@ export async function runAutoUnfollow(env: Env): Promise<void> {
       for (const f of result.data.follows) {
         const followUri = f.viewer?.following;
         if (followUri) {
-          following.push({ did: f.did, followUri });
+          following.push({ did: f.did, handle: f.handle, followUri });
         }
       }
       followCursor = result.data.cursor;
@@ -134,8 +134,15 @@ export async function runAutoUnfollow(env: Env): Promise<void> {
     let unfollowed = 0;
     let errors = 0;
 
-    for (const { followUri } of toUnfollow) {
+    for (const { did, handle, followUri } of toUnfollow) {
       try {
+        // Write log entry before unfollowing so the record exists even if deleteFollow throws
+        await env.DB.prepare(
+          "INSERT INTO auto_unfollow_log (did, handle, unfollowed_at) VALUES (?, ?, datetime('now'))",
+        )
+          .bind(did, handle)
+          .run();
+
         await agent.deleteFollow(followUri);
         unfollowed++;
         // Small delay to respect rate limits

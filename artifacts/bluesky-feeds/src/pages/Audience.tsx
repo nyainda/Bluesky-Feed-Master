@@ -15,7 +15,7 @@ import {
   Users, UserMinus, UserPlus, RefreshCw, ExternalLink,
   ChevronLeft, ChevronRight, Search, CheckSquare, Square,
   TrendingUp, Heart, AlertTriangle, Filter, X, ArrowUpRight, BarChart2, Camera,
-  Clock, Shield, Settings2, ToggleLeft, ToggleRight,
+  Clock, Shield, Settings2, ToggleLeft, ToggleRight, History,
 } from "lucide-react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -860,7 +860,117 @@ function AutoUnfollowCard() {
           Non-followers-back are processed oldest-first, up to the per-run cap.
         </p>
       </div>
+
+      <UnfollowLogPanel />
     </motion.div>
+  );
+}
+
+type UnfollowLogEntry = {
+  id: number;
+  did: string;
+  handle: string;
+  unfollowedAt: string;
+};
+
+function UnfollowLogPanel() {
+  const [open, setOpen] = useState(false);
+
+  const { data, isLoading } = useQuery<{ ok: boolean; entries: UnfollowLogEntry[] }>({
+    queryKey: ["auto-unfollow-log"],
+    queryFn: () => customFetch("/api/auto-unfollow/log?limit=50"),
+    enabled: open,
+    staleTime: 30_000,
+  });
+
+  const entries = data?.entries ?? [];
+
+  return (
+    <div className="border-t border-border/50">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-colors"
+      >
+        <div className="flex items-center gap-1.5">
+          <History className="w-3.5 h-3.5" />
+          <span className="font-medium">Unfollow Log</span>
+          {data && entries.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground text-[10px] font-medium tabular-nums">
+              {entries.length}
+            </span>
+          )}
+        </div>
+        <ChevronRight className={cn("w-3.5 h-3.5 transition-transform", open && "rotate-90")} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden"
+          >
+            {isLoading ? (
+              <div className="px-4 pb-4 space-y-2">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="h-8 bg-muted animate-pulse rounded-lg" />
+                ))}
+              </div>
+            ) : entries.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2 py-8 px-4 text-center">
+                <History className="w-7 h-7 text-muted-foreground/25" />
+                <p className="text-xs text-muted-foreground">No auto-unfollows recorded yet.</p>
+                <p className="text-[11px] text-muted-foreground/60">
+                  Once the cron runs and unfollows accounts, they'll appear here.
+                </p>
+              </div>
+            ) : (
+              <div className="px-4 pb-4">
+                <div className="rounded-xl border border-border overflow-hidden">
+                  <div className="max-h-72 overflow-y-auto divide-y divide-border/40">
+                    {entries.map((entry) => (
+                      <div key={entry.id} className="flex items-center justify-between px-3 py-2.5 hover:bg-muted/20 transition-colors">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-7 h-7 rounded-full bg-destructive/8 border border-destructive/15 flex items-center justify-center flex-shrink-0">
+                            <UserMinus className="w-3 h-3 text-destructive/60" />
+                          </div>
+                          <div className="min-w-0">
+                            <a
+                              href={`https://bsky.app/profile/${entry.handle || entry.did}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs font-medium text-foreground hover:text-primary transition-colors truncate block"
+                            >
+                              {entry.handle ? `@${entry.handle}` : entry.did}
+                            </a>
+                            {entry.handle && (
+                              <span className="text-[10px] text-muted-foreground/50 truncate block font-mono">
+                                {entry.did}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 text-[11px] text-muted-foreground flex-shrink-0 ml-2">
+                          <Clock className="w-3 h-3 flex-shrink-0" />
+                          <span className="tabular-nums whitespace-nowrap">
+                            {format(new Date(entry.unfollowedAt), "MMM d, h:mm a")}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[10px] text-muted-foreground/50 mt-2 text-center">
+                  Showing last {entries.length} auto-unfollowed account{entries.length !== 1 ? "s" : ""}
+                </p>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 

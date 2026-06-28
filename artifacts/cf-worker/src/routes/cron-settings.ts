@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import type { Env } from "../index";
 import { getAutoUnfollowSettings, saveAutoUnfollowSettings } from "../lib/auto-unfollow";
+import { createDb } from "../db";
+import { autoUnfollowLogTable } from "../db/schema";
+import { desc } from "drizzle-orm";
 
 const route = new Hono<{ Bindings: Env }>();
 
@@ -46,6 +49,22 @@ route.post("/cron-settings", async (c) => {
     });
     const settings = await getAutoUnfollowSettings(c.env);
     return c.json({ ok: true, settings });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ ok: false, error: message }, 500);
+  }
+});
+
+route.get("/auto-unfollow/log", async (c) => {
+  const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 200);
+  try {
+    const db = createDb(c.env.DB);
+    const rows = await db
+      .select()
+      .from(autoUnfollowLogTable)
+      .orderBy(desc(autoUnfollowLogTable.unfollowedAt))
+      .limit(limit);
+    return c.json({ ok: true, entries: rows });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return c.json({ ok: false, error: message }, 500);
