@@ -1,5 +1,10 @@
 import { Hono } from "hono";
 import type { Env } from "../index";
+import {
+  enqueueScheduledUnfollowItems,
+  getScheduledUnfollowStatus,
+  clearScheduledUnfollowQueue,
+} from "../lib/scheduled-unfollow";
 
 const route = new Hono<{ Bindings: Env }>();
 
@@ -311,6 +316,49 @@ route.get("/bluesky/not-following-back", async (c) => {
   } catch (err) {
     console.error("not-following-back failed:", err);
     return c.json({ error: "Failed to compute not-following-back list" }, 500);
+  }
+});
+
+// ── Server-side scheduled unfollow queue ─────────────────────────────────────
+
+route.post("/bluesky/unfollow-schedule", async (c) => {
+  if (!c.env.BLUESKY_HANDLE || !c.env.BLUESKY_APP_PASSWORD) {
+    return c.json({ error: "BLUESKY credentials not configured" }, 400);
+  }
+  let body: unknown;
+  try { body = await c.req.json(); } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+  const { items } = body as Record<string, unknown>;
+  if (!Array.isArray(items) || items.length === 0) {
+    return c.json({ error: "items must be a non-empty array of {did, followUri?}" }, 400);
+  }
+  try {
+    const result = await enqueueScheduledUnfollowItems(c.env, items as Array<{ did: string; followUri?: string }>);
+    return c.json({ ok: true, ...result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ ok: false, error: message }, 500);
+  }
+});
+
+route.get("/bluesky/unfollow-schedule/status", async (c) => {
+  try {
+    const status = await getScheduledUnfollowStatus(c.env);
+    return c.json({ ok: true, ...status });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ ok: false, error: message }, 500);
+  }
+});
+
+route.delete("/bluesky/unfollow-schedule", async (c) => {
+  try {
+    await clearScheduledUnfollowQueue(c.env);
+    return c.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ ok: false, error: message }, 500);
   }
 });
 
