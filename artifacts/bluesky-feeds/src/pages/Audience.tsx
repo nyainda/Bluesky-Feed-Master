@@ -1,0 +1,1437 @@
+import { useState, useRef, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  useSyncEngagement, useBulkFollow, useBulkUnfollow,
+  useGetBlueskyProfile, useListFeeds, useGetFeedTopAuthors,
+  useGetFollowers, useGetFollowing, useGetFollowerGrowth, useSnapshotFollowers,
+  customFetch,
+} from "@workspace/api-client-react";
+import type { AudienceUser } from "@workspace/api-client-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from "recharts";
+import {
+  Users, UserMinus, UserPlus, RefreshCw, ExternalLink,
+  ChevronLeft, ChevronRight, Search, CheckSquare, Square,
+  TrendingUp, Heart, AlertTriangle, Filter, X, ArrowUpRight, BarChart2, Camera,
+  Clock, Shield, Settings2, ToggleLeft, ToggleRight, History,
+} from "lucide-react";
+import { format } from "date-fns";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+type Tab = "followers" | "following" | "not-following-back" | "top-authors" | "search" | "growth";
+
+type SearchUser = {
+  did: string;
+  handle: string;
+  displayName: string | null;
+  avatar: string | null;
+  description: string | null;
+  followersCount: number;
+  followsCount: number;
+  postsCount: number;
+  followerRatio: number;
+};
+
+function UserCard({
+  user,
+  selected,
+  onToggle,
+  actionLabel,
+  actionIcon: ActionIcon,
+  onAction,
+  actionPending,
+  rank,
+  botWarning,
+}: {
+  user: AudienceUser & { postCount?: number };
+  selected?: boolean;
+  onToggle?: () => void;
+  actionLabel?: string;
+  actionIcon?: React.ElementType;
+  onAction?: () => void;
+  actionPending?: boolean;
+  rank?: number;
+  botWarning?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 px-4 py-3 border-b border-border/40 last:border-0 transition-colors",
+        selected ? "bg-primary/4" : "hover:bg-muted/30",
+        botWarning && "opacity-55",
+      )}
+    >
+      {onToggle && (
+        <button
+          onClick={onToggle}
+          className="flex-shrink-0 text-muted-foreground hover:text-primary transition-colors"
+        >
+          {selected
+            ? <CheckSquare className="w-4 h-4 text-primary" />
+            : <Square className="w-4 h-4" />
+          }
+        </button>
+      )}
+      {rank !== undefined && (
+        <span className="text-[10px] text-muted-foreground/40 font-mono w-5 text-right flex-shrink-0 tabular-nums">{rank}</span>
+      )}
+      {user.avatar ? (
+        <img
+          src={user.avatar}
+          alt={user.handle}
+          className="w-9 h-9 rounded-full flex-shrink-0 ring-1 ring-border object-cover"
+        />
+      ) : (
+        <div className="w-9 h-9 rounded-full bg-primary/10 border border-primary/15 flex items-center justify-center flex-shrink-0">
+          <span className="text-xs font-bold text-primary">
+            {(user.displayName || user.handle)[0].toUpperCase()}
+          </span>
+        </div>
+      )}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-sm font-semibold text-foreground truncate leading-tight">
+            {user.displayName || user.handle}
+          </span>
+          {user.displayName && (
+            <span className="text-xs text-muted-foreground/60 truncate hidden sm:block flex-shrink-0">@{user.handle}</span>
+          )}
+          {botWarning && (
+            <span className="text-[10px] text-amber-500 bg-amber-500/8 border border-amber-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0 hidden sm:inline">
+              bot?
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2.5 mt-0.5">
+          <span className="text-[11px] text-muted-foreground tabular-nums">
+            <strong className="text-foreground font-semibold">{user.followersCount.toLocaleString()}</strong> followers
+          </span>
+          <span className="text-muted-foreground/30 text-[11px]">·</span>
+          <span className="text-[11px] text-muted-foreground tabular-nums">
+            <strong className="text-foreground font-semibold">{user.followsCount.toLocaleString()}</strong> following
+          </span>
+          {user.postCount !== undefined && user.postCount > 0 && (
+            <>
+              <span className="text-muted-foreground/30 text-[11px]">·</span>
+              <span className="text-[11px] text-primary font-medium tabular-nums">{user.postCount} in feed</span>
+            </>
+          )}
+        </div>
+        {user.description && (
+          <p className="text-[11px] text-muted-foreground/55 truncate mt-0.5 max-w-sm">{user.description}</p>
+        )}
+      </div>
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        <a
+          href={`https://bsky.app/profile/${user.handle}`}
+          target="_blank"
+          rel="noreferrer"
+          className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+        >
+          <ArrowUpRight className="w-3.5 h-3.5" />
+        </a>
+        {actionLabel && ActionIcon && onAction && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onAction}
+            disabled={actionPending}
+            className="h-7 text-xs gap-1"
+          >
+            <ActionIcon className="w-3 h-3" />
+            <span className="hidden sm:inline">{actionLabel}</span>
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StatBadge({ label, value, accent }: { label: string; value: number | string; accent?: boolean }) {
+  return (
+    <div className={cn(
+      "rounded-xl border px-4 py-3 text-center transition-colors",
+      accent ? "border-primary/20 bg-primary/5" : "border-border bg-card",
+    )}>
+      <div className={cn("text-xl md:text-2xl font-bold tabular-nums tracking-tight", accent ? "text-primary" : "text-foreground")}>
+        {typeof value === "number" ? value.toLocaleString() : value}
+      </div>
+      <div className="text-[11px] text-muted-foreground mt-0.5 font-medium">{label}</div>
+    </div>
+  );
+}
+
+function SyncEngagementButton() {
+  const { toast } = useToast();
+  const sync = useSyncEngagement();
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => sync.mutate({ data: { limit: 100 } }, {
+        onSuccess: (d) => toast({ title: `Engagement synced: ${d.updated} posts updated` }),
+        onError: () => toast({ title: "Sync failed", variant: "destructive" }),
+      })}
+      disabled={sync.isPending}
+      className="gap-1.5 text-xs"
+    >
+      <RefreshCw className={cn("w-3.5 h-3.5", sync.isPending && "animate-spin")} />
+      {sync.isPending ? "Syncing…" : "Sync"}
+    </Button>
+  );
+}
+
+function Pagination({
+  cursorStack,
+  onPrev,
+  onNext,
+  hasNext,
+  count,
+}: {
+  cursorStack: string[];
+  onPrev: () => void;
+  onNext: () => void;
+  hasNext: boolean;
+  count: number;
+}) {
+  return (
+    <div className="px-4 py-3 border-t border-border/50 flex items-center justify-between bg-muted/20">
+      <Button variant="outline" size="sm" disabled={cursorStack.length === 0} onClick={onPrev} className="gap-1 text-xs h-8">
+        <ChevronLeft className="w-3.5 h-3.5" /> Prev
+      </Button>
+      <span className="text-xs text-muted-foreground tabular-nums">{count} shown</span>
+      <Button variant="outline" size="sm" disabled={!hasNext} onClick={onNext} className="gap-1 text-xs h-8">
+        Next <ChevronRight className="w-3.5 h-3.5" />
+      </Button>
+    </div>
+  );
+}
+
+function SkeletonList({ count = 8 }: { count?: number }) {
+  return (
+    <div className="p-4 space-y-2">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="flex items-center gap-3 px-1">
+          <div className="w-9 h-9 rounded-full bg-muted animate-pulse flex-shrink-0" />
+          <div className="flex-1 space-y-1.5">
+            <div className="h-3.5 w-32 bg-muted animate-pulse rounded" />
+            <div className="h-2.5 w-20 bg-muted/60 animate-pulse rounded" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Search & Follow Tab ────────────────────────────────────────────────────
+
+function SearchFollowTab({ defaultUsers = [], defaultLoading = false }: { defaultUsers?: AudienceUser[]; defaultLoading?: boolean }) {
+  const [query, setQuery] = useState("");
+  const [submittedQuery, setSubmittedQuery] = useState("");
+  const [cursor, setCursor] = useState<string | undefined>();
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [minFollowers, setMinFollowers] = useState(10);
+  const [hidePossibleBots, setHidePossibleBots] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
+  const { toast } = useToast();
+  const bulkFollow = useBulkFollow();
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const enabled = submittedQuery.length > 0;
+  const { data, isLoading, isFetching } = useQuery<{ users: SearchUser[]; cursor: string | null }>({
+    queryKey: ["search-users", submittedQuery, cursor],
+    queryFn: () => {
+      const params = new URLSearchParams({ q: submittedQuery, limit: "25" });
+      if (cursor) params.set("cursor", cursor);
+      return customFetch(`/api/bluesky/search-users?${params}`);
+    },
+    enabled,
+    staleTime: 60_000,
+  });
+
+  function isBotLike(u: SearchUser) {
+    if (u.followersCount < 5 && u.followsCount > 200) return true;
+    if (u.followerRatio < 0.05 && u.followsCount > 500) return true;
+    if (!u.description && u.followsCount > 1000 && u.followersCount < 50) return true;
+    return false;
+  }
+
+  const allUsers = data?.users ?? [];
+  const filteredUsers = allUsers.filter(u => {
+    if (u.followersCount < minFollowers) return false;
+    if (hidePossibleBots && isBotLike(u)) return false;
+    return true;
+  });
+
+  const toggleSelect = (did: string) => setSelected(prev => { const n = new Set(prev); n.has(did) ? n.delete(did) : n.add(did); return n; });
+  const selectAll = () => setSelected(new Set(filteredUsers.map(u => u.did)));
+  const clearSelection = () => setSelected(new Set());
+
+  function handleSearch(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (!query.trim()) return;
+    setSubmittedQuery(query.trim());
+    setCursor(undefined);
+    setCursorStack([]);
+    setSelected(new Set());
+  }
+
+  function handleFollow() {
+    bulkFollow.mutate({ data: { dids: Array.from(selected) } }, {
+      onSuccess: (r) => { toast({ title: `Followed ${r.succeeded} accounts` }); clearSelection(); },
+      onError: () => toast({ title: "Follow failed", variant: "destructive" }),
+    });
+  }
+
+  const botCount = allUsers.filter(isBotLike).length;
+  const filtered = allUsers.length - filteredUsers.length;
+
+  return (
+    <div className="bg-card border border-card-border rounded-xl overflow-hidden">
+      {/* Search Bar */}
+      <form onSubmit={handleSearch} className="px-4 py-3.5 border-b border-border bg-muted/15">
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <Input
+              ref={inputRef}
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder='Search by keyword, bio, or name…'
+              className="pl-8 h-9 text-sm"
+            />
+          </div>
+          <Button type="submit" size="sm" disabled={!query.trim() || isFetching} className="h-9 px-4">
+            {isFetching ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : "Search"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className={cn("h-9 w-9 flex-shrink-0", showFilters && "bg-primary/8 border-primary/30 text-primary")}
+            onClick={() => setShowFilters(f => !f)}
+          >
+            <Filter className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+        <p className="text-[11px] text-muted-foreground mt-1.5">
+          Try "software engineering", "AI", "Kenya", "web developer" — then select and bulk follow.
+        </p>
+      </form>
+
+      {/* Filters Panel */}
+      <AnimatePresence>
+        {showFilters && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden border-b border-border"
+          >
+            <div className="px-4 py-3.5 flex items-center gap-6 flex-wrap bg-muted/10">
+              <div>
+                <label className="text-xs font-medium text-foreground block mb-1.5">Min. followers</label>
+                <div className="flex items-center gap-2.5">
+                  <input
+                    type="range" min={0} max={500} step={5} value={minFollowers}
+                    onChange={e => setMinFollowers(Number(e.target.value))}
+                    className="w-28 accent-primary"
+                  />
+                  <span className="text-xs font-mono text-foreground w-8 tabular-nums">{minFollowers}</span>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-foreground block mb-1.5">Bot filter</label>
+                <button
+                  onClick={() => setHidePossibleBots(v => !v)}
+                  className={cn(
+                    "flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors",
+                    hidePossibleBots
+                      ? "bg-emerald-500/8 border-emerald-500/25 text-emerald-600"
+                      : "border-border text-muted-foreground hover:bg-muted/50",
+                  )}
+                >
+                  {hidePossibleBots ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                  Hide possible bots
+                </button>
+              </div>
+              {allUsers.length > 0 && (
+                <div className="ml-auto text-xs text-muted-foreground text-right">
+                  <span className="text-foreground font-medium">{filteredUsers.length}</span> / {allUsers.length} shown
+                  {filtered > 0 && <><br /><span className="text-amber-500 text-[11px]">{filtered} filtered out</span></>}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Bulk Action Bar */}
+      {selected.size > 0 && (
+        <div className="px-4 py-2.5 border-b border-border bg-primary/4 flex items-center gap-3">
+          <span className="text-xs text-primary font-semibold">{selected.size} selected</span>
+          <Button size="sm" className="h-7 text-xs gap-1" onClick={handleFollow} disabled={bulkFollow.isPending}>
+            <UserPlus className="w-3 h-3" />
+            {bulkFollow.isPending ? "Following…" : `Follow ${selected.size}`}
+          </Button>
+          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={clearSelection}>
+            <X className="w-3 h-3 mr-1" />Clear
+          </Button>
+        </div>
+      )}
+
+      {/* Results */}
+      {!submittedQuery ? (
+        /* ── DEFAULT: show followers so user can instantly select & follow back ── */
+        defaultLoading ? <SkeletonList /> : defaultUsers.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-52 gap-3 text-center px-8">
+            <div className="w-12 h-12 rounded-2xl bg-muted border border-border flex items-center justify-center">
+              <Search className="w-5 h-5 text-muted-foreground/50" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-foreground">Search to discover people</p>
+              <p className="text-xs text-muted-foreground mt-1">Find accounts to follow by keyword, topic, or location.</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Sticky Select-All bar */}
+            <div className="px-4 py-2.5 border-b border-border/40 bg-primary/4 flex items-center justify-between gap-3 sticky top-0 z-10">
+              <div className="flex items-center gap-2">
+                <Users className="w-3.5 h-3.5 text-primary" />
+                <span className="text-xs font-semibold text-primary">
+                  {defaultUsers.length} followers — select to follow back
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {selected.size > 0 ? (
+                  <>
+                    <Button size="sm" className="h-7 text-xs gap-1" onClick={handleFollow} disabled={bulkFollow.isPending}>
+                      <UserPlus className="w-3 h-3" />
+                      {bulkFollow.isPending ? "Following…" : `Follow Back ${selected.size}`}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={clearSelection}>
+                      <X className="w-3 h-3 mr-1" />Clear
+                    </Button>
+                  </>
+                ) : (
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setSelected(new Set(defaultUsers.map(u => u.did)))}>
+                    <CheckSquare className="w-3 h-3" />
+                    Select All {defaultUsers.length}
+                  </Button>
+                )}
+              </div>
+            </div>
+            <div>
+              {defaultUsers.map((u, i) => (
+                <motion.div key={u.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.015 }}>
+                  <UserCard
+                    user={u}
+                    selected={selected.has(u.did)}
+                    onToggle={() => toggleSelect(u.did)}
+                  />
+                </motion.div>
+              ))}
+            </div>
+          </>
+        )
+      ) : isLoading ? (
+        <SkeletonList />
+      ) : filteredUsers.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-40 gap-2">
+          <Users className="w-9 h-9 text-muted-foreground/20" />
+          <p className="text-sm text-muted-foreground">
+            {allUsers.length > 0 ? "All results filtered — try loosening filters." : `No results for "${submittedQuery}".`}
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* Sticky Select-All bar for search results */}
+          <div className="px-4 py-2.5 border-b border-border/40 bg-muted/10 flex items-center justify-between gap-3 sticky top-0 z-10">
+            <div className="flex items-center gap-2">
+              {hidePossibleBots && botCount > 0 && (
+                <span className="text-[11px] text-amber-500 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" />{botCount} hidden
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {selected.size > 0 ? (
+                <>
+                  <Button size="sm" className="h-7 text-xs gap-1" onClick={handleFollow} disabled={bulkFollow.isPending}>
+                    <UserPlus className="w-3 h-3" />
+                    {bulkFollow.isPending ? "Following…" : `Follow ${selected.size}`}
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={clearSelection}>
+                    <X className="w-3 h-3 mr-1" />Clear
+                  </Button>
+                </>
+              ) : (
+                <button onClick={selectAll} className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1.5 transition-colors">
+                  <CheckSquare className="w-3.5 h-3.5" /> Select all {filteredUsers.length}
+                </button>
+              )}
+            </div>
+          </div>
+          <div>
+            {filteredUsers.map((u, i) => {
+              const asAudienceUser: AudienceUser & { postCount?: number } = {
+                did: u.did,
+                handle: u.handle,
+                displayName: u.displayName,
+                avatar: u.avatar,
+                description: u.description,
+                followersCount: u.followersCount,
+                followsCount: u.followsCount,
+                followedAt: null,
+              };
+              return (
+                <motion.div key={u.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
+                  <UserCard
+                    user={asAudienceUser}
+                    selected={selected.has(u.did)}
+                    onToggle={() => toggleSelect(u.did)}
+                    botWarning={!hidePossibleBots && isBotLike(u)}
+                  />
+                </motion.div>
+              );
+            })}
+          </div>
+          <Pagination
+            cursorStack={cursorStack}
+            onPrev={() => {
+              const s = [...cursorStack]; const p = s.pop();
+              setCursorStack(s); setCursor(p === "" ? undefined : p); setSelected(new Set());
+            }}
+            onNext={() => {
+              if (data?.cursor) {
+                setCursorStack(s => [...s, cursor ?? ""]); setCursor(data.cursor!); setSelected(new Set());
+              }
+            }}
+            hasNext={!!data?.cursor}
+            count={filteredUsers.length}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Follower Growth Tab ──────────────────────────────────────────────────────
+
+function tooltipStyleGrowth() {
+  return {
+    contentStyle: {
+      background: "hsl(240 8% 6%)",
+      border: "1px solid hsl(240 4% 14%)",
+      borderRadius: "10px",
+      fontSize: "11px",
+      color: "hsl(0 0% 97%)",
+      boxShadow: "0 16px 40px hsl(240 10% 2% / .8)",
+      padding: "8px 12px",
+    },
+    cursor: { stroke: "hsl(210 100% 62% / .2)", strokeWidth: 1 },
+  };
+}
+
+function FollowerGrowthTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const { data: snapshots, isLoading } = useGetFollowerGrowth({
+    query: { queryKey: ["follower-growth"], staleTime: 5 * 60_000 },
+  });
+
+  const { mutate: snapshot, isPending: snapshotting } = useSnapshotFollowers({
+    mutation: {
+      onSuccess: (data) => {
+        qc.invalidateQueries({ queryKey: ["follower-growth"] });
+        toast({
+          title: "Snapshot recorded!",
+          description: `${data.followersCount.toLocaleString()} followers captured.`,
+        });
+      },
+      onError: () => toast({ title: "Snapshot failed", variant: "destructive" }),
+    },
+  });
+
+  const list = snapshots ?? [];
+  const chartData = list.map(s => ({
+    date: format(new Date(s.recordedAt), "MMM d"),
+    Followers: s.followersCount,
+    Following: s.followsCount,
+  }));
+
+  const latest = list[list.length - 1];
+  const first = list[0];
+  const followerDelta = latest && first && list.length > 1
+    ? latest.followersCount - first.followersCount
+    : null;
+
+  return (
+    <div className="space-y-5 mt-4">
+      <div className="flex items-center justify-between">
+        <div>
+          {latest && (
+            <div className="flex items-center gap-4 flex-wrap">
+              <div>
+                <p className="text-2xl font-bold text-foreground tabular-nums">{latest.followersCount.toLocaleString()}</p>
+                <p className="text-xs text-muted-foreground">Current followers</p>
+              </div>
+              {followerDelta !== null && (
+                <div className={cn("flex items-center gap-1 text-sm font-semibold", followerDelta >= 0 ? "text-emerald-500" : "text-destructive")}>
+                  <TrendingUp className="w-4 h-4" />
+                  {followerDelta >= 0 ? "+" : ""}{followerDelta.toLocaleString()} since first snapshot
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-2 text-xs flex-shrink-0"
+          onClick={() => snapshot()}
+          disabled={snapshotting}
+        >
+          {snapshotting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+          {snapshotting ? "Recording…" : "Record Snapshot"}
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="h-64 bg-card border border-card-border rounded-xl animate-pulse" />
+      ) : list.length < 2 ? (
+        <div className="flex flex-col items-center justify-center h-64 gap-4 bg-card border border-card-border rounded-xl text-center px-8">
+          <div className="w-12 h-12 rounded-2xl bg-muted border border-border flex items-center justify-center">
+            <BarChart2 className="w-6 h-6 text-muted-foreground/40" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-foreground">Not enough data yet</p>
+            <p className="text-xs text-muted-foreground mt-1 max-w-xs">
+              {list.length === 0
+                ? "Record your first snapshot to start tracking follower growth over time."
+                : "Record one more snapshot to see your growth chart."}
+            </p>
+          </div>
+          <Button size="sm" className="gap-2 text-xs" onClick={() => snapshot()} disabled={snapshotting}>
+            {snapshotting ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Camera className="w-3 h-3" />}
+            {list.length === 0 ? "Take First Snapshot" : "Take Another Snapshot"}
+          </Button>
+        </div>
+      ) : (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-card border border-card-border rounded-xl p-5 md:p-6"
+        >
+          <h3 className="text-sm font-semibold text-foreground mb-4">Follower Growth Over Time</h3>
+          <ResponsiveContainer width="100%" height={240}>
+            <LineChart data={chartData} margin={{ top: 4, right: 12, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 6% 90% / .5)" />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "hsl(240 4% 46%)" }} tickLine={false} axisLine={false} />
+              <YAxis tick={{ fontSize: 10, fill: "hsl(240 4% 46%)" }} tickLine={false} axisLine={false} />
+              <Tooltip {...tooltipStyleGrowth()} />
+              <Line
+                type="monotone"
+                dataKey="Followers"
+                stroke="hsl(210 100% 58%)"
+                strokeWidth={2}
+                dot={{ fill: "hsl(210 100% 58%)", r: 3 }}
+                activeDot={{ r: 5 }}
+              />
+              <Line
+                type="monotone"
+                dataKey="Following"
+                stroke="hsl(168 84% 42%)"
+                strokeWidth={2}
+                dot={{ fill: "hsl(168 84% 42%)", r: 3 }}
+                activeDot={{ r: 5 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+          <p className="text-xs text-muted-foreground text-center mt-3">
+            <span className="inline-flex items-center gap-1.5 mr-4">
+              <span className="w-2.5 h-1 rounded-full bg-primary inline-block" /> Followers
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-2.5 h-1 rounded-full bg-emerald-500 inline-block" /> Following
+            </span>
+          </p>
+        </motion.div>
+      )}
+
+      {list.length > 0 && (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bg-card border border-card-border rounded-xl p-5">
+          <h3 className="text-sm font-semibold text-foreground mb-3">Snapshot History</h3>
+          <div className="space-y-2 max-h-60 overflow-y-auto">
+            {[...list].reverse().map((s, i) => (
+              <div key={s.id} className="flex items-center justify-between py-2 border-b border-border/40 last:border-0">
+                <span className="text-xs text-muted-foreground">{format(new Date(s.recordedAt), "MMM d, yyyy · h:mm a")}</span>
+                <div className="flex items-center gap-4 text-xs font-medium tabular-nums">
+                  <span className="text-foreground">{s.followersCount.toLocaleString()} followers</span>
+                  {i < list.length - 1 && (() => {
+                    const prev = [...list].reverse()[i + 1];
+                    const delta = s.followersCount - prev.followersCount;
+                    return delta !== 0 ? (
+                      <span className={delta > 0 ? "text-emerald-500" : "text-destructive"}>
+                        {delta > 0 ? "+" : ""}{delta}
+                      </span>
+                    ) : null;
+                  })()}
+                </div>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
+    </div>
+  );
+}
+
+// ─── Auto-Unfollow Card ──────────────────────────────────────────────────────
+
+type AutoUnfollowSettings = {
+  enabled: boolean;
+  intervalDays: number;
+  cap: number;
+  lastRun: string | null;
+};
+
+const INTERVAL_OPTIONS = [
+  { label: "Daily", days: 1 },
+  { label: "Weekly", days: 7 },
+  { label: "Bi-weekly", days: 14 },
+  { label: "Monthly", days: 30 },
+];
+
+function AutoUnfollowCard() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const { data, isLoading } = useQuery<{ ok: boolean; settings: AutoUnfollowSettings }>({
+    queryKey: ["cron-settings"],
+    queryFn: () => customFetch("/api/cron-settings"),
+    staleTime: 30_000,
+  });
+
+  const settings = data?.settings;
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [intervalDays, setIntervalDays] = useState<number | null>(null);
+  const [cap, setCap] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const displayEnabled = enabled ?? settings?.enabled ?? false;
+  const displayInterval = intervalDays ?? settings?.intervalDays ?? 7;
+  const displayCap = cap ?? settings?.cap ?? 50;
+  const isDirty =
+    enabled !== null ||
+    intervalDays !== null ||
+    cap !== null;
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await customFetch("/api/cron-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: displayEnabled, intervalDays: displayInterval, cap: displayCap }),
+      });
+      setEnabled(null);
+      setIntervalDays(null);
+      setCap(null);
+      qc.invalidateQueries({ queryKey: ["cron-settings"] });
+      toast({ title: "Auto-unfollow settings saved" });
+    } catch {
+      toast({ title: "Failed to save settings", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.1 }}
+      className="bg-card border border-card-border rounded-xl mb-5 overflow-hidden"
+    >
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-border/50 flex items-center justify-between bg-muted/10">
+        <div className="flex items-center gap-2">
+          <Shield className="w-4 h-4 text-primary" />
+          <span className="text-sm font-semibold text-foreground">Auto-Unfollow</span>
+          <span className={cn(
+            "text-[10px] px-1.5 py-0.5 rounded-full font-medium tabular-nums",
+            displayEnabled ? "bg-emerald-500/10 text-emerald-500" : "bg-muted text-muted-foreground",
+          )}>
+            {displayEnabled ? "ON" : "OFF"}
+          </span>
+        </div>
+        <button
+          onClick={() => setEnabled(!displayEnabled)}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+          title={displayEnabled ? "Disable auto-unfollow" : "Enable auto-unfollow"}
+        >
+          {displayEnabled
+            ? <ToggleRight className="w-5 h-5 text-emerald-500" />
+            : <ToggleLeft className="w-5 h-5" />
+          }
+        </button>
+      </div>
+
+      {/* Body */}
+      <div className="px-4 py-4">
+        {isLoading ? (
+          <div className="h-16 animate-pulse bg-muted rounded-lg" />
+        ) : (
+          <div className="flex flex-wrap items-end gap-5">
+            {/* Interval */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">Run every</label>
+              <div className="flex gap-1.5 flex-wrap">
+                {INTERVAL_OPTIONS.map(opt => (
+                  <button
+                    key={opt.days}
+                    onClick={() => setIntervalDays(opt.days)}
+                    className={cn(
+                      "text-xs px-3 py-1.5 rounded-lg border transition-colors",
+                      displayInterval === opt.days
+                        ? "bg-primary/10 border-primary/30 text-primary font-medium"
+                        : "border-border text-muted-foreground hover:bg-muted/50",
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Cap */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                Max unfollows per run
+              </label>
+              <div className="flex items-center gap-2.5">
+                <input
+                  type="range"
+                  min={1}
+                  max={200}
+                  step={5}
+                  value={displayCap}
+                  onChange={e => setCap(Number(e.target.value))}
+                  className="w-28 accent-primary"
+                />
+                <span className="text-xs font-mono text-foreground w-8 tabular-nums">{displayCap}</span>
+              </div>
+            </div>
+
+            {/* Last run + save */}
+            <div className="ml-auto flex flex-col items-end gap-2">
+              {settings?.lastRun && (
+                <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                  <Clock className="w-3 h-3" />
+                  Last run: {format(new Date(settings.lastRun), "MMM d, h:mm a")}
+                </div>
+              )}
+              <Button
+                size="sm"
+                onClick={handleSave}
+                disabled={saving || (!isDirty && !settings)}
+                className={cn("h-8 text-xs gap-1.5", isDirty && "ring-1 ring-primary/40")}
+              >
+                {saving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Settings2 className="w-3 h-3" />}
+                {saving ? "Saving…" : "Save Settings"}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <p className="text-[11px] text-muted-foreground/60 mt-3 leading-relaxed">
+          Automatically unfollows accounts that don't follow you back. Runs during the indexing cron once the interval has elapsed.
+          Non-followers-back are processed oldest-first, up to the per-run cap.
+        </p>
+      </div>
+
+      <UnfollowLogPanel />
+    </motion.div>
+  );
+}
+
+type UnfollowLogEntry = {
+  id: number;
+  did: string;
+  handle: string;
+  unfollowedAt: string;
+};
+
+function UnfollowLogPanel() {
+  const [open, setOpen] = useState(false);
+
+  const { data, isLoading } = useQuery<{ ok: boolean; entries: UnfollowLogEntry[] }>({
+    queryKey: ["auto-unfollow-log"],
+    queryFn: () => customFetch("/api/auto-unfollow/log?limit=50"),
+    enabled: open,
+    staleTime: 30_000,
+  });
+
+  const entries = data?.entries ?? [];
+
+  return (
+    <div className="border-t border-border/50">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-colors"
+      >
+        <div className="flex items-center gap-1.5">
+          <History className="w-3.5 h-3.5" />
+          <span className="font-medium">Unfollow Log</span>
+          {data && entries.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground text-[10px] font-medium tabular-nums">
+              {entries.length}
+            </span>
+          )}
+        </div>
+        <ChevronRight className={cn("w-3.5 h-3.5 transition-transform", open && "rotate-90")} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden"
+          >
+            {isLoading ? (
+              <div className="px-4 pb-4 space-y-2">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="h-8 bg-muted animate-pulse rounded-lg" />
+                ))}
+              </div>
+            ) : entries.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2 py-8 px-4 text-center">
+                <History className="w-7 h-7 text-muted-foreground/25" />
+                <p className="text-xs text-muted-foreground">No auto-unfollows recorded yet.</p>
+                <p className="text-[11px] text-muted-foreground/60">
+                  Once the cron runs and unfollows accounts, they'll appear here.
+                </p>
+              </div>
+            ) : (
+              <div className="px-4 pb-4">
+                <div className="rounded-xl border border-border overflow-hidden">
+                  <div className="max-h-72 overflow-y-auto divide-y divide-border/40">
+                    {entries.map((entry) => (
+                      <div key={entry.id} className="flex items-center justify-between px-3 py-2.5 hover:bg-muted/20 transition-colors">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-7 h-7 rounded-full bg-destructive/8 border border-destructive/15 flex items-center justify-center flex-shrink-0">
+                            <UserMinus className="w-3 h-3 text-destructive/60" />
+                          </div>
+                          <div className="min-w-0">
+                            <a
+                              href={`https://bsky.app/profile/${entry.handle || entry.did}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs font-medium text-foreground hover:text-primary transition-colors truncate block"
+                            >
+                              {entry.handle ? `@${entry.handle}` : entry.did}
+                            </a>
+                            {entry.handle && (
+                              <span className="text-[10px] text-muted-foreground/50 truncate block font-mono">
+                                {entry.did}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 text-[11px] text-muted-foreground flex-shrink-0 ml-2">
+                          <Clock className="w-3 h-3 flex-shrink-0" />
+                          <span className="tabular-nums whitespace-nowrap">
+                            {format(new Date(entry.unfollowedAt), "MMM d, h:mm a")}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[10px] text-muted-foreground/50 mt-2 text-center">
+                  Showing last {entries.length} auto-unfollowed account{entries.length !== 1 ? "s" : ""}
+                </p>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ─── Main Component ─────────────────────────────────────────────────────────
+
+export default function Audience() {
+  const [tab, setTab] = useState<Tab>("followers");
+  const [followersCursor, setFollowersCursor] = useState<string | undefined>();
+  const [followingCursor, setFollowingCursor] = useState<string | undefined>();
+  const [followersCursorStack, setFollowersCursorStack] = useState<string[]>([]);
+  const [followingCursorStack, setFollowingCursorStack] = useState<string[]>([]);
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedFeedId, setSelectedFeedId] = useState<string>("");
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data: profile } = useGetBlueskyProfile({ query: { retry: false, queryKey: ["profile-audience"] } });
+  const { data: feeds } = useListFeeds();
+
+  const { data: followers, isLoading: loadingFollowers } = useGetFollowers(
+    { limit: 50, cursor: followersCursor },
+    { query: { queryKey: ["followers", followersCursor], enabled: tab === "followers" || tab === "search" } },
+  );
+  const { data: following, isLoading: loadingFollowing } = useGetFollowing(
+    { limit: 50, cursor: followingCursor },
+    { query: { queryKey: ["following", followingCursor], enabled: tab === "following" } },
+  );
+
+  const [nfbUsers, setNfbUsers] = useState<AudienceUser[]>([]);
+  const [nfbCursor, setNfbCursor] = useState<string | null>(null);
+  const [nfbHasMore, setNfbHasMore] = useState(true);
+  const [nfbLoadingMore, setNfbLoadingMore] = useState(false);
+
+  const { isLoading: loadingNFB } = useQuery({
+    queryKey: ["not-following-back-init"],
+    queryFn: async () => {
+      const res = await customFetch<{ users: AudienceUser[]; cursor: string | null; hasMore: boolean }>(
+        "/api/bluesky/not-following-back",
+      );
+      setNfbUsers(res.users);
+      setNfbCursor(res.cursor);
+      setNfbHasMore(res.hasMore);
+      return res;
+    },
+    enabled: tab === "not-following-back" && nfbUsers.length === 0,
+    staleTime: 120_000,
+  });
+
+  const loadMoreNFB = useCallback(async () => {
+    if (!nfbCursor || nfbLoadingMore) return;
+    setNfbLoadingMore(true);
+    try {
+      const res = await customFetch<{ users: AudienceUser[]; cursor: string | null; hasMore: boolean }>(
+        `/api/bluesky/not-following-back?cursor=${encodeURIComponent(nfbCursor)}`,
+      );
+      setNfbUsers(prev => {
+        const seen = new Set(prev.map(u => u.did));
+        return [...prev, ...res.users.filter(u => !seen.has(u.did))];
+      });
+      setNfbCursor(res.cursor);
+      setNfbHasMore(res.hasMore);
+    } finally {
+      setNfbLoadingMore(false);
+    }
+  }, [nfbCursor, nfbLoadingMore]);
+
+  const numericFeedId = selectedFeedId ? parseInt(selectedFeedId) : null;
+  const { data: topAuthors, isLoading: loadingTopAuthors } = useGetFeedTopAuthors(numericFeedId!, {
+    query: { enabled: tab === "top-authors" && numericFeedId !== null, queryKey: ["top-authors-audience", numericFeedId] },
+  });
+
+  const bulkFollow = useBulkFollow();
+  const bulkUnfollow = useBulkUnfollow();
+
+  const toggleSelect = (did: string) => setSelected(prev => { const n = new Set(prev); n.has(did) ? n.delete(did) : n.add(did); return n; });
+  const selectAll = (users: AudienceUser[]) => setSelected(new Set(users.map(u => u.did)));
+  const clearSelection = () => setSelected(new Set());
+
+  function handleBulkFollow() {
+    bulkFollow.mutate({ data: { dids: Array.from(selected) } }, {
+      onSuccess: (r) => { toast({ title: `Followed ${r.succeeded} accounts` }); clearSelection(); queryClient.invalidateQueries(); },
+      onError: () => toast({ title: "Bulk follow failed", variant: "destructive" }),
+    });
+  }
+  function handleBulkUnfollow() {
+    const selectedDids = Array.from(selected);
+    // Build DID → followUri from all loaded users (avoids per-profile API lookups)
+    const followUriMap = new Map<string, string>();
+    for (const u of following?.users ?? []) {
+      if (u.followUri) followUriMap.set(u.did, u.followUri);
+    }
+    for (const u of nfbUsers) {
+      if (u.followUri) followUriMap.set(u.did, u.followUri);
+    }
+    const followUris = selectedDids
+      .map(did => followUriMap.get(did))
+      .filter((uri): uri is string => !!uri);
+    const fallbackDids = selectedDids.filter(did => !followUriMap.has(did));
+    bulkUnfollow.mutate({ data: { dids: fallbackDids, followUris } }, {
+      onSuccess: (r) => { toast({ title: `Unfollowed ${r.succeeded} accounts` }); clearSelection(); queryClient.invalidateQueries(); },
+      onError: () => toast({ title: "Bulk unfollow failed", variant: "destructive" }),
+    });
+  }
+
+  const tabs: { id: Tab; label: string; shortLabel: string; icon: React.ElementType; count?: number }[] = [
+    { id: "followers", label: "Followers", shortLabel: "Followers", icon: Users, count: profile?.followersCount },
+    { id: "following", label: "Following", shortLabel: "Following", icon: UserPlus, count: profile?.followsCount },
+    { id: "not-following-back", label: "Not Following Back", shortLabel: "NFB", icon: UserMinus, count: nfbUsers.length || undefined },
+    { id: "top-authors", label: "Top Authors", shortLabel: "Authors", icon: TrendingUp },
+    { id: "growth", label: "Growth", shortLabel: "Growth", icon: BarChart2 },
+    { id: "search", label: "Search & Follow", shortLabel: "Search", icon: Search },
+  ];
+
+  function filterUsers(users: AudienceUser[]) {
+    if (!search) return users;
+    const q = search.toLowerCase();
+    return users.filter(u =>
+      u.handle.toLowerCase().includes(q) ||
+      (u.displayName?.toLowerCase().includes(q)) ||
+      (u.description?.toLowerCase().includes(q))
+    );
+  }
+
+  const currentFollowers = filterUsers(followers?.users ?? []);
+  const currentFollowing = filterUsers(following?.users ?? []);
+  const currentNFB = filterUsers(nfbUsers);
+  const currentTopAuthors = topAuthors ?? [];
+
+  return (
+    <div className="px-4 py-5 md:px-8 md:py-8 max-w-5xl mx-auto">
+      {/* Header */}
+      <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="mb-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl md:text-2xl font-bold text-foreground tracking-tight">Audience</h1>
+            <p className="text-muted-foreground text-sm mt-0.5">Manage followers, following, and discover new accounts</p>
+          </div>
+          <SyncEngagementButton />
+        </div>
+      </motion.div>
+
+      {/* Stats Row */}
+      {profile && (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.05 }}
+          className="grid grid-cols-3 gap-3 mb-5"
+        >
+          <StatBadge label="Followers" value={profile.followersCount} accent />
+          <StatBadge label="Following" value={profile.followsCount} />
+          <StatBadge label="Not Following Back" value={nfbUsers.length > 0 ? nfbUsers.length : "—"} />
+        </motion.div>
+      )}
+
+      {/* Auto-Unfollow Card */}
+      <AutoUnfollowCard />
+
+      {/* Tabs */}
+      <div className="flex border-b border-border mb-0 overflow-x-auto scrollbar-thin -mx-4 px-4 md:mx-0 md:px-0">
+        {tabs.map(({ id, label, shortLabel, icon: Icon, count }) => (
+          <button
+            key={id}
+            onClick={() => { setTab(id); setSearch(""); clearSelection(); }}
+            className={cn(
+              "flex items-center gap-1.5 px-3 md:px-4 py-2.5 text-xs md:text-sm font-medium border-b-2 -mb-px transition-all whitespace-nowrap flex-shrink-0",
+              tab === id
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:border-border",
+            )}
+          >
+            <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="sm:hidden">{shortLabel}</span>
+            <span className="hidden sm:inline">{label}</span>
+            {count !== undefined && (
+              <span className={cn(
+                "text-[10px] px-1.5 py-0.5 rounded-full tabular-nums font-medium",
+                tab === id ? "bg-primary/12 text-primary" : "bg-muted text-muted-foreground",
+              )}>
+                {count.toLocaleString()}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Search Tab */}
+      {tab === "search" ? (
+        <motion.div key="search" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
+          <SearchFollowTab defaultUsers={followers?.users ?? []} defaultLoading={loadingFollowers} />
+        </motion.div>
+      ) : (
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+          >
+            <div className="bg-card border border-card-border rounded-b-xl rounded-tr-xl overflow-hidden">
+              {/* Toolbar */}
+              <div className="px-4 py-3 border-b border-border/50 flex items-center gap-2 flex-wrap bg-muted/10">
+                <div className="relative flex-1 min-w-40">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <Input
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    placeholder="Filter by handle, name, bio…"
+                    className="pl-8 h-8 text-xs"
+                  />
+                </div>
+
+                {tab === "top-authors" && (
+                  <Select value={selectedFeedId} onValueChange={setSelectedFeedId}>
+                    <SelectTrigger className="w-44 h-8 text-xs">
+                      <SelectValue placeholder="Select a feed…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(feeds || []).map(f => (
+                        <SelectItem key={f.id} value={String(f.id)}>{f.displayName}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+
+                {selected.size > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-muted-foreground font-medium">{selected.size} selected</span>
+                    {tab === "followers" && (
+                      <Button size="sm" className="h-7 text-xs gap-1" onClick={handleBulkFollow} disabled={bulkFollow.isPending}>
+                        <UserPlus className="w-3 h-3" />
+                        {bulkFollow.isPending ? "Following…" : `Follow Back ${selected.size}`}
+                      </Button>
+                    )}
+                    {(tab === "not-following-back" || tab === "following") && (
+                      <Button size="sm" variant="destructive" className="h-7 text-xs gap-1" onClick={handleBulkUnfollow} disabled={bulkUnfollow.isPending}>
+                        <UserMinus className="w-3 h-3" />
+                        {bulkUnfollow.isPending ? "Unfollowing…" : `Unfollow ${selected.size}`}
+                      </Button>
+                    )}
+                    {tab === "top-authors" && (
+                      <Button size="sm" className="h-7 text-xs gap-1" onClick={handleBulkFollow} disabled={bulkFollow.isPending}>
+                        <UserPlus className="w-3 h-3" />
+                        {bulkFollow.isPending ? "Following…" : `Follow ${selected.size}`}
+                      </Button>
+                    )}
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={clearSelection}>
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                )}
+
+                {tab === "followers" && currentFollowers.length > 0 && selected.size === 0 && (
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => selectAll(currentFollowers)}>
+                    <CheckSquare className="w-3 h-3" />
+                    Select All ({currentFollowers.length})
+                  </Button>
+                )}
+                {tab === "not-following-back" && currentNFB.length > 0 && selected.size === 0 && (
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => selectAll(currentNFB)}>
+                    <CheckSquare className="w-3 h-3" />
+                    All ({currentNFB.length})
+                  </Button>
+                )}
+              </div>
+
+              {/* FOLLOWERS */}
+              {tab === "followers" && (
+                loadingFollowers ? <SkeletonList /> :
+                currentFollowers.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-48 gap-2">
+                    <Users className="w-9 h-9 text-muted-foreground/20" />
+                    <p className="text-sm text-muted-foreground">{search ? "No results." : "No followers found."}</p>
+                  </div>
+                ) : (
+                  <>
+                    <div>{currentFollowers.map((user, i) => (
+                      <motion.div key={user.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
+                        <UserCard
+                          user={user}
+                          selected={selected.has(user.did)}
+                          onToggle={() => toggleSelect(user.did)}
+                        />
+                      </motion.div>
+                    ))}</div>
+                    <Pagination
+                      cursorStack={followersCursorStack}
+                      onPrev={() => { const s = [...followersCursorStack]; const p = s.pop(); setFollowersCursorStack(s); setFollowersCursor(p === "" ? undefined : p); }}
+                      onNext={() => { if (followers?.cursor) { setFollowersCursorStack(s => [...s, followersCursor ?? ""]); setFollowersCursor(followers.cursor!); } }}
+                      hasNext={!!followers?.cursor}
+                      count={currentFollowers.length}
+                    />
+                  </>
+                )
+              )}
+
+              {/* FOLLOWING */}
+              {tab === "following" && (
+                loadingFollowing ? <SkeletonList /> :
+                currentFollowing.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-48 gap-2">
+                    <UserPlus className="w-9 h-9 text-muted-foreground/20" />
+                    <p className="text-sm text-muted-foreground">{search ? "No results." : "Not following anyone."}</p>
+                  </div>
+                ) : (
+                  <>
+                    <div>{currentFollowing.map((user, i) => (
+                      <motion.div key={user.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
+                        <UserCard
+                          user={user}
+                          selected={selected.has(user.did)}
+                          onToggle={() => toggleSelect(user.did)}
+                          actionLabel="Unfollow"
+                          actionIcon={UserMinus}
+                          onAction={() => {
+                            const targetDid = user.did;
+                            const followUri = user.followUri ?? undefined;
+                            bulkUnfollow.mutate(
+                              { data: { dids: followUri ? [] : [targetDid], followUris: followUri ? [followUri] : undefined } },
+                              {
+                                onSuccess: (r) => { toast({ title: `Unfollowed ${r.succeeded} account${r.succeeded !== 1 ? "s" : ""}` }); queryClient.invalidateQueries(); },
+                                onError: () => toast({ title: "Unfollow failed", variant: "destructive" }),
+                              },
+                            );
+                          }}
+                          actionPending={bulkUnfollow.isPending}
+                        />
+                      </motion.div>
+                    ))}</div>
+                    <Pagination
+                      cursorStack={followingCursorStack}
+                      onPrev={() => { const s = [...followingCursorStack]; const p = s.pop(); setFollowingCursorStack(s); setFollowingCursor(p === "" ? undefined : p); }}
+                      onNext={() => { if (following?.cursor) { setFollowingCursorStack(s => [...s, followingCursor ?? ""]); setFollowingCursor(following.cursor!); } }}
+                      hasNext={!!following?.cursor}
+                      count={currentFollowing.length}
+                    />
+                  </>
+                )
+              )}
+
+              {/* NOT FOLLOWING BACK */}
+              {tab === "not-following-back" && (
+                loadingNFB ? (
+                  <div className="flex flex-col items-center justify-center h-52 gap-3">
+                    <div className="w-10 h-10 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
+                    <p className="text-sm text-muted-foreground">Checking your first 100 following…</p>
+                  </div>
+                ) : currentNFB.length === 0 && !nfbHasMore ? (
+                  <div className="flex flex-col items-center justify-center h-52 gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/8 border border-emerald-500/20 flex items-center justify-center">
+                      <Heart className="w-6 h-6 text-emerald-500" />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-semibold text-foreground">Everyone follows you back!</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">All your following accounts follow you back.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    {currentNFB.map((user, i) => (
+                      <motion.div key={user.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.015 }}>
+                        <UserCard
+                          user={user}
+                          selected={selected.has(user.did)}
+                          onToggle={() => toggleSelect(user.did)}
+                          rank={i + 1}
+                        />
+                      </motion.div>
+                    ))}
+                    {nfbHasMore && (
+                      <div className="px-4 py-4 border-t border-border/50 bg-muted/15 flex flex-col items-center gap-2.5">
+                        <p className="text-xs text-muted-foreground">
+                          {nfbUsers.length > 0
+                            ? <><strong className="text-foreground font-semibold">{nfbUsers.length}</strong> found so far — more pages available</>
+                            : "No accounts found yet in this page — keep loading to check more"
+                          }
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={loadMoreNFB}
+                          disabled={nfbLoadingMore}
+                          className="w-52 gap-2"
+                        >
+                          {nfbLoadingMore ? (
+                            <><RefreshCw className="w-3.5 h-3.5 animate-spin" />Checking next 100…</>
+                          ) : (
+                            <><ChevronRight className="w-3.5 h-3.5" />Load next 100 following</>
+                          )}
+                        </Button>
+                      </div>
+                    )}
+                    {!nfbHasMore && nfbUsers.length > 0 && (
+                      <div className="px-4 py-3 border-t border-border/50 bg-muted/15 flex items-center justify-center gap-2">
+                        <div className="w-4 h-4 rounded-full bg-emerald-500/15 flex items-center justify-center">
+                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          All following checked — <strong className="text-foreground font-semibold">{nfbUsers.length}</strong> not following back
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )
+              )}
+
+              {/* TOP AUTHORS */}
+              {tab === "top-authors" && (
+                !selectedFeedId ? (
+                  <div className="flex flex-col items-center justify-center h-52 gap-3 text-center px-8">
+                    <div className="w-12 h-12 rounded-2xl bg-muted border border-border flex items-center justify-center">
+                      <TrendingUp className="w-5 h-5 text-muted-foreground/50" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">Select a feed</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Choose a feed above to see its top contributing authors</p>
+                    </div>
+                  </div>
+                ) : loadingTopAuthors ? <SkeletonList /> :
+                currentTopAuthors.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-48 gap-2">
+                    <TrendingUp className="w-9 h-9 text-muted-foreground/20" />
+                    <p className="text-sm text-muted-foreground">No authors yet. Posts will appear as they're indexed.</p>
+                  </div>
+                ) : (
+                  <div>
+                    {currentTopAuthors.map((author, i) => {
+                      const u: AudienceUser & { postCount?: number } = {
+                        did: author.did,
+                        handle: author.did,
+                        displayName: null,
+                        avatar: null,
+                        description: null,
+                        followersCount: 0,
+                        followsCount: 0,
+                        followedAt: null,
+                        postCount: author.postCount,
+                      };
+                      return (
+                        <motion.div key={author.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
+                          <UserCard
+                            user={u}
+                            selected={selected.has(author.did)}
+                            onToggle={() => toggleSelect(author.did)}
+                            rank={i + 1}
+                          />
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                )
+              )}
+
+              {/* GROWTH */}
+              {tab === "growth" && <FollowerGrowthTab />}
+            </div>
+          </motion.div>
+        </AnimatePresence>
+      )}
+    </div>
+  );
+}

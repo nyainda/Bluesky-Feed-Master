@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Bluesky Feed Generator"
+version = "1.0.0"
+id = "artifacts/bluesky-feeds"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20987
+
+[services.development]
+run = "pnpm --filter @workspace/bluesky-feeds run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/bluesky-feeds", "run", "build" ]
+publicDir = "artifacts/bluesky-feeds/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20987"
+BASE_PATH = "/"
