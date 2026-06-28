@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus, Trash2, ChevronRight, CheckCircle, XCircle, Rss,
-  Sparkles, Tag, Check, Search, Edit2, X, RotateCcw, RefreshCw,
+  Sparkles, Tag, Check, Search, Edit2, X, RotateCcw, RefreshCw, AlertTriangle,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -626,6 +626,16 @@ export default function Feeds() {
                       </Link>
                       <span className="text-[10px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded hidden sm:inline">{feed.recordName}</span>
                       <ToggleActiveButton feed={feed} />
+                      {feed.postCount === 0 && (
+                        <span className="flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-amber-500/25 bg-amber-500/8 text-amber-600 dark:text-amber-400">
+                          <AlertTriangle className="w-2.5 h-2.5" /> No posts
+                        </span>
+                      )}
+                      {feed.postCount > 0 && feed.postCount < 5 && (
+                        <span className="flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-amber-500/25 bg-amber-500/8 text-amber-600 dark:text-amber-400">
+                          <AlertTriangle className="w-2.5 h-2.5" /> Low content
+                        </span>
+                      )}
                     </div>
                     {feed.description && (
                       <p className="text-xs text-muted-foreground truncate">{feed.description}</p>

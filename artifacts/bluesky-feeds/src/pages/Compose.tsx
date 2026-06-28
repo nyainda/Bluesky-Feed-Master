@@ -2,11 +2,12 @@ import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   useComposePost, useListScheduledPosts, useCreateScheduledPost, useDeleteScheduledPost,
+  useListFeeds,
 } from "@workspace/api-client-react";
 import type { ScheduledPost } from "@workspace/api-client-react";
 import {
   PenLine, Send, Clock, Plus, Trash2, CheckCircle2, AlertCircle,
-  ArrowUpRight, Layers, RefreshCw, Calendar,
+  ArrowUpRight, Layers, RefreshCw, Calendar, Hash,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -31,6 +32,18 @@ function PostNowTab() {
   const [text, setText] = useState("");
   const [posted, setPosted] = useState<{ uri: string } | null>(null);
   const { toast } = useToast();
+
+  const { data: feeds = [] } = useListFeeds();
+
+  const appendHashtag = (tag: string) => {
+    const cleaned = tag.replace(/[^a-zA-Z0-9_]/g, "");
+    const hashtag = `#${cleaned}`;
+    setText(prev => {
+      const trimmed = prev.trimEnd();
+      return trimmed ? `${trimmed} ${hashtag}` : hashtag;
+    });
+    setPosted(null);
+  };
 
   const { mutate: compose, isPending } = useComposePost({
     mutation: {
@@ -101,6 +114,23 @@ function PostNowTab() {
           </Button>
         </div>
       </div>
+      {feeds.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <span className="flex items-center gap-1 text-xs text-muted-foreground/60 flex-shrink-0">
+            <Hash className="w-3 h-3" />
+            Add to feed:
+          </span>
+          {feeds.map((feed: import("@workspace/api-client-react").Feed) => (
+            <button
+              key={feed.id}
+              onClick={() => appendHashtag(feed.recordName)}
+              className="text-xs px-2.5 py-0.5 rounded-full border border-border bg-muted hover:bg-primary/10 hover:border-primary/30 hover:text-primary transition-colors font-mono"
+            >
+              #{feed.recordName}
+            </button>
+          ))}
+        </div>
+      )}
       <p className="text-xs text-muted-foreground/60">Links and mentions will be auto-detected as rich text.</p>
     </div>
   );

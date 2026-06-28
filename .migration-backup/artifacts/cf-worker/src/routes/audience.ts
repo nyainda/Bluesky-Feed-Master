@@ -319,6 +319,56 @@ route.get("/bluesky/not-following-back", async (c) => {
   }
 });
 
+// ── Like & Repost ─────────────────────────────────────────────────────────────
+
+route.post("/bluesky/like", async (c) => {
+  if (!c.env.BLUESKY_HANDLE || !c.env.BLUESKY_APP_PASSWORD)
+    return c.json({ error: "BLUESKY credentials not configured" }, 400);
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+  const { uri, cid } = body as Record<string, unknown>;
+  if (!uri || !cid) return c.json({ error: "uri and cid are required" }, 400);
+  try {
+    const agent = await getAuthenticatedAgent(c.env);
+    const result = await agent.like(String(uri), String(cid));
+    return c.json({ ok: true, likeUri: result.uri });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+route.delete("/bluesky/like", async (c) => {
+  if (!c.env.BLUESKY_HANDLE || !c.env.BLUESKY_APP_PASSWORD)
+    return c.json({ error: "BLUESKY credentials not configured" }, 400);
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+  const { likeUri } = body as Record<string, unknown>;
+  if (!likeUri) return c.json({ error: "likeUri is required" }, 400);
+  try {
+    const agent = await getAuthenticatedAgent(c.env);
+    await agent.deleteLike(String(likeUri));
+    return c.json({ ok: true });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+route.post("/bluesky/repost", async (c) => {
+  if (!c.env.BLUESKY_HANDLE || !c.env.BLUESKY_APP_PASSWORD)
+    return c.json({ error: "BLUESKY credentials not configured" }, 400);
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+  const { uri, cid } = body as Record<string, unknown>;
+  if (!uri || !cid) return c.json({ error: "uri and cid are required" }, 400);
+  try {
+    const agent = await getAuthenticatedAgent(c.env);
+    const result = await agent.repost(String(uri), String(cid));
+    return c.json({ ok: true, repostUri: result.uri });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
 // ── Server-side scheduled unfollow queue ─────────────────────────────────────
 
 route.post("/bluesky/unfollow-schedule", async (c) => {

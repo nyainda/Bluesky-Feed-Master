@@ -47,21 +47,27 @@ export async function precomputeFeedRankings(env: Env, candidateLimit = 200): Pr
           }),
         );
 
-        // Exponential recency decay: half-life of 48 hours
-        const recency = safeFinite(Math.exp(-ageHours / 48));
+        // Exponential recency decay: half-life of 6 hours (was 48h — content now ages out properly)
+        const recency = safeFinite(Math.exp(-ageHours / 6));
 
-        const rawVelocity =
-          (post.likes + post.reposts * 2 + post.replies * 3 + post.quotes * 2) / ageMinutes;
+        const rawEngagement = post.likes + post.reposts * 2 + post.replies * 3 + post.quotes * 2;
+        const rawVelocity = rawEngagement / ageMinutes;
         const engagementVelocity = safeFinite(Math.tanh(rawVelocity / 5));
+
+        // Trending boost: posts < 3h old with high velocity get a +20% score bonus
+        // This surfaces viral content before it ages out of the recency window
+        const isTrending = ageHours < 3 && rawVelocity > 2;
+        const trendingMultiplier = isTrending ? 1.2 : 1.0;
 
         const normalizedAuthor = safeFinite(Math.min(1, (authorScore ?? 0) / 1000));
 
-        const finalScore = safeFinite(
+        const baseScore = safeFinite(
           RANK_WEIGHTS.author * normalizedAuthor +
             RANK_WEIGHTS.engagementVelocity * engagementVelocity +
             RANK_WEIGHTS.quality * qualityScore +
             RANK_WEIGHTS.recency * recency,
         );
+        const finalScore = safeFinite(baseScore * trendingMultiplier);
 
         return { post, finalScore, qualityScore };
       })

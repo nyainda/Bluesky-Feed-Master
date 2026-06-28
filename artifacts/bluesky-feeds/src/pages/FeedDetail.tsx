@@ -419,6 +419,9 @@ export default function FeedDetail() {
   const [cursorStack, setCursorStack] = useState<string[]>([]);
   const [newKeyword, setNewKeyword] = useState("");
   const [postMode, setPostMode] = useState<"recent" | "ranked">("recent");
+  const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
+  const [repostedPosts, setRepostedPosts] = useState<Set<string>>(new Set());
+  const [engagingPost, setEngagingPost] = useState<string | null>(null);
 
   const { data: feed, isLoading: loadingFeed } = useGetFeed(id);
   const { data: keywords } = useGetFeedKeywords(id);
@@ -457,6 +460,32 @@ export default function FeedDetail() {
       },
       onError: () => toast({ title: "Failed to add keyword", variant: "destructive" }),
     });
+  }
+
+  async function handleLike(uri: string, cid: string) {
+    if (engagingPost) return;
+    setEngagingPost(uri + "-like");
+    try {
+      await customFetch("/api/bluesky/like", { method: "POST", body: JSON.stringify({ uri, cid }) });
+      setLikedPosts(prev => new Set([...prev, uri]));
+    } catch {
+      toast({ title: "Couldn't like post", description: "Make sure Bluesky credentials are configured.", variant: "destructive" });
+    } finally {
+      setEngagingPost(null);
+    }
+  }
+
+  async function handleRepost(uri: string, cid: string) {
+    if (engagingPost) return;
+    setEngagingPost(uri + "-repost");
+    try {
+      await customFetch("/api/bluesky/repost", { method: "POST", body: JSON.stringify({ uri, cid }) });
+      setRepostedPosts(prev => new Set([...prev, uri]));
+    } catch {
+      toast({ title: "Couldn't repost", description: "Make sure Bluesky credentials are configured.", variant: "destructive" });
+    } finally {
+      setEngagingPost(null);
+    }
   }
 
   function handleDeleteKeyword(kw: Keyword) {
@@ -591,6 +620,29 @@ export default function FeedDetail() {
         {/* POSTS */}
         {tab === "posts" && (
           <motion.div key="posts" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            {/* Feed health alert */}
+            {postsPage && postsPage.posts.length === 0 && (
+              <div className="flex items-start gap-3 bg-amber-500/8 border border-amber-500/20 rounded-xl px-4 py-3 mb-3">
+                <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Feed has no indexed posts</p>
+                  <p className="text-xs text-amber-600/80 dark:text-amber-500/80 mt-0.5">Try adding more keywords or broader terms. The indexer runs every 3 minutes.</p>
+                </div>
+              </div>
+            )}
+            {postsPage && postsPage.posts.length > 0 && (() => {
+              const newest = Math.max(...postsPage.posts.map(p => new Date(p.indexedAt).getTime()));
+              const hoursOld = (Date.now() - newest) / 3_600_000;
+              return hoursOld > 24 ? (
+                <div className="flex items-start gap-3 bg-amber-500/8 border border-amber-500/20 rounded-xl px-4 py-3 mb-3">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-700 dark:text-amber-400">No new posts in 24+ hours</p>
+                    <p className="text-xs text-amber-600/80 dark:text-amber-500/80 mt-0.5">Your keywords may not be matching recent content. Consider broadening them in the Keywords tab.</p>
+                  </div>
+                </div>
+              ) : null;
+            })()}
             <div className="bg-card border border-card-border rounded-xl overflow-hidden">
               {/* Header with mode toggle */}
               <div className="px-4 md:px-5 py-3 border-b border-border flex items-center justify-between gap-3 bg-muted/10 flex-wrap">
@@ -714,14 +766,44 @@ export default function FeedDetail() {
                                 </div>
                               )}
                             </div>
-                            <a
-                              href={`https://bsky.app/profile/${post.author}/post/${postIdFromUri(post.uri)}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="flex-shrink-0 text-muted-foreground hover:text-primary transition-colors mt-0.5"
-                            >
-                              <ArrowUpRight className="w-3.5 h-3.5" />
-                            </a>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              <button
+                                onClick={() => handleLike(post.uri, post.cid)}
+                                disabled={!!engagingPost || likedPosts.has(post.uri)}
+                                title={likedPosts.has(post.uri) ? "Liked" : "Like on Bluesky"}
+                                className={cn(
+                                  "p-1.5 rounded-lg transition-colors",
+                                  likedPosts.has(post.uri)
+                                    ? "text-rose-500 bg-rose-500/10"
+                                    : "text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10",
+                                  engagingPost === post.uri + "-like" && "opacity-50",
+                                )}
+                              >
+                                <Heart className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleRepost(post.uri, post.cid)}
+                                disabled={!!engagingPost || repostedPosts.has(post.uri)}
+                                title={repostedPosts.has(post.uri) ? "Reposted" : "Repost on Bluesky"}
+                                className={cn(
+                                  "p-1.5 rounded-lg transition-colors",
+                                  repostedPosts.has(post.uri)
+                                    ? "text-emerald-500 bg-emerald-500/10"
+                                    : "text-muted-foreground hover:text-emerald-500 hover:bg-emerald-500/10",
+                                  engagingPost === post.uri + "-repost" && "opacity-50",
+                                )}
+                              >
+                                <Repeat2 className="w-3.5 h-3.5" />
+                              </button>
+                              <a
+                                href={`https://bsky.app/profile/${post.author}/post/${postIdFromUri(post.uri)}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-muted/60 transition-colors"
+                              >
+                                <ArrowUpRight className="w-3.5 h-3.5" />
+                              </a>
+                            </div>
                           </div>
                         </div>
                       );

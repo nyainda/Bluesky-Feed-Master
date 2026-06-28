@@ -16,6 +16,23 @@ export async function runScheduler(env: Env): Promise<void> {
   const db = createDb(env.DB);
   const now = new Date().toISOString();
 
+  // ── Auto-retry: reset failed posts back to pending (max 3 retries, 5-min delay) ──
+  const RETRY_MAX = 3;
+  const RETRY_DELAY_MS = 5 * 60_000;
+  const failedPosts = await db.select().from(scheduledPostsTable).where(eq(scheduledPostsTable.status, "failed"));
+  for (const post of failedPosts) {
+    const retryCount = (post.errorMessage?.match(/\[retry:\d+\]/g) ?? []).length;
+    if (retryCount < RETRY_MAX) {
+      const retryAt = new Date(Date.now() + RETRY_DELAY_MS).toISOString();
+      console.log(`[scheduler] Post ${post.id} failed ${retryCount}x — scheduling retry ${retryCount + 1}/${RETRY_MAX} at ${retryAt}`);
+      await db.update(scheduledPostsTable)
+        .set({ status: "pending", scheduledAt: retryAt })
+        .where(eq(scheduledPostsTable.id, post.id));
+    } else {
+      console.log(`[scheduler] Post ${post.id} exhausted retries — staying failed permanently.`);
+    }
+  }
+
   const due = await db
     .select()
     .from(scheduledPostsTable)
@@ -72,10 +89,13 @@ export async function runScheduler(env: Env): Promise<void> {
 
       console.log(`[scheduler] Post ${post.id} sent — URIs: ${uris.join(", ")}`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const errMessage = err instanceof Error ? err.message : String(err);
+      // Prefix with [retry:N] so the retry counter can track attempts
+      const retryCount = (post.errorMessage?.match(/\[retry:\d+\]/g) ?? []).length;
+      const taggedMessage = `[retry:${retryCount + 1}] ${errMessage}`;
       await db
         .update(scheduledPostsTable)
-        .set({ status: "failed", errorMessage: message })
+        .set({ status: "failed", errorMessage: taggedMessage })
         .where(eq(scheduledPostsTable.id, post.id));
       console.error(`[scheduler] Post ${post.id} failed:`, err);
     }
