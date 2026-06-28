@@ -984,6 +984,8 @@ type UnfollowQueueDisplay = {
   failed: number;
   running: boolean;
   paused: boolean;
+  status: string;        // human-readable status line e.g. "Retrying (2/3)…" or "Rate limited — backing off 65s"
+  startedAt: number;     // Date.now() when queue began, for ETA
 };
 
 function QueueProgressBanner({
@@ -1002,6 +1004,22 @@ function QueueProgressBanner({
   const remaining = queue.total - queue.processed;
   const isDone = queue.processed >= queue.total;
 
+  // ETA: based on elapsed time and progress rate
+  let etaLabel = "";
+  if (!isDone && queue.processed > 0 && queue.startedAt > 0) {
+    const elapsed = (Date.now() - queue.startedAt) / 1000;
+    const rate = queue.processed / elapsed; // accounts/second
+    if (rate > 0) {
+      const secsLeft = remaining / rate;
+      if (secsLeft < 60) etaLabel = `~${Math.ceil(secsLeft)}s left`;
+      else if (secsLeft < 3600) etaLabel = `~${Math.ceil(secsLeft / 60)}m left`;
+      else etaLabel = `~${(secsLeft / 3600).toFixed(1)}h left`;
+    }
+  }
+
+  const isRateLimited = queue.status.startsWith("Rate limited");
+  const isRetrying = queue.status.startsWith("Retry");
+
   return (
     <motion.div
       initial={{ opacity: 0, y: -8 }}
@@ -1011,17 +1029,23 @@ function QueueProgressBanner({
         "rounded-xl border px-4 py-3 mb-4 overflow-hidden",
         isDone
           ? "bg-emerald-500/8 border-emerald-500/25"
+          : isRateLimited
+          ? "bg-orange-500/8 border-orange-500/25"
           : queue.paused
           ? "bg-amber-500/8 border-amber-500/25"
           : "bg-primary/6 border-primary/20",
       )}
     >
       <div className="flex items-center justify-between gap-3 mb-2">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {isDone ? (
             <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
             </div>
+          ) : isRateLimited ? (
+            <Loader2 className="w-4 h-4 text-orange-500 animate-spin flex-shrink-0" />
+          ) : isRetrying ? (
+            <Loader2 className="w-4 h-4 text-amber-500 animate-spin flex-shrink-0" />
           ) : queue.running ? (
             <Loader2 className="w-4 h-4 text-primary animate-spin flex-shrink-0" />
           ) : (
@@ -1032,16 +1056,21 @@ function QueueProgressBanner({
               ? `Done — unfollowed ${queue.succeeded.toLocaleString()} accounts`
               : queue.paused
               ? `Paused — ${remaining.toLocaleString()} remaining`
+              : queue.status
+              ? queue.status
               : `Unfollowing ${queue.total.toLocaleString()} accounts…`}
           </span>
           <span className="text-xs text-muted-foreground tabular-nums">
             {queue.processed.toLocaleString()} / {queue.total.toLocaleString()} ({pct}%)
           </span>
+          {etaLabel && (
+            <span className="text-xs text-muted-foreground tabular-nums">{etaLabel}</span>
+          )}
           {queue.failed > 0 && (
-            <span className="text-xs text-destructive tabular-nums">{queue.failed} failed</span>
+            <span className="text-xs text-destructive tabular-nums">{queue.failed.toLocaleString()} failed</span>
           )}
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           {!isDone && (
             queue.paused ? (
               <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={onResume}>
@@ -1060,14 +1089,19 @@ function QueueProgressBanner({
       </div>
       <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
         <motion.div
-          className={cn("h-full rounded-full", isDone ? "bg-emerald-500" : "bg-primary")}
+          className={cn(
+            "h-full rounded-full",
+            isDone ? "bg-emerald-500" : isRateLimited ? "bg-orange-500" : "bg-primary",
+          )}
           animate={{ width: `${pct}%` }}
           transition={{ ease: "easeOut", duration: 0.4 }}
         />
       </div>
       {!isDone && (
         <p className="text-[10px] text-muted-foreground mt-1.5">
-          Processing 200 per batch · 1.5s between batches · respects Bluesky rate limits
+          {isRateLimited
+            ? "Bluesky rate limit reached — auto-resuming after cooldown (no action needed)"
+            : `50/batch · 8s between batches · auto-retry on failure · ~375 unfollows/min`}
         </p>
       )}
     </motion.div>
@@ -1076,8 +1110,13 @@ function QueueProgressBanner({
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
-const QUEUE_BATCH_SIZE = 200;
-const QUEUE_BATCH_DELAY_MS = 1500;
+// Bluesky rate limit: 3000 req/300s = 10/s. CF worker uses concurrency-20 for deleteFollow.
+// Batch of 50 + 8s delay = ~375 unfollows/min (62% of limit) — safe with headroom.
+const QUEUE_BATCH_SIZE = 50;
+const QUEUE_BATCH_DELAY_MS = 8_000;      // 8s between successful batches
+const RATE_LIMIT_BACKOFF_MS = 65_000;    // 65s backoff when we detect rate limiting (just over the 60s window reset)
+const RETRY_DELAY_MS = 12_000;           // 12s before retrying a failed batch
+const MAX_BATCH_RETRIES = 3;             // retry each batch up to 3 times before skipping
 
 export default function Audience() {
   const [tab, setTab] = useState<Tab>("followers");
@@ -1158,6 +1197,7 @@ export default function Audience() {
 
   const [queueDisplay, setQueueDisplay] = useState<UnfollowQueueDisplay>({
     total: 0, processed: 0, succeeded: 0, failed: 0, running: false, paused: false,
+    status: "", startedAt: 0,
   });
 
   const runQueue = useCallback(async () => {
@@ -1165,44 +1205,101 @@ export default function Audience() {
     isProcessingRef.current = true;
     isPausedRef.current = false;
     isCancelledRef.current = false;
+    const startedAt = Date.now();
+    setQueueDisplay(p => ({ ...p, running: true, paused: false, startedAt, status: "" }));
+
+    const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
     while (true) {
       if (isCancelledRef.current) break;
       if (isPausedRef.current) {
-        setQueueDisplay(p => ({ ...p, running: false, paused: true }));
+        setQueueDisplay(p => ({ ...p, running: false, paused: true, status: "" }));
         break;
       }
+
       const allItems = queueItemsRef.current;
       const idx = queueProcessedRef.current;
       if (idx >= allItems.length) {
-        setQueueDisplay(p => ({ ...p, running: false, paused: false }));
+        setQueueDisplay(p => ({ ...p, running: false, paused: false, status: "" }));
         break;
       }
+
       const batch = allItems.slice(idx, idx + QUEUE_BATCH_SIZE);
       const followUris = batch.map(x => x.followUri).filter(Boolean) as string[];
       const fallbackDids = batch.filter(x => !x.followUri).map(x => x.did);
-      try {
-        const res = await customFetch<{ succeeded: number; failed: number }>(
-          "/api/bluesky/bulk-unfollow",
-          { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ followUris, dids: fallbackDids }) },
-        );
-        queueProcessedRef.current += batch.length;
-        setQueueDisplay(p => ({
-          ...p,
-          processed: queueProcessedRef.current,
-          succeeded: p.succeeded + (res.succeeded ?? 0),
-          failed: p.failed + (res.failed ?? 0),
-        }));
-      } catch {
-        queueProcessedRef.current += batch.length;
-        setQueueDisplay(p => ({
-          ...p,
-          processed: queueProcessedRef.current,
-          failed: p.failed + batch.length,
-        }));
+
+      let batchSucceeded = 0;
+      let batchFailed = 0;
+      let retryCount = 0;
+
+      // Retry loop — up to MAX_BATCH_RETRIES attempts per batch
+      while (retryCount <= MAX_BATCH_RETRIES) {
+        if (isCancelledRef.current || isPausedRef.current) break;
+
+        try {
+          const res = await customFetch<{ succeeded: number; failed: number }>(
+            "/api/bluesky/bulk-unfollow",
+            { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ followUris, dids: fallbackDids }) },
+          );
+          batchSucceeded = res.succeeded ?? 0;
+          batchFailed = res.failed ?? 0;
+
+          // Full failure (0 succeeded) strongly suggests rate limiting — back off
+          if (batchSucceeded === 0 && batchFailed > 0 && retryCount < MAX_BATCH_RETRIES) {
+            setQueueDisplay(p => ({
+              ...p,
+              status: `Rate limited — backing off ${Math.round(RATE_LIMIT_BACKOFF_MS / 1000)}s before retry…`,
+            }));
+            await sleep(RATE_LIMIT_BACKOFF_MS);
+            retryCount++;
+            continue;
+          }
+
+          // Partial failure (some succeeded, some didn't) — short retry delay
+          if (batchFailed > 0 && batchSucceeded > 0 && retryCount < MAX_BATCH_RETRIES) {
+            setQueueDisplay(p => ({
+              ...p,
+              status: `Retry ${retryCount + 1}/${MAX_BATCH_RETRIES} — ${batchFailed} accounts didn't go through…`,
+            }));
+            await sleep(RETRY_DELAY_MS);
+            retryCount++;
+            continue;
+          }
+
+          // Success (all or partial after retries) — break retry loop
+          break;
+        } catch {
+          if (retryCount < MAX_BATCH_RETRIES) {
+            const backoff = RETRY_DELAY_MS * (retryCount + 1);
+            setQueueDisplay(p => ({
+              ...p,
+              status: `Network error — retry ${retryCount + 1}/${MAX_BATCH_RETRIES} in ${Math.round(backoff / 1000)}s…`,
+            }));
+            await sleep(backoff);
+            retryCount++;
+            continue;
+          }
+          batchFailed = batch.length;
+          break;
+        }
       }
-      await new Promise(r => setTimeout(r, QUEUE_BATCH_DELAY_MS));
+
+      // Advance queue pointer and update display
+      queueProcessedRef.current += batch.length;
+      setQueueDisplay(p => ({
+        ...p,
+        running: true,
+        processed: queueProcessedRef.current,
+        succeeded: p.succeeded + batchSucceeded,
+        failed: p.failed + batchFailed,
+        status: "",
+      }));
+
+      // Normal inter-batch delay (skip if cancelled/paused)
+      if (!isCancelledRef.current && !isPausedRef.current && queueProcessedRef.current < allItems.length) {
+        await sleep(QUEUE_BATCH_DELAY_MS);
+      }
     }
 
     isProcessingRef.current = false;
@@ -1247,7 +1344,7 @@ export default function Audience() {
     queueItemsRef.current = [];
     queueProcessedRef.current = 0;
     isProcessingRef.current = false;
-    setQueueDisplay({ total: 0, processed: 0, succeeded: 0, failed: 0, running: false, paused: false });
+    setQueueDisplay({ total: 0, processed: 0, succeeded: 0, failed: 0, running: false, paused: false, status: "", startedAt: 0 });
   }
 
   // ── Load-all-pages-and-queue ──────────────────────────────────────────────
@@ -1483,7 +1580,7 @@ export default function Audience() {
                           variant="outline"
                           className="h-7 text-xs gap-1 border-amber-500/40 text-amber-600 hover:bg-amber-500/8"
                           onClick={enqueueSelected}
-                          title="Queue for gradual unfollow — processes 200 at a time with rate-limit delays"
+                          title="Queue for gradual unfollow — 50 per batch, 8s between batches, auto-retry on rate limits (~375/min)"
                         >
                           <ListOrdered className="w-3 h-3" />
                           Queue {selected.size.toLocaleString()}
