@@ -1,0 +1,27 @@
+kind = "mobile"
+previewPath = "/mobile/"
+title = "FeedForge Mobile"
+version = "1.0.0"
+id = "artifacts/bluesky-feeds-mobile"
+router = "expo-domain"
+
+[[integratedSkills]]
+name = "expo"
+version = "1.0.0"
+
+[[services]]
+ensurePreviewReachable = "/status"
+name = "expo"
+paths = [ "/mobile/" ]
+localPort = 24352
+
+[services.development]
+run = "pnpm --filter @workspace/bluesky-feeds-mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/bluesky-feeds-mobile", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/bluesky-feeds-mobile", "run", "serve" ]
+
+[services.env]
+PORT = "24352"
+BASE_PATH = "/mobile/"

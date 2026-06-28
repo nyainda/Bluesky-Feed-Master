@@ -1,0 +1,8 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "E-G5b00ytvbWSyHKQ3OUQ"
+uri = "file://artifacts/bluesky-feeds-mobile/assets/images/icon.png"
+type = "image"
+title = "feedforge mobile icon"
