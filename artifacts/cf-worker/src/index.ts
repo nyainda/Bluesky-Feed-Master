@@ -84,6 +84,19 @@ app.get("/api/firehose/status", (c) =>
   }),
 );
 
+// Manual trigger — runs the indexer immediately (useful after creating a new feed or adding keywords)
+app.post("/api/admin/trigger-index", async (c) => {
+  const start = Date.now();
+  try {
+    await runIndexer(c.env);
+    const elapsed = Math.round((Date.now() - start) / 1000);
+    return c.json({ ok: true, message: `Indexer completed in ${elapsed}s` });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ ok: false, error: message }, 500);
+  }
+});
+
 app.route("/api", feedsRoute);
 app.route("/api", postsRoute);
 app.route("/api", statsRoute);

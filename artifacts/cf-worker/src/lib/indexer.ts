@@ -5,8 +5,11 @@ import type { Env } from "../index";
 
 /**
  * Cron-based post indexer — runs every 3 minutes via Cloudflare Cron Triggers.
- * Replaces the persistent firehose WebSocket. Uses Bluesky's searchPosts API
- * to find recent posts matching each feed's keywords and upserts them into D1.
+ * Uses Bluesky's searchPosts API (plain text + hashtag) to find posts for each
+ * feed keyword, then upserts them into D1 with the feed's recordName in algoTags.
+ *
+ * Processes all (feed × keyword) tasks concurrently in batches of 8 to avoid
+ * the sequential-serial timeout that killed feeds beyond the 2nd or 3rd.
  */
 export async function runIndexer(env: Env): Promise<void> {
   const db = createDb(env.DB);
@@ -28,94 +31,102 @@ export async function runIndexer(env: Env): Promise<void> {
     password: env.BLUESKY_APP_PASSWORD,
   });
 
-  let totalIndexed = 0;
-  let totalSkipped = 0;
-  let totalKeywords = 0;
+  // ── Collect all (feed, keyword) tasks upfront ──────────────────────────────
+  type Task = { feed: (typeof feeds)[0]; keyword: string };
+  const tasks: Task[] = [];
 
   for (const feed of feeds) {
     const keywords = await db
       .select()
       .from(keywordsTable)
       .where(eq(keywordsTable.feedId, feed.id));
-
-    if (keywords.length === 0) continue;
-    totalKeywords += keywords.length;
-
     for (const kw of keywords) {
-      try {
-        // Search both plain text and hashtag variations for better coverage
-        const [plainResult, hashtagResult] = await Promise.allSettled([
-          agent.app.bsky.feed.searchPosts({
-            q: kw.keyword,
-            limit: 25,
-            sort: "latest",
-          }),
-          agent.app.bsky.feed.searchPosts({
-            q: `#${kw.keyword}`,
-            limit: 25,
-            sort: "latest",
-          }),
-        ]);
+      tasks.push({ feed, keyword: kw.keyword });
+    }
+  }
 
-        const posts = [
-          ...(plainResult.status === "fulfilled" ? plainResult.value.data.posts : []),
-          ...(hashtagResult.status === "fulfilled" ? hashtagResult.value.data.posts : []),
-        ];
+  if (tasks.length === 0) {
+    console.log("[indexer] No keywords configured — skipping.");
+    return;
+  }
 
-        // Deduplicate by URI
-        const uniquePosts = [...new Map(posts.map((p) => [p.uri, p])).values()];
+  // ── Process tasks concurrently in batches of 8 ─────────────────────────────
+  // Each task fires 2 searchPosts calls (plain + hashtag) in parallel.
+  // 8 tasks × 2 calls = 16 concurrent API requests per batch.
+  // With ~90 tasks total this takes ~6 batches × ~500ms = ~3 seconds
+  // instead of 90 sequential pairs × ~350ms = 31 seconds (which timed out).
+  const CONCURRENCY = 8;
+  let totalIndexed = 0;
+  let totalSkipped = 0;
 
-        const algoTag = feed.recordName;
+  for (let i = 0; i < tasks.length; i += CONCURRENCY) {
+    const batch = tasks.slice(i, i + CONCURRENCY);
 
-        for (const post of uniquePosts) {
-          const postText = (post.record as { text?: string }).text ?? "";
+    await Promise.allSettled(
+      batch.map(async ({ feed, keyword }) => {
+        try {
+          const [plainResult, hashtagResult] = await Promise.allSettled([
+            agent.app.bsky.feed.searchPosts({ q: keyword, limit: 25, sort: "latest" }),
+            agent.app.bsky.feed.searchPosts({ q: `#${keyword}`, limit: 25, sort: "latest" }),
+          ]);
 
-          try {
-            await db
-              .insert(indexedPostsTable)
-              .values({
-                uri: post.uri,
-                cid: post.cid,
-                author: post.author.did,
-                text: postText,
-                algoTags: algoTag,
-                indexedAt: new Date().toISOString(),
-                likes: post.likeCount ?? 0,
-                reposts: post.repostCount ?? 0,
-                replies: post.replyCount ?? 0,
-                quotes: post.quoteCount ?? 0,
-              })
-              .onConflictDoUpdate({
-                target: indexedPostsTable.uri,
-                set: {
-                  algoTags: sql`CASE
-                    WHEN algo_tags LIKE ${"%" + algoTag + "%"}
-                    THEN algo_tags
-                    ELSE algo_tags || ',' || ${algoTag}
-                  END`,
+          const posts = [
+            ...(plainResult.status === "fulfilled" ? plainResult.value.data.posts : []),
+            ...(hashtagResult.status === "fulfilled" ? hashtagResult.value.data.posts : []),
+          ];
+
+          // Deduplicate by URI
+          const uniquePosts = [...new Map(posts.map((p) => [p.uri, p])).values()];
+          const algoTag = feed.recordName;
+
+          for (const post of uniquePosts) {
+            const postText = (post.record as { text?: string }).text ?? "";
+            try {
+              await db
+                .insert(indexedPostsTable)
+                .values({
+                  uri: post.uri,
+                  cid: post.cid,
+                  author: post.author.did,
+                  text: postText,
+                  algoTags: algoTag,
+                  indexedAt: new Date().toISOString(),
                   likes: post.likeCount ?? 0,
                   reposts: post.repostCount ?? 0,
                   replies: post.replyCount ?? 0,
                   quotes: post.quoteCount ?? 0,
-                  engagementSyncedAt: new Date().toISOString(),
-                },
-              });
-            await markAuthorDirty(env, post.author.did);
-            totalIndexed++;
-          } catch (insertErr) {
-            console.error(`[indexer] Insert failed for ${post.uri}:`, insertErr);
-            totalSkipped++;
+                })
+                .onConflictDoUpdate({
+                  target: indexedPostsTable.uri,
+                  set: {
+                    algoTags: sql`CASE
+                      WHEN algo_tags LIKE ${"%" + algoTag + "%"}
+                      THEN algo_tags
+                      ELSE algo_tags || ',' || ${algoTag}
+                    END`,
+                    likes: post.likeCount ?? 0,
+                    reposts: post.repostCount ?? 0,
+                    replies: post.replyCount ?? 0,
+                    quotes: post.quoteCount ?? 0,
+                    engagementSyncedAt: new Date().toISOString(),
+                  },
+                });
+              await markAuthorDirty(env, post.author.did);
+              totalIndexed++;
+            } catch {
+              totalSkipped++;
+            }
           }
+        } catch (searchErr) {
+          console.error(`[indexer] Search failed for keyword "${keyword}" (feed: ${feed.recordName}):`, searchErr);
         }
-      } catch (searchErr) {
-        console.error(`[indexer] Search failed for keyword "${kw.keyword}":`, searchErr);
-      }
-    }
+      }),
+    );
   }
 
   console.log(
     `[indexer] Done — ${totalIndexed} posts indexed, ${totalSkipped} skipped. ` +
-      `${feeds.length} feeds processed, ${totalKeywords} keywords total.`,
+      `${feeds.length} feeds, ${tasks.length} keyword tasks processed.`,
   );
 }
 

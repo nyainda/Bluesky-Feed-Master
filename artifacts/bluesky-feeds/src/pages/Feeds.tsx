@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus, Trash2, ChevronRight, CheckCircle, XCircle, Rss,
-  Sparkles, Tag, Check, Search, Edit2, X, RotateCcw,
+  Sparkles, Tag, Check, Search, Edit2, X, RotateCcw, RefreshCw,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -479,6 +479,29 @@ export default function Feeds() {
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Feed | null>(null);
   const [search, setSearch] = useState("");
+  const [indexing, setIndexing] = useState(false);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  async function triggerIndex() {
+    setIndexing(true);
+    try {
+      const res = await customFetch<{ ok: boolean; message?: string; error?: string }>(
+        "/api/admin/trigger-index",
+        { method: "POST" },
+      );
+      if (res.ok) {
+        toast({ title: "Indexing complete", description: res.message ?? "Posts indexed successfully" });
+        queryClient.invalidateQueries();
+      } else {
+        toast({ title: "Indexing failed", description: res.error ?? "Unknown error", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Indexing failed", description: "Could not reach the indexer", variant: "destructive" });
+    } finally {
+      setIndexing(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     if (!feeds) return [];
@@ -500,6 +523,17 @@ export default function Feeds() {
           <p className="text-muted-foreground text-sm mt-0.5">Manage your Bluesky custom feed algorithms</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            onClick={triggerIndex}
+            disabled={indexing}
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            title="Manually run the indexer to pick up new posts for all feeds"
+          >
+            <RefreshCw className={cn("w-3.5 h-3.5", indexing && "animate-spin")} />
+            <span className="hidden sm:inline">{indexing ? "Indexing…" : "Index Now"}</span>
+          </Button>
           <Button onClick={() => setTemplatesOpen(true)} variant="outline" size="sm" className="gap-1.5">
             <Sparkles className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Templates</span>

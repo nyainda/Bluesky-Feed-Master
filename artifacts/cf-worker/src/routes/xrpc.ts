@@ -53,7 +53,7 @@ route.get("/xrpc/app.bsky.feed.getFeedSkeleton", async (c) => {
   const [feed] = await db
     .select()
     .from(feedsTable)
-    .where(and(eq(feedsTable.recordName, algoName), eq(feedsTable.isActive, true)));
+    .where(eq(feedsTable.recordName, algoName));
 
   if (!feed) {
     return c.json({ error: "UnsupportedAlgorithm", message: `Unknown feed: ${algoName}` }, 404);
