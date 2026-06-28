@@ -14,9 +14,12 @@
       "backgroundColor": "#fafafa"
     },
     "ios": {
-      "supportsTablet": false
+      "supportsTablet": false,
+      "bundleIdentifier": "com.replit.blueskyfeedsmobile"
     },
-    "android": {},
+    "android": {
+      "package": "com.replit.blueskyfeedsmobile"
+    },
     "web": {
       "favicon": "./assets/images/icon.png"
     },

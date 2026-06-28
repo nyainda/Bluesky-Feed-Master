@@ -1,1 +1,1 @@
-- [Mobile app architecture](mobile-arch.md) — FeedForge Mobile uses Mode A (api-client-react hooks), setBaseUrl at module level in _layout.tsx, no auth needed.
+- [Mobile app architecture](mobile-arch.md) — FeedForge Mobile uses Mode A (api-client-react), no auth, colors derived from web CSS.
