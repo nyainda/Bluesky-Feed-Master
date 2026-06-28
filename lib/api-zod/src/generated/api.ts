@@ -445,6 +445,7 @@ export const GetFollowersResponse = zod.object({
       followersCount: zod.number(),
       followsCount: zod.number(),
       followedAt: zod.string().nullish(),
+      followUri: zod.string().nullish(),
     }),
   ),
   cursor: zod.string().nullish(),
@@ -472,6 +473,7 @@ export const GetFollowingResponse = zod.object({
       followersCount: zod.number(),
       followsCount: zod.number(),
       followedAt: zod.string().nullish(),
+      followUri: zod.string().nullish(),
     }),
   ),
   cursor: zod.string().nullish(),
@@ -490,6 +492,7 @@ export const GetNotFollowingBackResponseItem = zod.object({
   followersCount: zod.number(),
   followsCount: zod.number(),
   followedAt: zod.string().nullish(),
+  followUri: zod.string().nullish(),
 });
 export const GetNotFollowingBackResponse = zod.array(
   GetNotFollowingBackResponseItem,
@@ -500,6 +503,7 @@ export const GetNotFollowingBackResponse = zod.array(
  */
 export const BulkFollowBody = zod.object({
   dids: zod.array(zod.string()),
+  followUris: zod.array(zod.string()).optional(),
 });
 
 export const BulkFollowResponse = zod.object({
@@ -513,6 +517,7 @@ export const BulkFollowResponse = zod.object({
  */
 export const BulkUnfollowBody = zod.object({
   dids: zod.array(zod.string()),
+  followUris: zod.array(zod.string()).optional(),
 });
 
 export const BulkUnfollowResponse = zod.object({

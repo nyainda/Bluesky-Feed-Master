@@ -177,6 +177,8 @@ export interface AudienceUser {
   followsCount: number;
   /** @nullable */
   followedAt?: string | null;
+  /** @nullable */
+  followUri?: string | null;
 }
 
 export interface AudiencePage {
@@ -194,6 +196,7 @@ export interface SyncResult {
 
 export interface BulkActionBody {
   dids: string[];
+  followUris?: string[];
 }
 
 export interface BulkActionResult {

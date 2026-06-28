@@ -1057,7 +1057,20 @@ export default function Audience() {
     });
   }
   function handleBulkUnfollow() {
-    bulkUnfollow.mutate({ data: { dids: Array.from(selected) } }, {
+    const selectedDids = Array.from(selected);
+    // Build DID → followUri from all loaded users (avoids per-profile API lookups)
+    const followUriMap = new Map<string, string>();
+    for (const u of following?.users ?? []) {
+      if (u.followUri) followUriMap.set(u.did, u.followUri);
+    }
+    for (const u of nfbUsers) {
+      if (u.followUri) followUriMap.set(u.did, u.followUri);
+    }
+    const followUris = selectedDids
+      .map(did => followUriMap.get(did))
+      .filter((uri): uri is string => !!uri);
+    const fallbackDids = selectedDids.filter(did => !followUriMap.has(did));
+    bulkUnfollow.mutate({ data: { dids: fallbackDids, followUris } }, {
       onSuccess: (r) => { toast({ title: `Unfollowed ${r.succeeded} accounts` }); clearSelection(); queryClient.invalidateQueries(); },
       onError: () => toast({ title: "Bulk unfollow failed", variant: "destructive" }),
     });
@@ -1276,8 +1289,9 @@ export default function Audience() {
                           actionIcon={UserMinus}
                           onAction={() => {
                             const targetDid = user.did;
+                            const followUri = user.followUri ?? undefined;
                             bulkUnfollow.mutate(
-                              { data: { dids: [targetDid] } },
+                              { data: { dids: followUri ? [] : [targetDid], followUris: followUri ? [followUri] : undefined } },
                               {
                                 onSuccess: (r) => { toast({ title: `Unfollowed ${r.succeeded} account${r.succeeded !== 1 ? "s" : ""}` }); queryClient.invalidateQueries(); },
                                 onError: () => toast({ title: "Unfollow failed", variant: "destructive" }),

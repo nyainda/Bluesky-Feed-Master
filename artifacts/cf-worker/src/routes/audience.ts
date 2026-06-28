@@ -46,10 +46,12 @@ route.get("/bluesky/followers", async (c) => {
 route.get("/bluesky/following", async (c) => {
   const publisherDid = c.env.FEEDGEN_PUBLISHER_DID;
   if (!publisherDid) return c.json({ error: "FEEDGEN_PUBLISHER_DID not configured" }, 404);
+  if (!c.env.BLUESKY_HANDLE || !c.env.BLUESKY_APP_PASSWORD) {
+    return c.json({ error: "BLUESKY_HANDLE and BLUESKY_APP_PASSWORD required" }, 400);
+  }
 
   try {
-    const { AtpAgent } = await import("@atproto/api");
-    const agent = new AtpAgent({ service: "https://public.api.bsky.app" });
+    const agent = await getAuthenticatedAgent(c.env);
     const cursor = c.req.query("cursor");
     const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 100);
 
@@ -64,6 +66,7 @@ route.get("/bluesky/following", async (c) => {
         followersCount: f.followersCount ?? 0,
         followsCount: f.followsCount ?? 0,
         followedAt: null,
+        followUri: f.viewer?.following ?? null,
       })),
       cursor: result.data.cursor,
     });
@@ -156,32 +159,46 @@ route.post("/bluesky/bulk-unfollow", async (c) => {
   try { body = await c.req.json(); } catch {
     return c.json({ error: "Invalid JSON body" }, 400);
   }
-  const { dids } = body as Record<string, unknown>;
-  if (!Array.isArray(dids) || dids.length === 0) {
-    return c.json({ error: "dids must be a non-empty array" }, 400);
-  }
+  const { dids, followUris } = body as Record<string, unknown>;
+
+  const CONCURRENCY = 20;
+  const MAX_PER_REQUEST = 500;
 
   const agent = await getAuthenticatedAgent(c.env);
   let succeeded = 0;
   let failed = 0;
 
-  for (const did of dids) {
-    try {
-      // Look up the follow record URI from the viewer relationship
-      const profile = await agent.getProfile({ actor: String(did) });
-      const followUri = profile.data.viewer?.following;
-      if (!followUri) {
-        // Not following this person — count as succeeded (idempotent)
-        succeeded++;
-        continue;
+  // ── Fast path: followUris provided directly — skip profile lookup entirely ──
+  if (Array.isArray(followUris) && followUris.length > 0) {
+    const uris = followUris.slice(0, MAX_PER_REQUEST).map(String);
+    for (let i = 0; i < uris.length; i += CONCURRENCY) {
+      const batch = uris.slice(i, i + CONCURRENCY);
+      const results = await Promise.allSettled(batch.map((uri) => agent.deleteFollow(uri)));
+      for (const r of results) {
+        if (r.status === "fulfilled") succeeded++;
+        else failed++;
       }
-      await agent.deleteFollow(followUri);
-      succeeded++;
-    } catch {
-      failed++;
     }
+    return c.json({ succeeded, failed });
   }
 
+  // ── Slow path: only DIDs provided — look up follow URIs in parallel (capped at 50) ──
+  if (!Array.isArray(dids) || dids.length === 0) {
+    return c.json({ error: "dids or followUris must be a non-empty array" }, 400);
+  }
+  const didList = dids.slice(0, 50).map(String);
+  const lookupResults = await Promise.allSettled(
+    didList.map(async (did) => {
+      const profile = await agent.getProfile({ actor: did });
+      const followUri = profile.data.viewer?.following;
+      if (followUri) await agent.deleteFollow(followUri);
+      return !!followUri;
+    }),
+  );
+  for (const r of lookupResults) {
+    if (r.status === "fulfilled") succeeded++;
+    else failed++;
+  }
   return c.json({ succeeded, failed });
 });
 
@@ -254,16 +271,18 @@ route.post("/bluesky/sync-engagement", async (c) => {
 route.get("/bluesky/not-following-back", async (c) => {
   const publisherDid = c.env.FEEDGEN_PUBLISHER_DID;
   if (!publisherDid) return c.json({ error: "FEEDGEN_PUBLISHER_DID not configured" }, 404);
+  if (!c.env.BLUESKY_HANDLE || !c.env.BLUESKY_APP_PASSWORD) {
+    return c.json({ error: "BLUESKY_HANDLE and BLUESKY_APP_PASSWORD required" }, 400);
+  }
 
   const cursor = c.req.query("cursor") || undefined;
   const pageSize = 100;
 
   try {
-    const { AtpAgent } = await import("@atproto/api");
-    const agent = new AtpAgent({ service: "https://public.api.bsky.app" });
+    const agent = await getAuthenticatedAgent(c.env);
 
-    // getFollows returns viewer.followedBy — the follow record URI if they follow you back.
-    // This is accurate and requires only one API call per page.
+    // Authenticated getFollows: viewer.following = the publisher's follow record URI for each person (needed for unfollow)
+    // viewer.followedBy = the follow record URI if they follow the publisher back (used for NFB filter)
     const result = await agent.getFollows({
       actor: publisherDid,
       limit: pageSize,
@@ -281,6 +300,7 @@ route.get("/bluesky/not-following-back", async (c) => {
         followersCount: u.followersCount ?? 0,
         followsCount: u.followsCount ?? 0,
         followedAt: null,
+        followUri: u.viewer?.following ?? null,
       }));
 
     return c.json({
