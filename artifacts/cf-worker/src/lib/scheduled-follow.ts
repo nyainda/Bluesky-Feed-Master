@@ -1,9 +1,15 @@
 import type { Env } from "../index";
 
 const TABLE = "auto_follow_queue";
-// 8 follows per 3-min cron = ~160/hour. Conservative and human-like.
-const BATCH_PER_CRON = 8;
-const DELAY_MS = 1_200;
+
+// 10 follows per 3-min cron = ~4,800/day — just under Bluesky's 5,000/day limit.
+// 500ms delay between each follow = safe burst rate.
+const BATCH_PER_CRON = 10;
+const DELAY_MS = 500;
+
+// Follow-back check: verify 5 accounts per tick that haven't followed back after N days.
+// 5 × 480 ticks/day = 2,400 checks/day — more than enough to track follow→followback loop.
+const FOLLOWBACK_CHECK_PER_TICK = 5;
 
 export async function ensureFollowQueueTable(env: Env): Promise<void> {
   await env.DB.prepare(
@@ -21,15 +27,15 @@ export async function ensureFollowQueueTable(env: Env): Promise<void> {
 
   await env.DB.prepare(
     `CREATE TABLE IF NOT EXISTS auto_follow_log (
-      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-      did                   TEXT NOT NULL UNIQUE,
-      handle                TEXT NOT NULL DEFAULT '',
-      followers_count       INTEGER NOT NULL DEFAULT 0,
-      market                TEXT NOT NULL DEFAULT '',
-      followed_at           TEXT NOT NULL DEFAULT (datetime('now')),
-      follow_back_status    TEXT NOT NULL DEFAULT 'pending',
+      id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+      did                    TEXT NOT NULL UNIQUE,
+      handle                 TEXT NOT NULL DEFAULT '',
+      followers_count        INTEGER NOT NULL DEFAULT 0,
+      market                 TEXT NOT NULL DEFAULT '',
+      followed_at            TEXT NOT NULL DEFAULT (datetime('now')),
+      follow_back_status     TEXT NOT NULL DEFAULT 'pending',
       follow_back_checked_at TEXT,
-      unfollow_queued_at    TEXT
+      unfollow_queued_at     TEXT
     )`,
   ).run();
 }
@@ -41,12 +47,12 @@ export async function enqueueFollowItems(
   await ensureFollowQueueTable(env);
 
   let enqueued = 0;
-  let skipped = 0;
-  const CHUNK = 50;
+  let skipped  = 0;
+  const CHUNK  = 50;
 
   for (let i = 0; i < items.length; i += CHUNK) {
-    const chunk = items.slice(i, i + CHUNK);
-    const stmts = chunk.map((item) =>
+    const chunk  = items.slice(i, i + CHUNK);
+    const stmts  = chunk.map((item) =>
       env.DB.prepare(
         `INSERT INTO ${TABLE} (did, handle, followers_count, market) VALUES (?, ?, ?, ?)
          ON CONFLICT(did) DO NOTHING`,
@@ -63,11 +69,7 @@ export async function enqueueFollowItems(
 }
 
 export async function getFollowQueueStatus(env: Env): Promise<{
-  pending: number;
-  done: number;
-  failed: number;
-  total: number;
-  estimatedMinutesLeft: number;
+  pending: number; done: number; failed: number; total: number; estimatedMinutesLeft: number;
 }> {
   try {
     await ensureFollowQueueTable(env);
@@ -80,19 +82,24 @@ export async function getFollowQueueStatus(env: Env): Promise<{
       if (row.status in counts) counts[row.status] = Number(row.cnt);
     }
     const total = counts.pending + counts.done + counts.failed;
-    const estimatedMinutesLeft = Math.ceil((counts.pending / BATCH_PER_CRON) * 3);
-    return { pending: counts.pending, done: counts.done, failed: counts.failed, total, estimatedMinutesLeft };
+    return {
+      pending: counts.pending, done: counts.done, failed: counts.failed, total,
+      estimatedMinutesLeft: Math.ceil((counts.pending / BATCH_PER_CRON) * 3),
+    };
   } catch {
     return { pending: 0, done: 0, failed: 0, total: 0, estimatedMinutesLeft: 0 };
   }
 }
 
 export async function clearFollowQueue(env: Env): Promise<void> {
-  try {
-    await env.DB.prepare(`DELETE FROM ${TABLE} WHERE status = 'pending'`).run();
-  } catch {}
+  try { await env.DB.prepare(`DELETE FROM ${TABLE} WHERE status = 'pending'`).run(); } catch {}
 }
 
+/**
+ * Runs every cron tick. Drains BATCH_PER_CRON (10) items from the follow queue.
+ * Rate: 10/tick × 480 ticks/day = 4,800/day — safely under Bluesky's 5,000/day limit.
+ * No artificial long delays — 500ms between follows is already conservative.
+ */
 export async function runScheduledFollow(env: Env): Promise<void> {
   if (!env.BLUESKY_HANDLE || !env.BLUESKY_APP_PASSWORD) return;
 
@@ -101,13 +108,11 @@ export async function runScheduledFollow(env: Env): Promise<void> {
     pendingRow = await env.DB.prepare(
       `SELECT COUNT(*) as cnt FROM ${TABLE} WHERE status = 'pending'`,
     ).first<{ cnt: number }>();
-  } catch {
-    return;
-  }
+  } catch { return; }
 
   if (!pendingRow || pendingRow.cnt === 0) return;
 
-  console.log(`[scheduled-follow] ${pendingRow.cnt} pending — processing up to ${BATCH_PER_CRON}`);
+  console.log(`[scheduled-follow] ${pendingRow.cnt} pending — following up to ${BATCH_PER_CRON}`);
 
   const { AtpAgent } = await import("@atproto/api");
   const agent = new AtpAgent({ service: "https://bsky.social" });
@@ -120,13 +125,10 @@ export async function runScheduledFollow(env: Env): Promise<void> {
 
   const rows = await env.DB.prepare(
     `SELECT id, did, handle, followers_count, market FROM ${TABLE}
-     WHERE status = 'pending'
-     ORDER BY queued_at ASC
-     LIMIT ${BATCH_PER_CRON}`,
+     WHERE status = 'pending' ORDER BY queued_at ASC LIMIT ${BATCH_PER_CRON}`,
   ).all<{ id: number; did: string; handle: string; followers_count: number; market: string }>();
 
-  let done = 0;
-  let failed = 0;
+  let done = 0; let failed = 0;
 
   for (const row of rows.results) {
     try {
@@ -136,7 +138,7 @@ export async function runScheduledFollow(env: Env): Promise<void> {
         `UPDATE ${TABLE} SET status = 'done', processed_at = datetime('now') WHERE id = ?`,
       ).bind(row.id).run();
 
-      // Log the follow for follow-back tracking
+      // Record in follow log for the 7-day follow-back tracking
       await env.DB.prepare(
         `INSERT INTO auto_follow_log (did, handle, followers_count, market)
          VALUES (?, ?, ?, ?)
@@ -155,17 +157,21 @@ export async function runScheduledFollow(env: Env): Promise<void> {
       ).bind(row.id).run();
       failed++;
     }
-
     await new Promise((r) => setTimeout(r, DELAY_MS));
   }
 
   const remaining = pendingRow.cnt - rows.results.length;
-  console.log(`[scheduled-follow] Batch done — ${done} followed, ${failed} failed, ${remaining} remaining`);
+  console.log(`[scheduled-follow] ${done} followed, ${failed} failed, ${remaining} remaining in queue`);
 }
 
 /**
- * Runs daily. Finds accounts we followed N days ago that haven't followed back,
- * and queues them for unfollow via the unfollow_scheduled_queue.
+ * Runs every cron tick. Checks FOLLOWBACK_CHECK_PER_TICK accounts from the follow log
+ * that we followed > followbackDays ago and haven't checked yet.
+ *
+ * If they followed back → mark 'followed' (keep).
+ * If not → mark 'unfollowed' + queue in unfollow_scheduled_queue for auto-unfollow.
+ *
+ * This closes the follow→check→unfollow loop automatically, forever.
  */
 export async function runFollowBackCheck(env: Env): Promise<void> {
   if (!env.BLUESKY_HANDLE || !env.BLUESKY_APP_PASSWORD) return;
@@ -181,43 +187,42 @@ export async function runFollowBackCheck(env: Env): Promise<void> {
       `SELECT did, handle FROM auto_follow_log
        WHERE follow_back_status = 'pending'
          AND datetime(followed_at, '+' || ? || ' days') < datetime('now')
-       LIMIT 200`,
-    ).bind(followbackDays).all<{ did: string; handle: string }>();
-  } catch {
-    return;
-  }
+         AND (follow_back_checked_at IS NULL OR datetime(follow_back_checked_at, '+1 day') < datetime('now'))
+       LIMIT ?`,
+    ).bind(followbackDays, FOLLOWBACK_CHECK_PER_TICK).all<{ did: string; handle: string }>();
+  } catch { return; }
 
   if (rows.results.length === 0) return;
 
-  console.log(`[follow-back-check] Checking ${rows.results.length} accounts for follow-back (window: ${followbackDays}d)`);
+  console.log(`[followback-check] Checking ${rows.results.length} accounts (window: ${followbackDays}d)`);
 
   const { AtpAgent } = await import("@atproto/api");
   const agent = new AtpAgent({ service: "https://bsky.social" });
   try {
     await agent.login({ identifier: env.BLUESKY_HANDLE, password: env.BLUESKY_APP_PASSWORD });
-  } catch {
-    return;
-  }
+  } catch { return; }
 
   const toUnfollow: Array<{ did: string }> = [];
 
   for (const row of rows.results) {
     try {
-      const profile = await agent.getProfile({ actor: row.did });
+      const profile      = await agent.getProfile({ actor: row.did });
       const followedBack = !!profile.data.viewer?.followedBy;
 
       if (followedBack) {
         await env.DB.prepare(
           `UPDATE auto_follow_log SET follow_back_status = 'followed', follow_back_checked_at = datetime('now') WHERE did = ?`,
         ).bind(row.did).run();
+        console.log(`[followback-check] ✓ @${row.handle} followed back`);
       } else {
         toUnfollow.push({ did: row.did });
         await env.DB.prepare(
           `UPDATE auto_follow_log SET follow_back_status = 'unfollowed', follow_back_checked_at = datetime('now'), unfollow_queued_at = datetime('now') WHERE did = ?`,
         ).bind(row.did).run();
+        console.log(`[followback-check] ✗ @${row.handle} did NOT follow back → queuing unfollow`);
       }
     } catch {
-      // Account gone / rate limited — mark checked and move on
+      // Account may be gone or rate limited — mark checked so we don't retry immediately
       await env.DB.prepare(
         `UPDATE auto_follow_log SET follow_back_checked_at = datetime('now') WHERE did = ?`,
       ).bind(row.did).run();
@@ -229,11 +234,10 @@ export async function runFollowBackCheck(env: Env): Promise<void> {
   if (toUnfollow.length > 0) {
     const stmts = toUnfollow.map((u) =>
       env.DB.prepare(
-        `INSERT INTO unfollow_scheduled_queue (did) VALUES (?)
-         ON CONFLICT(did) DO NOTHING`,
+        `INSERT INTO unfollow_scheduled_queue (did) VALUES (?) ON CONFLICT(did) DO NOTHING`,
       ).bind(u.did),
     );
     await env.DB.batch(stmts);
-    console.log(`[follow-back-check] Queued ${toUnfollow.length} non-followers-back for unfollow`);
+    console.log(`[followback-check] Queued ${toUnfollow.length} non-followers-back for auto-unfollow`);
   }
 }

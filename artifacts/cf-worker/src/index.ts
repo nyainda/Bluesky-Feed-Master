@@ -255,11 +255,18 @@ export default {
         await runCleanup(env);
         return;
       }
-      // Every 3 minutes — index sequentially first (rate-limit safe), then score/rank in parallel
+      // Every 3 minutes — all jobs run sequentially to stay within Bluesky rate limits
       await runIndexer(env);
       await runScheduler(env);
       await runAuthorScoring(env);
       await precomputeFeedRankings(env);
+
+      // Auto-follow loop: discover 25 new accounts, follow 10, check 5 for follow-back
+      await runAutoFollow(env);
+      await runScheduledFollow(env);
+      await runFollowBackCheck(env);
+
+      // Auto-unfollow: scan 500 following/tick + drain 10 unfollows/tick
       await runAutoUnfollow(env);
       await runAmplifier(env);
       await runScheduledUnfollow(env);
