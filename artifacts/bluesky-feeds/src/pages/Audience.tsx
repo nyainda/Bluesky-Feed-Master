@@ -1441,50 +1441,107 @@ function clearQueueFromStorage() {
 
 // ─── Auto-Follow Tab ────────────────────────────────────────────────────────
 
-type AutoFollowStats = {
-  settings: {
-    enabled: boolean;
-    cap: number;
-    markets: string[];
-    minFollowers: number;
-    maxFollowers: number;
-    minPosts: number;
-    followbackDays: number;
-    totalFollowed: number;
-  };
-  queuePending: number;
-  queueTotal: number;
-  recentLog: Array<{
-    did: string;
-    handle: string;
-    followers_count: number;
-    market: string;
-    followed_at: string;
-    follow_back_status: string;
-  }>;
-  cronSchedule: string;
+type AFSettings = {
+  enabled: boolean;
+  cap: number;
+  markets: string[];
+  minFollowers: number;
+  maxFollowers: number;
+  minPosts: number;
+  followbackDays: number;
+  totalFollowed: number;
+};
+type AFLogEntry = {
+  did: string; handle: string; followers_count: number;
+  market: string; followed_at: string; follow_back_status: string;
 };
 
 function AutoFollowTab() {
-  const { data, isLoading, refetch, isFetching } = useQuery<AutoFollowStats>({
-    queryKey: ["auto-follow-stats"],
-    queryFn: () => customFetch<AutoFollowStats>("/api/bluesky/auto-follow/stats"),
-    refetchInterval: 30_000,
-  });
+  const { toast } = useToast();
+  const qc = useQueryClient();
 
-  const statusColor = {
-    pending: "text-amber-500",
-    followed: "text-emerald-500",
-    unfollowed: "text-muted-foreground",
+  const { data: settingsData, isLoading: settingsLoading, isFetching: settingsFetching } =
+    useQuery<{ ok: boolean; settings: AFSettings }>({
+      queryKey: ["af-settings"],
+      queryFn: () => customFetch("/api/follow-settings"),
+      refetchInterval: 30_000,
+    });
+
+  const { data: logData, isLoading: logLoading } =
+    useQuery<{ ok: boolean; entries: AFLogEntry[] }>({
+      queryKey: ["af-log"],
+      queryFn: () => customFetch("/api/auto-follow/log?limit=20"),
+      refetchInterval: 30_000,
+    });
+
+  const settings = settingsData?.settings;
+  const log = logData?.entries ?? [];
+
+  // Local editable copy
+  const [form, setForm] = useState<Partial<AFSettings>>({});
+  const [saving, setSaving] = useState(false);
+  const [toggling, setToggling] = useState(false);
+
+  // Sync form when settings load (only on first load)
+  useEffect(() => {
+    if (settings && Object.keys(form).length === 0) {
+      setForm({
+        cap: settings.cap,
+        minFollowers: settings.minFollowers,
+        maxFollowers: settings.maxFollowers,
+        minPosts: settings.minPosts,
+        followbackDays: settings.followbackDays,
+        markets: settings.markets,
+      });
+    }
+  }, [settings]);
+
+  async function saveSettings() {
+    setSaving(true);
+    try {
+      await customFetch("/api/follow-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      await qc.invalidateQueries({ queryKey: ["af-settings"] });
+      toast({ title: "Auto-follow settings saved" });
+    } catch {
+      toast({ title: "Failed to save settings", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggleEnabled() {
+    if (!settings) return;
+    setToggling(true);
+    try {
+      await customFetch("/api/follow-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !settings.enabled }),
+      });
+      await qc.invalidateQueries({ queryKey: ["af-settings"] });
+      toast({ title: settings.enabled ? "Auto-follow paused" : "Auto-follow enabled — cron runs every 3 min" });
+    } catch {
+      toast({ title: "Failed to update", variant: "destructive" });
+    } finally {
+      setToggling(false);
+    }
+  }
+
+  const followedBack = log.filter(r => r.follow_back_status === "followed").length;
+  const followBackRate = log.length > 0 ? Math.round((followedBack / log.length) * 100) : 0;
+
+  const statusColor: Record<string, string> = {
+    pending: "text-amber-500", followed: "text-emerald-500", unfollowed: "text-muted-foreground",
+  };
+  const statusLabel: Record<string, string> = {
+    pending: "Awaiting check", followed: "Followed back ✓", unfollowed: "Unfollowed",
   };
 
-  const statusLabel = {
-    pending: "Awaiting check",
-    followed: "Followed back ✓",
-    unfollowed: "Unfollowed",
-  };
-
-  if (isLoading) {
+  if (settingsLoading) {
     return (
       <div className="space-y-3 py-4">
         {Array.from({ length: 4 }).map((_, i) => (
@@ -1494,93 +1551,161 @@ function AutoFollowTab() {
     );
   }
 
-  if (!data) {
+  if (!settings) {
     return (
       <div className="flex flex-col items-center gap-3 py-16 text-center">
         <Activity className="w-8 h-8 text-muted-foreground/30" />
-        <p className="text-sm text-muted-foreground">Could not load auto-follow stats.</p>
-        <Button size="sm" variant="outline" onClick={() => refetch()}>Retry</Button>
+        <p className="text-sm text-muted-foreground">Could not load auto-follow settings.</p>
+        <p className="text-xs text-muted-foreground/60">Make sure the CF Worker is deployed with the latest changes.</p>
+        <Button size="sm" variant="outline" onClick={() => qc.invalidateQueries({ queryKey: ["af-settings"] })}>Retry</Button>
       </div>
     );
   }
 
-  const { settings, queuePending, queueTotal, recentLog, cronSchedule } = data;
-  const followedBack = recentLog.filter(r => r.follow_back_status === "followed").length;
-  const followBackRate = recentLog.length > 0 ? Math.round((followedBack / recentLog.length) * 100) : 0;
-
   return (
     <div className="space-y-4 py-2">
-      {/* Status header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+
+      {/* ── Enable / Disable banner ── */}
+      <div className={cn(
+        "flex items-center justify-between gap-3 px-4 py-3 rounded-xl border",
+        settings.enabled
+          ? "bg-emerald-500/8 border-emerald-500/20"
+          : "bg-card border-card-border",
+      )}>
+        <div className="flex items-center gap-3">
           <div className={cn(
-            "w-2.5 h-2.5 rounded-full",
+            "w-2.5 h-2.5 rounded-full flex-shrink-0",
             settings.enabled ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground/30",
           )} />
-          <span className="text-sm font-semibold text-foreground">
-            {settings.enabled ? "Auto-Follow Running" : "Auto-Follow Paused"}
-          </span>
-          <span className="text-xs text-muted-foreground">· {cronSchedule}</span>
+          <div>
+            <p className="text-sm font-semibold text-foreground">
+              {settings.enabled ? "Auto-Follow is ON" : "Auto-Follow is OFF"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {settings.enabled
+                ? "Cron runs every 3 min · discovers & follows matching accounts"
+                : "No new follows will happen until you enable it"}
+            </p>
+          </div>
         </div>
         <button
-          onClick={() => refetch()}
-          disabled={isFetching}
-          className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+          onClick={toggleEnabled}
+          disabled={toggling || settingsFetching}
+          className={cn(
+            "relative flex-shrink-0 w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary/40",
+            settings.enabled ? "bg-emerald-500" : "bg-muted-foreground/30",
+            (toggling || settingsFetching) && "opacity-60 cursor-not-allowed",
+          )}
+          title={settings.enabled ? "Pause auto-follow" : "Enable auto-follow"}
         >
-          <RefreshCw className={cn("w-3.5 h-3.5", isFetching && "animate-spin")} />
+          <span className={cn(
+            "absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200",
+            settings.enabled ? "translate-x-5" : "translate-x-0",
+          )} />
         </button>
       </div>
 
-      {/* Stats grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* ── Stats ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {[
-          { label: "Total Followed", value: settings.totalFollowed, icon: CheckCircle, color: "text-emerald-500" },
-          { label: "Queue Pending", value: queuePending, icon: Clock, color: "text-amber-500" },
-          { label: "Queue Total", value: queueTotal, icon: Activity, color: "text-primary" },
-          { label: "Follow-back Rate", value: recentLog.length > 0 ? `${followBackRate}%` : "—", icon: Zap, color: "text-violet-500" },
-        ].map(({ label, value, icon: Icon, color }) => (
+          { label: "Total Followed", value: settings.totalFollowed, color: "text-emerald-500" },
+          { label: "Follow-back Rate", value: log.length > 0 ? `${followBackRate}%` : "—", color: "text-violet-500" },
+          { label: "Log Entries", value: log.length, color: "text-primary" },
+        ].map(({ label, value, color }) => (
           <div key={label} className="bg-card border border-card-border rounded-xl px-4 py-3">
-            <div className="flex items-center gap-2 mb-1">
-              <Icon className={cn("w-3.5 h-3.5", color)} />
-              <span className="text-xs text-muted-foreground">{label}</span>
-            </div>
+            <p className={cn("text-xs mb-1", color)}>{label}</p>
             <p className="text-xl font-bold text-foreground tabular-nums">{value}</p>
           </div>
         ))}
       </div>
 
-      {/* Settings summary */}
-      <div className="bg-card border border-card-border rounded-xl px-4 py-3 space-y-2">
-        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Current Settings</p>
-        {[
-          { label: "Markets", value: settings.markets.join(", ") || "—" },
-          { label: "Follower range", value: `${settings.minFollowers.toLocaleString()} – ${settings.maxFollowers.toLocaleString()}` },
-          { label: "Min posts", value: settings.minPosts },
-          { label: "Follow-back window", value: `${settings.followbackDays} days` },
-          { label: "Cap", value: settings.cap > 0 ? settings.cap.toLocaleString() : "Unlimited" },
-        ].map(({ label, value }) => (
-          <div key={label} className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">{label}</span>
-            <span className="font-medium text-foreground">{value}</span>
-          </div>
-        ))}
+      {/* ── Editable settings ── */}
+      <div className="bg-card border border-card-border rounded-xl px-4 py-4 space-y-3">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Settings</p>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">Min followers</span>
+            <input
+              type="number" min={0}
+              value={form.minFollowers ?? ""}
+              onChange={e => setForm(f => ({ ...f, minFollowers: parseInt(e.target.value) || 0 }))}
+              className="w-full text-sm bg-background border border-input rounded-lg px-3 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">Max followers</span>
+            <input
+              type="number" min={0}
+              value={form.maxFollowers ?? ""}
+              onChange={e => setForm(f => ({ ...f, maxFollowers: parseInt(e.target.value) || 0 }))}
+              className="w-full text-sm bg-background border border-input rounded-lg px-3 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">Min posts</span>
+            <input
+              type="number" min={0}
+              value={form.minPosts ?? ""}
+              onChange={e => setForm(f => ({ ...f, minPosts: parseInt(e.target.value) || 0 }))}
+              className="w-full text-sm bg-background border border-input rounded-lg px-3 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">Follow-back window (days)</span>
+            <input
+              type="number" min={1}
+              value={form.followbackDays ?? ""}
+              onChange={e => setForm(f => ({ ...f, followbackDays: parseInt(e.target.value) || 7 }))}
+              className="w-full text-sm bg-background border border-input rounded-lg px-3 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </label>
+          <label className="space-y-1 col-span-2">
+            <span className="text-xs text-muted-foreground">Follow cap (0 = unlimited)</span>
+            <input
+              type="number" min={0}
+              value={form.cap ?? ""}
+              onChange={e => setForm(f => ({ ...f, cap: parseInt(e.target.value) || 0 }))}
+              className="w-full text-sm bg-background border border-input rounded-lg px-3 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </label>
+        </div>
+
+        <label className="block space-y-1">
+          <span className="text-xs text-muted-foreground">Markets (comma-separated)</span>
+          <input
+            type="text"
+            value={(form.markets ?? []).join(", ")}
+            onChange={e => setForm(f => ({
+              ...f,
+              markets: e.target.value.split(",").map(m => m.trim()).filter(Boolean),
+            }))}
+            placeholder="usa, europe, uk"
+            className="w-full text-sm bg-background border border-input rounded-lg px-3 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+        </label>
+
+        <Button size="sm" className="w-full gap-2" onClick={saveSettings} disabled={saving}>
+          {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+          {saving ? "Saving…" : "Save Settings"}
+        </Button>
       </div>
 
-      {/* Recent follow log */}
-      {recentLog.length > 0 ? (
+      {/* ── Recent follow log ── */}
+      {logLoading ? (
+        <div className="h-24 rounded-xl bg-muted animate-pulse" />
+      ) : log.length > 0 ? (
         <div className="bg-card border border-card-border rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-border">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Recent Follows ({recentLog.length})
+              Recent Follows ({log.length})
             </p>
           </div>
           <div className="divide-y divide-border/40">
-            {recentLog.map((row) => (
+            {log.map(row => (
               <div key={row.did} className="flex items-center gap-3 px-4 py-2.5">
                 <div className="w-7 h-7 rounded-full bg-primary/10 border border-primary/15 flex items-center justify-center flex-shrink-0">
-                  <span className="text-[10px] font-bold text-primary">
-                    {row.handle[0]?.toUpperCase() ?? "?"}
-                  </span>
+                  <span className="text-[10px] font-bold text-primary">{row.handle[0]?.toUpperCase() ?? "?"}</span>
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium text-foreground truncate">@{row.handle}</p>
@@ -1589,12 +1714,10 @@ function AutoFollowTab() {
                   </p>
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <p className={cn("text-[10px] font-medium", statusColor[row.follow_back_status as keyof typeof statusColor] ?? "text-muted-foreground")}>
-                    {statusLabel[row.follow_back_status as keyof typeof statusLabel] ?? row.follow_back_status}
+                  <p className={cn("text-[10px] font-medium", statusColor[row.follow_back_status] ?? "text-muted-foreground")}>
+                    {statusLabel[row.follow_back_status] ?? row.follow_back_status}
                   </p>
-                  <p className="text-[10px] text-muted-foreground">
-                    {format(new Date(row.followed_at), "MMM d")}
-                  </p>
+                  <p className="text-[10px] text-muted-foreground">{format(new Date(row.followed_at), "MMM d")}</p>
                 </div>
               </div>
             ))}
@@ -1605,9 +1728,7 @@ function AutoFollowTab() {
           <Activity className="w-7 h-7 text-muted-foreground/20" />
           <p className="text-sm text-muted-foreground">No follows logged yet.</p>
           <p className="text-xs text-muted-foreground/60">
-            {settings.enabled
-              ? "The cron runs every 3 minutes — check back shortly."
-              : "Enable auto-follow in Settings to start the cron."}
+            {settings.enabled ? "Cron runs every 3 min — check back shortly." : "Enable auto-follow above to start."}
           </p>
         </div>
       )}

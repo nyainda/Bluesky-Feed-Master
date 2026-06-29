@@ -203,6 +203,7 @@ app.route("/api", composeRoute);
 app.route("/api", notificationsRoute);
 app.route("/api", cronSettingsRoute);
 app.route("/api", syndicationRoute);
+app.route("/api", followSettingsRoute);
 app.route("/", xrpcRoute);
 
 // ── Cron health endpoint ──────────────────────────────────────────────────────
