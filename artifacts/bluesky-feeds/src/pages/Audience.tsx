@@ -730,7 +730,7 @@ const CAP_OPTIONS = [
 
 // 0 = unfollow everyone regardless of their follower count
 const MIN_FOLLOWERS_OPTIONS = [
-  { label: "Everyone", value: 0 },
+  { label: "No exceptions", value: 0 },
   { label: "Skip 1k+", value: 1_000 },
   { label: "Skip 5k+", value: 5_000 },
   { label: "Skip 10k+", value: 10_000 },
@@ -1124,7 +1124,7 @@ function AutoUnfollowCard() {
                 ))}
               </div>
               <p className="text-[10px] text-muted-foreground/60 mt-1">
-                Keeps high-follower accounts in your following list — useful if you follow influencers.
+                <strong>No exceptions</strong> = unfollow everyone who doesn't follow back. <strong>Skip 1k+</strong> etc. = protect big accounts from being unfollowed — useful if you follow brands or influencers.
               </p>
             </div>
 
