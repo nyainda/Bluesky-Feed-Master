@@ -10,6 +10,7 @@ import notificationsRoute from "./routes/notifications";
 import xrpcRoute from "./routes/xrpc";
 import cronSettingsRoute from "./routes/cron-settings";
 import syndicationRoute from "./routes/syndication";
+import followSettingsRoute from "./routes/follow-settings";
 import { runIndexer, runCleanup } from "./lib/indexer";
 import { runScheduler } from "./lib/scheduler";
 import { runAuthorScoring } from "./lib/author-scoring";
@@ -17,6 +18,8 @@ import { precomputeFeedRankings } from "./lib/feed-ranking";
 import { runAutoUnfollow } from "./lib/auto-unfollow";
 import { runAmplifier } from "./lib/amplifier";
 import { runScheduledUnfollow, ensureScheduledUnfollowTable } from "./lib/scheduled-unfollow";
+import { runAutoFollow } from "./lib/auto-follow";
+import { runScheduledFollow, runFollowBackCheck } from "./lib/scheduled-follow";
 
 export interface Env {
   DB: D1Database;
@@ -58,6 +61,9 @@ app.post("/api/admin/migrate", async (c) => {
     await db.prepare("CREATE TABLE IF NOT EXISTS auto_unfollow_log (id INTEGER PRIMARY KEY AUTOINCREMENT, did TEXT NOT NULL, handle TEXT NOT NULL DEFAULT '', unfollowed_at TEXT NOT NULL DEFAULT (datetime('now')))").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_auto_unfollow_log_unfollowed_at ON auto_unfollow_log (unfollowed_at DESC)").run();
     await db.prepare("CREATE TABLE IF NOT EXISTS unfollow_scheduled_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, did TEXT NOT NULL UNIQUE, follow_uri TEXT, status TEXT NOT NULL DEFAULT 'pending', queued_at TEXT NOT NULL DEFAULT (datetime('now')), processed_at TEXT)").run();
+    await db.prepare("CREATE TABLE IF NOT EXISTS auto_follow_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, did TEXT NOT NULL UNIQUE, handle TEXT NOT NULL DEFAULT '', followers_count INTEGER NOT NULL DEFAULT 0, market TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', queued_at TEXT NOT NULL DEFAULT (datetime('now')), processed_at TEXT)").run();
+    await db.prepare("CREATE TABLE IF NOT EXISTS auto_follow_log (id INTEGER PRIMARY KEY AUTOINCREMENT, did TEXT NOT NULL UNIQUE, handle TEXT NOT NULL DEFAULT '', followers_count INTEGER NOT NULL DEFAULT 0, market TEXT NOT NULL DEFAULT '', followed_at TEXT NOT NULL DEFAULT (datetime('now')), follow_back_status TEXT NOT NULL DEFAULT 'pending', follow_back_checked_at TEXT, unfollow_queued_at TEXT)").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_auto_follow_log_followed_at ON auto_follow_log (followed_at DESC)").run();
     return c.json({ ok: true, message: "Migration applied successfully" });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
