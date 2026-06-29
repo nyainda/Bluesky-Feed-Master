@@ -2,14 +2,14 @@ import { useState, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   useComposePost, useListScheduledPosts, useCreateScheduledPost, useDeleteScheduledPost,
-  useListFeeds, customFetch,
+  useListFeeds, useGetBestTimeToPost, customFetch,
 } from "@workspace/api-client-react";
 import type { ScheduledPost, Feed } from "@workspace/api-client-react";
 import {
   PenLine, Send, Clock, Plus, Trash2, CheckCircle2, AlertCircle,
   ArrowUpRight, Layers, RefreshCw, Calendar, Hash, ChevronDown,
   Copy, Flame, Zap, MessageCircle, Clock3, CheckCheck,
-  ChevronLeft, ChevronRight, CalendarDays, List,
+  ChevronLeft, ChevronRight, CalendarDays, List, Sparkles, TrendingUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -564,6 +564,175 @@ function CalendarView({ posts, onDelete }: { posts: ScheduledPost[]; onDelete: (
   );
 }
 
+// ─── Best Time Panel ───────────────────────────────────────────────────────────
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function formatHour(h: number) {
+  if (h === 0) return "12am";
+  if (h === 12) return "12pm";
+  return h < 12 ? `${h}am` : `${h - 12}pm`;
+}
+
+function nextOccurrenceOfHour(utcHour: number): string {
+  const now = new Date();
+  const candidate = new Date(now);
+  candidate.setUTCHours(utcHour, 0, 0, 0);
+  if (candidate <= now) candidate.setUTCDate(candidate.getUTCDate() + 1);
+  return candidate.toISOString().slice(0, 16);
+}
+
+function BestTimePanel({ onPickTime }: { onPickTime: (datetime: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const { data, isLoading } = useGetBestTimeToPost({
+    query: { staleTime: 10 * 60_000 },
+  });
+
+  const hourly = data?.hourly ?? [];
+  const bestHour = data?.bestHour ?? null;
+  const bestDay = data?.bestDay ?? null;
+
+  const withPosts = hourly.filter(h => h.postCount > 0);
+  const maxEngagement = Math.max(...withPosts.map(h => h.avgEngagement), 1);
+
+  const top3Hours = [...withPosts]
+    .sort((a, b) => b.avgEngagement - a.avgEngagement)
+    .slice(0, 3)
+    .map(h => h.hour);
+
+  function barColor(hour: number, eng: number) {
+    if (eng === 0) return "bg-muted/40";
+    if (top3Hours[0] === hour) return "bg-emerald-500";
+    if (top3Hours.includes(hour)) return "bg-primary/70";
+    return "bg-primary/30";
+  }
+
+  return (
+    <div className="bg-card border border-card-border rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors"
+      >
+        <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <Sparkles className="w-3.5 h-3.5 text-violet-500" />
+          Best Time to Post
+          {bestHour !== null && !open && (
+            <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+              {formatHour(bestHour)} UTC
+            </span>
+          )}
+        </span>
+        <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200", open && "rotate-180")} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden"
+          >
+            <div className="border-t border-border px-4 pb-4 pt-3 space-y-4">
+              {isLoading ? (
+                <div className="h-20 animate-pulse bg-muted rounded-lg" />
+              ) : withPosts.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">
+                  Not enough posts yet — post more on Bluesky to see engagement patterns.
+                </p>
+              ) : (
+                <>
+                  {/* Top picks */}
+                  <div className="flex flex-wrap gap-2">
+                    {top3Hours.map((h, rank) => {
+                      const slot = hourly.find(s => s.hour === h);
+                      return (
+                        <button
+                          key={h}
+                          onClick={() => onPickTime(nextOccurrenceOfHour(h))}
+                          className={cn(
+                            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all hover:scale-105",
+                            rank === 0
+                              ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-700 dark:text-emerald-400"
+                              : "bg-primary/6 border-primary/20 text-primary",
+                          )}
+                        >
+                          {rank === 0 && <TrendingUp className="w-3 h-3" />}
+                          {formatHour(h)} UTC
+                          <span className="text-[10px] opacity-70">
+                            ~{slot?.avgEngagement.toFixed(1)} eng/post
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* 24-hour bar chart */}
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-muted-foreground/60 uppercase tracking-widest font-medium">
+                      Avg engagement by hour (UTC) — based on your last 100 posts
+                    </p>
+                    <div className="flex items-end gap-px h-14">
+                      {hourly.map((slot) => {
+                        const pct = maxEngagement > 0 ? (slot.avgEngagement / maxEngagement) * 100 : 0;
+                        const isTop = top3Hours[0] === slot.hour;
+                        return (
+                          <div key={slot.hour} className="flex-1 flex flex-col items-center gap-0.5 group relative">
+                            <div className="w-full flex items-end justify-center h-12">
+                              <div
+                                className={cn("w-full rounded-sm transition-all", barColor(slot.hour, slot.avgEngagement))}
+                                style={{ height: `${Math.max(pct, slot.postCount > 0 ? 4 : 0)}%` }}
+                              />
+                            </div>
+                            {/* Tooltip */}
+                            {slot.postCount > 0 && (
+                              <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 bg-popover border border-border rounded-lg px-2 py-1.5 text-[10px] whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 shadow-lg">
+                                <p className="font-semibold text-foreground">{formatHour(slot.hour)} UTC</p>
+                                <p className="text-muted-foreground">{slot.postCount} post{slot.postCount !== 1 ? "s" : ""}</p>
+                                <p className="text-primary">~{slot.avgEngagement.toFixed(1)} eng/post</p>
+                              </div>
+                            )}
+                            {isTop && (
+                              <span className="text-[8px] text-emerald-600 font-bold absolute -top-3">★</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* Hour labels — show every 6 */}
+                    <div className="flex">
+                      {hourly.map((slot) => (
+                        <div key={slot.hour} className="flex-1 text-center">
+                          {slot.hour % 6 === 0 && (
+                            <span className="text-[9px] text-muted-foreground/50">{formatHour(slot.hour)}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Best day */}
+                  {bestDay !== null && (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1 border-t border-border/40">
+                      <span>Best day of week:</span>
+                      <span className="font-semibold text-foreground">{DAYS[bestDay]}</span>
+                      <span className="text-muted-foreground/50">based on avg engagement per post</span>
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-muted-foreground/50">
+                    Click any hour above to pre-fill the schedule time. Times are UTC — adjust for your timezone.
+                  </p>
+                </>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 // ─── Scheduled Tab ─────────────────────────────────────────────────────────────
 function ScheduledTab() {
   const [showForm, setShowForm] = useState(false);
@@ -614,6 +783,9 @@ function ScheduledTab() {
 
   return (
     <div className="space-y-5">
+      {/* Best Time to Post panel */}
+      <BestTimePanel onPickTime={(dt) => { setScheduledAt(dt); setShowForm(true); }} />
+
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <p className="text-sm text-muted-foreground">
           {pending.length > 0 ? `${pending.length} post${pending.length > 1 ? "s" : ""} waiting to be sent` : "No posts scheduled"}
