@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { eq, like, desc, and, lt } from "drizzle-orm";
-import { createDb, feedsTable, indexedPostsTable } from "../db";
+import { eq, like, desc, and, lt, asc, gt } from "drizzle-orm";
+import { createDb, feedsTable, indexedPostsTable, feedRankedPostsTable } from "../db";
 import type { Env } from "../index";
 
 const route = new Hono<{ Bindings: Env }>();
@@ -70,25 +70,56 @@ route.get("/xrpc/app.bsky.feed.getFeedSkeleton", async (c) => {
   }
 
   try {
-    const conditions = [like(indexedPostsTable.algoTags, `%${feed.recordName}%`)];
-    if (cursor) {
-      const [ts] = cursor.split("::");
-      conditions.push(lt(indexedPostsTable.indexedAt, ts));
-    }
+    // ── Ranked feed path ─────────────────────────────────────────────────────
+    // Use precomputed feed_ranked_posts (author score 40% + engagement velocity
+    // 30% + quality 20% + recency 10%). Falls back to raw indexedAt order only
+    // if the ranking table is empty for this feed (e.g. first run after deploy).
+    // Cursor format for ranked: "r::<rankOffset>" (e.g. "r::30" = page 2)
+    // Cursor format for fallback: "<indexedAt>::<cid>"
 
-    const posts = await db
-      .select()
-      .from(indexedPostsTable)
-      .where(and(...conditions))
-      .orderBy(desc(indexedPostsTable.indexedAt))
+    const isRankedCursor = cursor?.startsWith("r::");
+    const rankOffset = isRankedCursor ? parseInt(cursor!.slice(3), 10) || 0 : 0;
+
+    // Fetch ranked posts — use offset pagination via rank number
+    const rankedCount = await db
+      .select({ postUri: feedRankedPostsTable.postUri })
+      .from(feedRankedPostsTable)
+      .where(
+        and(
+          eq(feedRankedPostsTable.feedId, feed.id),
+          gt(feedRankedPostsTable.rank, rankOffset),
+        )
+      )
+      .orderBy(asc(feedRankedPostsTable.rank))
       .limit(limit);
 
-    const skeleton = posts.map((p) => ({ post: p.uri }));
-
+    let skeleton: { post: string }[];
     let nextCursor: string | undefined;
-    if (posts.length >= limit) {
-      const last = posts[posts.length - 1];
-      nextCursor = `${last.indexedAt}::${last.cid}`;
+
+    if (rankedCount.length > 0) {
+      // Use ranked results
+      skeleton = rankedCount.map((r) => ({ post: r.postUri }));
+      if (rankedCount.length >= limit) {
+        nextCursor = `r::${rankOffset + limit}`;
+      }
+    } else {
+      // Fallback: plain recency order (first run or no ranked data yet)
+      const conditions = [like(indexedPostsTable.algoTags, `%${feed.recordName}%`)];
+      if (cursor && !isRankedCursor) {
+        const [ts] = cursor.split("::");
+        conditions.push(lt(indexedPostsTable.indexedAt, ts));
+      }
+      const posts = await db
+        .select()
+        .from(indexedPostsTable)
+        .where(and(...conditions))
+        .orderBy(desc(indexedPostsTable.indexedAt))
+        .limit(limit);
+      skeleton = posts.map((p) => ({ post: p.uri }));
+      if (posts.length >= limit) {
+        const last = posts[posts.length - 1];
+        nextCursor = `${last.indexedAt}::${last.cid}`;
+      }
     }
 
     // ── Edge caching — feed skeletons are public and shared across all users.

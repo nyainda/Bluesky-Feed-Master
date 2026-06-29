@@ -54,9 +54,9 @@ export async function runIndexer(env: Env): Promise<FeedIndexResult[]> {
   });
 
   // ── Phase 3: Search + insert, one feed at a time ─────────────────────────────
-  const CONCURRENCY = 4;      // 4 keywords × 2 searches = 8 concurrent API calls per batch
-  const BATCH_DELAY_MS = 100; // brief pause between keyword batches within a feed
-  const FEED_DELAY_MS = 200;  // brief pause between feeds
+  const CONCURRENCY = 2;        // 2 keywords × 2 searches = 4 concurrent API calls per batch (safe under rate limit)
+  const BATCH_DELAY_MS = 600;  // 600ms between keyword batches — prevents search API rate limiting on later feeds
+  const FEED_DELAY_MS = 1500;  // 1.5s between feeds — ensures every feed gets fresh quota
 
   const allResults: FeedIndexResult[] = [];
 
