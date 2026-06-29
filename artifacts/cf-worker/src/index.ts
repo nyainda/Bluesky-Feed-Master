@@ -205,11 +205,51 @@ app.route("/api", cronSettingsRoute);
 app.route("/api", syndicationRoute);
 app.route("/", xrpcRoute);
 
+// ── Cron health endpoint ──────────────────────────────────────────────────────
+// Exposes last cron tick time and scan-in-progress state so the dashboard can
+// detect stalled crons (missed ticks) and surface a recovery warning to the user.
+app.get("/api/admin/cron-health", async (c) => {
+  try {
+    const [tickRow, scanCursorRow, lastRunRow, scanPagesRow] = await Promise.all([
+      c.env.DB.prepare("SELECT value FROM cron_settings WHERE key = 'last_cron_tick'").first<{ value: string }>(),
+      c.env.DB.prepare("SELECT value FROM cron_settings WHERE key = 'auto_unfollow_scan_cursor'").first<{ value: string }>(),
+      c.env.DB.prepare("SELECT value FROM cron_settings WHERE key = 'auto_unfollow_last_run'").first<{ value: string }>(),
+      c.env.DB.prepare("SELECT value FROM cron_settings WHERE key = 'auto_unfollow_scan_pages_done'").first<{ value: string }>(),
+    ]);
+
+    const lastTick = tickRow?.value ?? null;
+    const scanCursor = scanCursorRow?.value ?? "";
+    const lastRun = lastRunRow?.value ?? null;
+    const scanPagesDone = parseInt(scanPagesRow?.value ?? "0", 10) || 0;
+
+    // Healthy = last tick within 6 minutes (2× the 3-min cron interval)
+    const isHealthy = lastTick
+      ? Date.now() - new Date(lastTick).getTime() < 6 * 60 * 1000
+      : false;
+
+    return c.json({
+      ok: true,
+      lastCronTick: lastTick,
+      isHealthy,
+      scanInProgress: scanCursor !== "",
+      scanPagesDone,
+      lastScanCompleted: lastRun,
+    });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
 export default {
   fetch: app.fetch,
 
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil((async () => {
+      // Record this tick for health-check monitoring
+      await env.DB.prepare(
+        "INSERT INTO cron_settings (key, value) VALUES ('last_cron_tick', datetime('now')) ON CONFLICT(key) DO UPDATE SET value = datetime('now'), updated_at = datetime('now')"
+      ).run().catch(() => {});
+
       // 2am daily cron — cleanup only
       if (event.cron === "0 2 * * *") {
         await runCleanup(env);

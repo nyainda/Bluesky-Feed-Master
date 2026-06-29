@@ -706,6 +706,8 @@ type AutoUnfollowSettings = {
   cap: number;
   minFollowersToKeep: number;
   lastRun: string | null;
+  scanInProgress: boolean;
+  scanPagesDone: number;
 };
 
 const INTERVAL_OPTIONS = [
@@ -753,6 +755,20 @@ function AutoUnfollowCard() {
     queryKey: ["unfollow-queue-status"],
     queryFn: () => customFetch("/api/bluesky/unfollow-schedule/status"),
     refetchInterval: queuePending > 0 ? 15_000 : 30_000,
+  });
+
+  const { data: cronHealth } = useQuery<{
+    ok: boolean;
+    lastCronTick: string | null;
+    isHealthy: boolean;
+    scanInProgress: boolean;
+    scanPagesDone: number;
+    lastScanCompleted: string | null;
+  }>({
+    queryKey: ["cron-health"],
+    queryFn: () => customFetch("/api/admin/cron-health"),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
 
   useEffect(() => {
@@ -891,6 +907,42 @@ function AutoUnfollowCard() {
             ? "border-primary/15 bg-primary/4"
             : "border-border bg-muted/25",
         )}>
+          {/* Cron stalled warning */}
+          {cronHealth && !cronHealth.isHealthy && cronHealth.lastCronTick && (
+            <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-amber-500/8 border border-amber-500/25 text-amber-600">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-semibold">CF Cron may have stalled</p>
+                <p className="text-[10px] text-amber-600/70">Last tick: {format(new Date(cronHealth.lastCronTick), "MMM d h:mm a")} · Expected every 3 min</p>
+              </div>
+              <button
+                onClick={() => customFetch("/api/admin/trigger-scan", { method: "POST" }).then(() => refetchQueue())}
+                className="text-[10px] font-medium bg-amber-500/15 hover:bg-amber-500/25 px-2 py-1 rounded transition-colors flex-shrink-0"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+          {cronHealth && !cronHealth.isHealthy && !cronHealth.lastCronTick && (
+            <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-muted/60 border border-border text-muted-foreground">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+              <p className="text-[11px]">CF cron hasn&apos;t fired yet — it runs every 3 min after deployment. Redeploy if this persists.</p>
+            </div>
+          )}
+
+          {/* Scan in progress (incremental) */}
+          {(cronHealth?.scanInProgress || settings?.scanInProgress) && (
+            <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-blue-500/8 border border-blue-500/20 text-blue-600">
+              <Loader2 className="w-3.5 h-3.5 flex-shrink-0 animate-spin" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-semibold">Scan in progress</p>
+                <p className="text-[10px] text-blue-600/70">
+                  {(cronHealth?.scanPagesDone ?? settings?.scanPagesDone ?? 0) * 100} following checked so far · 500 more per cron tick
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Status row */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 flex-wrap">
@@ -962,14 +1014,14 @@ function AutoUnfollowCard() {
           )}
 
           {/* Idle state: step-by-step guide */}
-          {!isRunning && qTotal === 0 && (
+          {!isRunning && qTotal === 0 && !(cronHealth?.scanInProgress || settings?.scanInProgress) && (
             <div className="space-y-2 pt-0.5">
               <p className="text-[11px] text-muted-foreground/60 font-medium uppercase tracking-widest">How to trigger</p>
               <div className="space-y-1.5">
                 {[
-                  { step: "1", text: 'Click "Trigger Scan Now" below — CF Worker scans your full following list and queues non-followers-back' },
-                  { step: "2", text: "CF cron fires every 3 min automatically — drains 10 unfollows per tick (~200/hr)" },
-                  { step: "3", text: "Watch this card: queue shows pending count dropping. Following count in the header updates every 30s" },
+                  { step: "1", text: 'Click "Trigger Scan Now" below — CF Worker scans 500 following per cron tick (incremental, no timeouts). Each 3-min tick queues the next batch of non-followers-back.' },
+                  { step: "2", text: "Cron drains 10 unfollows per tick in parallel with scanning (~200/hr). No action needed — it runs 24/7 automatically." },
+                  { step: "3", text: "Watch this card: a blue 'Scan in progress' banner shows how many following have been checked. Queue bar appears once the first batch is queued." },
                 ].map(({ step, text }) => (
                   <div key={step} className="flex items-start gap-2">
                     <span className="w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{step}</span>
@@ -978,7 +1030,7 @@ function AutoUnfollowCard() {
                 ))}
               </div>
               <p className="text-[10px] text-muted-foreground/40 pt-0.5 border-t border-border/30">
-                CF cron fires every 3 min · 10 unfollows per tick · ~200/hr for large queues
+                52k following → ~104 cron ticks to finish scanning · queue drains at ~200 unfollows/hr
               </p>
             </div>
           )}
@@ -1467,6 +1519,17 @@ export default function Audience() {
   const bulkFollow = useBulkFollow();
   const bulkUnfollow = useBulkUnfollow();
 
+  // ── CF Worker auto-unfollow queue status (page-level, for conflict detection) ──
+  const { data: cfQueueStatus } = useQuery<{
+    pending: number; done: number; failed: number; total: number; estimatedMinutesLeft: number;
+  }>({
+    queryKey: ["cf-queue-page-level"],
+    queryFn: () => customFetch("/api/bluesky/unfollow-schedule/status"),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+  const cfQueueActive = (cfQueueStatus?.pending ?? 0) > 0;
+
   // ── Unfollow queue (client-side, batched, rate-limited) ──────────────────
   const queueItemsRef = useRef<Array<{ did: string; followUri?: string }>>([]);
   const queueProcessedRef = useRef(0);
@@ -1909,20 +1972,29 @@ export default function Audience() {
                     )}
                     {(tab === "not-following-back" || tab === "following") && (
                       <>
-                        <Button size="sm" variant="destructive" className="h-7 text-xs gap-1" onClick={handleBulkUnfollow} disabled={bulkUnfollow.isPending}>
-                          <UserMinus className="w-3 h-3" />
-                          {bulkUnfollow.isPending ? "Unfollowing…" : `Unfollow ${selected.size}`}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-xs gap-1 border-amber-500/40 text-amber-600 hover:bg-amber-500/8"
-                          onClick={enqueueSelected}
-                          title="Queue for gradual unfollow — 50 per batch, 8s between batches, auto-retry on rate limits (~375/min)"
-                        >
-                          <ListOrdered className="w-3 h-3" />
-                          Queue {selected.size.toLocaleString()}
-                        </Button>
+                        {cfQueueActive ? (
+                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/8 border border-amber-500/25 text-amber-600 text-[11px] font-medium">
+                            <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                            CF auto-unfollow running — manual unfollows paused
+                          </div>
+                        ) : (
+                          <>
+                            <Button size="sm" variant="destructive" className="h-7 text-xs gap-1" onClick={handleBulkUnfollow} disabled={bulkUnfollow.isPending}>
+                              <UserMinus className="w-3 h-3" />
+                              {bulkUnfollow.isPending ? "Unfollowing…" : `Unfollow ${selected.size}`}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs gap-1 border-amber-500/40 text-amber-600 hover:bg-amber-500/8"
+                              onClick={enqueueSelected}
+                              title="Queue for gradual unfollow — 50 per batch, 8s between batches, auto-retry on rate limits (~375/min)"
+                            >
+                              <ListOrdered className="w-3 h-3" />
+                              Queue {selected.size.toLocaleString()}
+                            </Button>
+                          </>
+                        )}
                       </>
                     )}
                     {tab === "top-authors" && (

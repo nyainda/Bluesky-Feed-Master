@@ -21,6 +21,18 @@ route.get("/cron-settings", async (c) => {
   }
 });
 
+route.post("/admin/reset-scan", async (c) => {
+  try {
+    await Promise.all([
+      c.env.DB.prepare("INSERT INTO cron_settings (key, value) VALUES ('auto_unfollow_scan_cursor', '') ON CONFLICT(key) DO UPDATE SET value = '', updated_at = datetime('now')").run(),
+      c.env.DB.prepare("INSERT INTO cron_settings (key, value) VALUES ('auto_unfollow_scan_pages_done', '0') ON CONFLICT(key) DO UPDATE SET value = '0', updated_at = datetime('now')").run(),
+    ]);
+    return c.json({ ok: true, message: "Scan cursor reset — next trigger will start a fresh scan" });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
 route.post("/cron-settings", async (c) => {
   let body: unknown;
   try {

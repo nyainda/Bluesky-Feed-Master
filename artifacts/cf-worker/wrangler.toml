@@ -15,6 +15,13 @@ database_id = "6d1329cc-e8b9-4183-bbf6-42ede9a83b74"
 [triggers]
 crons = ["*/3 * * * *", "0 2 * * *"]
 
+# ─── Smart Placement — CF auto-routes each request to the optimal PoP ──────────
+# Minimises latency for readers in US, EU, APAC by running the Worker at the
+# edge node closest to D1's primary region for write-heavy cron tasks and at
+# the PoP closest to the requester for feed-skeleton reads.
+[placement]
+mode = "smart"
+
 # ─── Non-secret env vars (set secrets via `wrangler secret put`) ────────────────
 # Secrets to set via CLI:
 #   wrangler secret put FEEDGEN_PUBLISHER_DID

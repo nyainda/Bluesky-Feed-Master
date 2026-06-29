@@ -43,6 +43,16 @@ route.get("/xrpc/app.bsky.feed.getFeedSkeleton", async (c) => {
   const limit = Math.min(parseInt(c.req.query("limit") || "30", 10), 100);
   const cursor = c.req.query("cursor");
 
+  // ── Geo context from Cloudflare ──────────────────────────────────────────
+  // CF populates request.cf with geographic metadata at the edge PoP closest
+  // to the requester. We surface these as response headers so the dashboard
+  // and ATProto clients can see which region served the request.
+  const cf = (c.req.raw as { cf?: Record<string, unknown> }).cf ?? {};
+  const country  = (cf["country"]  as string | undefined) ?? "XX";
+  const continent = (cf["continent"] as string | undefined) ?? "unknown";
+  const colo     = (cf["colo"]     as string | undefined) ?? "unknown";
+  const region   = (cf["region"]   as string | undefined) ?? "";
+
   if (!feedUri) {
     return c.json({ error: "MissingFeed", message: "feed parameter required" }, 400);
   }
@@ -81,11 +91,40 @@ route.get("/xrpc/app.bsky.feed.getFeedSkeleton", async (c) => {
       nextCursor = `${last.indexedAt}::${last.cid}`;
     }
 
+    // ── Edge caching — feed skeletons are public and shared across all users.
+    // CF edge PoPs worldwide will cache the response for 30s, slashing latency
+    // for readers in US, EU, APAC without hitting D1 on every request.
+    // Browser/ATProto clients revalidate every 15s.
+    c.header("Cache-Control", "public, max-age=15, s-maxage=30, stale-while-revalidate=60");
+    c.header("CDN-Cache-Control", "max-age=30");
+    c.header("Vary", "Accept");
+
+    // ── Geo routing headers — visible in dashboard diagnostics ───────────────
+    c.header("X-Served-Country",   country);
+    c.header("X-Served-Continent", continent);
+    c.header("X-Served-Colo",      colo);
+    if (region) c.header("X-Served-Region", region);
+
     return c.json({ feed: skeleton, cursor: nextCursor });
   } catch (err) {
     console.error(`Error serving feed ${algoName}:`, err);
     return c.json({ error: "InternalServerError" }, 500);
   }
+});
+
+// ── Geo info endpoint — lets the dashboard show which CF PoP is serving ──────
+route.get("/api/geo", (c) => {
+  const cf = (c.req.raw as { cf?: Record<string, unknown> }).cf ?? {};
+  return c.json({
+    country:    (cf["country"]   as string | undefined) ?? "XX",
+    continent:  (cf["continent"] as string | undefined) ?? "unknown",
+    colo:       (cf["colo"]      as string | undefined) ?? "unknown",
+    city:       (cf["city"]      as string | undefined) ?? null,
+    region:     (cf["region"]    as string | undefined) ?? null,
+    latitude:   (cf["latitude"]  as string | undefined) ?? null,
+    longitude:  (cf["longitude"] as string | undefined) ?? null,
+    timezone:   (cf["timezone"]  as string | undefined) ?? null,
+  });
 });
 
 export default route;
