@@ -1565,44 +1565,20 @@ function AutoFollowTab() {
   return (
     <div className="space-y-4 py-2">
 
-      {/* ── Enable / Disable banner ── */}
-      <div className={cn(
-        "flex items-center justify-between gap-3 px-4 py-3 rounded-xl border",
-        settings.enabled
-          ? "bg-emerald-500/8 border-emerald-500/20"
-          : "bg-card border-card-border",
-      )}>
+      {/* ── Always-On banner ── */}
+      <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl border bg-emerald-500/8 border-emerald-500/20">
         <div className="flex items-center gap-3">
-          <div className={cn(
-            "w-2.5 h-2.5 rounded-full flex-shrink-0",
-            settings.enabled ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground/30",
-          )} />
+          <div className="w-2.5 h-2.5 rounded-full flex-shrink-0 bg-emerald-500 animate-pulse" />
           <div>
-            <p className="text-sm font-semibold text-foreground">
-              {settings.enabled ? "Auto-Follow is ON" : "Auto-Follow is OFF"}
-            </p>
+            <p className="text-sm font-semibold text-foreground">Auto-Follow is Always On</p>
             <p className="text-xs text-muted-foreground">
-              {settings.enabled
-                ? "Cron runs every 3 min · discovers & follows matching accounts"
-                : "No new follows will happen until you enable it"}
+              Cron runs every 3 min · discovers & follows matching accounts continuously
             </p>
           </div>
         </div>
-        <button
-          onClick={toggleEnabled}
-          disabled={toggling || settingsFetching}
-          className={cn(
-            "relative flex-shrink-0 w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary/40",
-            settings.enabled ? "bg-emerald-500" : "bg-muted-foreground/30",
-            (toggling || settingsFetching) && "opacity-60 cursor-not-allowed",
-          )}
-          title={settings.enabled ? "Pause auto-follow" : "Enable auto-follow"}
-        >
-          <span className={cn(
-            "absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200",
-            settings.enabled ? "translate-x-5" : "translate-x-0",
-          )} />
-        </button>
+        <span className="flex-shrink-0 text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/25">
+          Always On
+        </span>
       </div>
 
       {/* ── Stats ── */}
@@ -1728,7 +1704,7 @@ function AutoFollowTab() {
           <Activity className="w-7 h-7 text-muted-foreground/20" />
           <p className="text-sm text-muted-foreground">No follows logged yet.</p>
           <p className="text-xs text-muted-foreground/60">
-            {settings.enabled ? "Cron runs every 3 min — check back shortly." : "Enable auto-follow above to start."}
+            Cron runs every 3 min — first follows will appear shortly.
           </p>
         </div>
       )}

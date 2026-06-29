@@ -101,9 +101,8 @@ export async function runAutoFollow(env: Env, options?: { force?: boolean }): Pr
   if (!env.BLUESKY_HANDLE || !env.BLUESKY_APP_PASSWORD || !env.FEEDGEN_PUBLISHER_DID) return;
 
   const settings = await getAutoFollowSettings(env);
-  if (!settings.enabled && !options?.force) return;
 
-  // Stop discovery if hard cap reached
+  // Stop discovery if hard cap reached (0 = unlimited)
   if (settings.cap > 0 && settings.totalFollowed >= settings.cap) {
     console.log(`[auto-follow] Cap reached (${settings.totalFollowed}/${settings.cap}) — paused`);
     return;
