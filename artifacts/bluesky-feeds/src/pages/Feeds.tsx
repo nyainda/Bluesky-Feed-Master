@@ -502,20 +502,26 @@ export default function Feeds() {
 
   async function triggerIndex() {
     setIndexing(true);
+    setIndexResults(null);
     try {
       const res = await customFetch<IndexResponse>(
         "/api/admin/trigger-index",
         { method: "POST" },
       );
       if (res.ok) {
-        setIndexResults(res);
-        queryClient.invalidateQueries();
+        // Indexer runs in the background (waitUntil). Poll counts after 30s.
+        toast({ title: "Indexing in progress", description: "Feed counts will update in ~30 seconds…" });
+        setTimeout(() => {
+          queryClient.invalidateQueries();
+          setIndexing(false);
+          toast({ title: "Feed counts refreshed", description: "Check your feeds for new posts." });
+        }, 30000);
       } else {
-        toast({ title: "Indexing failed", description: res.error ?? "Unknown error", variant: "destructive" });
+        toast({ title: "Could not start indexer", description: res.error ?? "Unknown error", variant: "destructive" });
+        setIndexing(false);
       }
     } catch {
-      toast({ title: "Indexing failed", description: "Could not reach the indexer", variant: "destructive" });
-    } finally {
+      toast({ title: "Could not reach indexer", description: "Check your connection and try again.", variant: "destructive" });
       setIndexing(false);
     }
   }

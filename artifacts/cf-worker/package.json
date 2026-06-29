@@ -1,0 +1,26 @@
+{
+  "name": "@workspace/cf-worker",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create feedforge-db",
+    "db:migrate": "wrangler d1 execute feedforge-db --file ./migrations/0001_init.sql",
+    "db:migrate:remote": "wrangler d1 execute feedforge-db --remote --file ./migrations/0001_init.sql",
+    "cf-typegen": "wrangler types",
+    "db:migrate:all": "wrangler d1 execute feedforge-db --file ./migrations/0001_init.sql && wrangler d1 execute feedforge-db --file ./migrations/0002_follower_snapshots.sql && wrangler d1 execute feedforge-db --file ./migrations/0003_author_scoring.sql && wrangler d1 execute feedforge-db --file ./migrations/0004_feed_ranked_posts.sql",
+    "db:migrate:remote:all": "wrangler d1 execute feedforge-db --remote --file ./migrations/0001_init.sql && wrangler d1 execute feedforge-db --remote --file ./migrations/0002_follower_snapshots.sql && wrangler d1 execute feedforge-db --remote --file ./migrations/0003_author_scoring.sql && wrangler d1 execute feedforge-db --remote --file ./migrations/0004_feed_ranked_posts.sql"
+  },
+  "dependencies": {
+    "@atproto/api": "^0.13.18",
+    "drizzle-orm": "catalog:",
+    "hono": "^4.6.3",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "typescript": "^5.8.3",
+    "wrangler": "^3.91.0"
+  }
+}
