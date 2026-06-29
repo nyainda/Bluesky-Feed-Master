@@ -86,6 +86,19 @@ app.get("/api/firehose/status", (c) =>
   }),
 );
 
+// Manual trigger — runs feed ranking immediately (separate from indexer to avoid cron timeout)
+app.post("/api/admin/trigger-rank", async (c) => {
+  const start = Date.now();
+  try {
+    await precomputeFeedRankings(c.env);
+    const elapsed = Math.round((Date.now() - start) / 1000);
+    return c.json({ ok: true, message: `Feed ranking completed in ${elapsed}s` });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ ok: false, error: message }, 500);
+  }
+});
+
 // Manual trigger — runs the indexer immediately and returns per-feed diagnostics
 app.post("/api/admin/trigger-index", async (c) => {
   const start = Date.now();

@@ -1,8 +1,11 @@
 import type { Env } from "../index";
 
 const TABLE = "unfollow_scheduled_queue";
-const BATCH_PER_CRON = 100;   // items per 3-min cron run → ~33/min (limit is 600/min)
-const DELAY_MS = 150;          // ms between each deleteFollow — keeps burst rate low
+// 10 unfollows per 3-min cron = ~200/hour.
+// Very human-like pace — won't trigger Bluesky's rate limit (600/min) even for queues of 40k+.
+// At this pace: 1k = 5h, 5k = 25h, 10k = 50h, 40k = 8 days. Safe and stealthy.
+const BATCH_PER_CRON = 10;
+const DELAY_MS = 800;          // 800ms between each deleteFollow — further reduces burst rate
 
 export async function ensureScheduledUnfollowTable(env: Env): Promise<void> {
   await env.DB.prepare(

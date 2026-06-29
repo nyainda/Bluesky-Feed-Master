@@ -1,10 +1,12 @@
 import type { Env } from "../index";
+import { enqueueScheduledUnfollowItems } from "./scheduled-unfollow";
 
 type CronSettings = {
   auto_unfollow_enabled: string;
   auto_unfollow_interval_days: string;
   auto_unfollow_cap: string;
   auto_unfollow_last_run: string;
+  auto_unfollow_min_followers_to_keep: string;
 };
 
 async function getSetting(env: Env, key: string, fallback: string): Promise<string> {
@@ -26,36 +28,45 @@ export async function getAutoUnfollowSettings(env: Env): Promise<{
   enabled: boolean;
   intervalDays: number;
   cap: number;
+  minFollowersToKeep: number;
   lastRun: string | null;
 }> {
-  const [enabled, intervalDays, cap, lastRun] = await Promise.all([
+  const [enabled, intervalDays, cap, lastRun, minFollowers] = await Promise.all([
     getSetting(env, "auto_unfollow_enabled", "0"),
     getSetting(env, "auto_unfollow_interval_days", "7"),
-    getSetting(env, "auto_unfollow_cap", "50"),
+    getSetting(env, "auto_unfollow_cap", "0"),
     getSetting(env, "auto_unfollow_last_run", ""),
+    getSetting(env, "auto_unfollow_min_followers_to_keep", "0"),
   ]);
   return {
     enabled: enabled === "1",
     intervalDays: Math.max(1, parseInt(intervalDays, 10) || 7),
-    cap: Math.min(200, Math.max(1, parseInt(cap, 10) || 50)),
+    cap: Math.max(0, parseInt(cap, 10) || 0), // 0 = unlimited
+    minFollowersToKeep: Math.max(0, parseInt(minFollowers, 10) || 0),
     lastRun: lastRun || null,
   };
 }
 
 export async function saveAutoUnfollowSettings(
   env: Env,
-  settings: { enabled: boolean; intervalDays: number; cap: number },
+  settings: { enabled: boolean; intervalDays: number; cap: number; minFollowersToKeep?: number },
 ): Promise<void> {
   await Promise.all([
     setSetting(env, "auto_unfollow_enabled", settings.enabled ? "1" : "0"),
     setSetting(env, "auto_unfollow_interval_days", String(settings.intervalDays)),
     setSetting(env, "auto_unfollow_cap", String(settings.cap)),
+    setSetting(env, "auto_unfollow_min_followers_to_keep", String(settings.minFollowersToKeep ?? 0)),
   ]);
 }
 
 /**
- * Runs as part of the every-3-min cron but gates itself via lastRun + intervalDays.
- * Only executes if: enabled AND (lastRun is null OR now > lastRun + intervalDays).
+ * Runs on the cron interval gate (intervalDays). Instead of directly unfollowing,
+ * it queues non-followers-back into unfollow_scheduled_queue. The scheduled-unfollow
+ * processor then trickles through the queue at a slow, human-like pace (10/cron = ~200/hr)
+ * to stay comfortably within Bluesky's rate limits, even for queues of 10k–40k+.
+ *
+ * minFollowersToKeep: skip accounts with >= this many followers (0 = unfollow all)
+ * cap: max items to queue per scan (0 = unlimited — queue all non-followers-back)
  */
 export async function runAutoUnfollow(env: Env): Promise<void> {
   if (!env.BLUESKY_HANDLE || !env.BLUESKY_APP_PASSWORD || !env.FEEDGEN_PUBLISHER_DID) {
@@ -65,11 +76,9 @@ export async function runAutoUnfollow(env: Env): Promise<void> {
 
   const settings = await getAutoUnfollowSettings(env);
 
-  if (!settings.enabled) {
-    return; // Silently skip
-  }
+  if (!settings.enabled) return;
 
-  // Check if enough time has passed since lastRun
+  // Gate by interval
   if (settings.lastRun) {
     const lastRunMs = new Date(settings.lastRun).getTime();
     const intervalMs = settings.intervalDays * 24 * 60 * 60 * 1000;
@@ -79,7 +88,9 @@ export async function runAutoUnfollow(env: Env): Promise<void> {
     }
   }
 
-  console.log(`[auto-unfollow] Starting — cap=${settings.cap}, interval=${settings.intervalDays}d`);
+  console.log(
+    `[auto-unfollow] Scanning — cap=${settings.cap || "unlimited"}, minFollowers=${settings.minFollowersToKeep}, interval=${settings.intervalDays}d`,
+  );
 
   try {
     const { AtpAgent } = await import("@atproto/api");
@@ -89,8 +100,8 @@ export async function runAutoUnfollow(env: Env): Promise<void> {
       password: env.BLUESKY_APP_PASSWORD,
     });
 
-    // Fetch following list (all pages, up to 2000 to be safe)
-    const following: { did: string; handle: string; followUri: string }[] = [];
+    // Fetch full following list (paginate up to 10k to handle large accounts)
+    const following: { did: string; handle: string; followUri: string; followersCount: number }[] = [];
     let followCursor: string | undefined;
     do {
       const result = await agent.getFollows({
@@ -101,13 +112,18 @@ export async function runAutoUnfollow(env: Env): Promise<void> {
       for (const f of result.data.follows) {
         const followUri = f.viewer?.following;
         if (followUri) {
-          following.push({ did: f.did, handle: f.handle, followUri });
+          following.push({
+            did: f.did,
+            handle: f.handle,
+            followUri,
+            followersCount: Number(f.followersCount ?? 0),
+          });
         }
       }
       followCursor = result.data.cursor;
-    } while (followCursor && following.length < 2000);
+    } while (followCursor && following.length < 10_000);
 
-    // Fetch followers set (just DIDs, for the diff)
+    // Fetch follower DIDs (paginate up to 10k)
     const followerDids = new Set<string>();
     let followerCursor: string | undefined;
     do {
@@ -120,43 +136,38 @@ export async function runAutoUnfollow(env: Env): Promise<void> {
         followerDids.add(f.did);
       }
       followerCursor = result.data.cursor;
-    } while (followerCursor && followerDids.size < 5000);
+    } while (followerCursor && followerDids.size < 10_000);
 
     // Non-followers-back
-    const nonFollowersBack = following.filter((f) => !followerDids.has(f.did));
+    let candidates = following.filter((f) => !followerDids.has(f.did));
+
+    // Filter: skip accounts with >= minFollowersToKeep followers (influencers worth keeping)
+    if (settings.minFollowersToKeep > 0) {
+      const before = candidates.length;
+      candidates = candidates.filter((f) => f.followersCount < settings.minFollowersToKeep);
+      console.log(
+        `[auto-unfollow] Kept ${candidates.length} of ${before} after filtering accounts with ${settings.minFollowersToKeep}+ followers`,
+      );
+    }
 
     console.log(
-      `[auto-unfollow] Following ${following.length}, Followers ${followerDids.size}, Non-followers-back: ${nonFollowersBack.length}`,
+      `[auto-unfollow] Following=${following.length}, Followers=${followerDids.size}, Candidates=${candidates.length}`,
     );
 
-    // Unfollow up to cap
-    const toUnfollow = nonFollowersBack.slice(0, settings.cap);
-    let unfollowed = 0;
-    let errors = 0;
+    // Apply cap (0 = no limit — queue everything)
+    const toQueue = settings.cap > 0 ? candidates.slice(0, settings.cap) : candidates;
 
-    for (const { did, handle, followUri } of toUnfollow) {
-      try {
-        // Write log entry before unfollowing so the record exists even if deleteFollow throws
-        await env.DB.prepare(
-          "INSERT INTO auto_unfollow_log (did, handle, unfollowed_at) VALUES (?, ?, datetime('now'))",
-        )
-          .bind(did, handle)
-          .run();
-
-        await agent.deleteFollow(followUri);
-        unfollowed++;
-        // Small delay to respect rate limits
-        await new Promise((r) => setTimeout(r, 300));
-      } catch (err) {
-        console.error("[auto-unfollow] Failed to unfollow:", err);
-        errors++;
-      }
-    }
+    // Enqueue into scheduled queue — actual unfollows happen slowly via runScheduledUnfollow
+    const { enqueued, skipped } = await enqueueScheduledUnfollowItems(
+      env,
+      toQueue.map((f) => ({ did: f.did, followUri: f.followUri })),
+    );
 
     await setSetting(env, "auto_unfollow_last_run", new Date().toISOString());
 
     console.log(
-      `[auto-unfollow] Done — ${unfollowed} unfollowed, ${errors} errors, ${nonFollowersBack.length - toUnfollow.length} deferred (over cap).`,
+      `[auto-unfollow] Queued ${enqueued} (${skipped} already pending). ` +
+        `Queue will be processed ~10/cron at ~200/hr — estimated ${Math.ceil(enqueued / 200)}h.`,
     );
   } catch (err) {
     console.error("[auto-unfollow] Fatal error:", err);

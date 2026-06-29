@@ -29,7 +29,7 @@ route.post("/cron-settings", async (c) => {
     return c.json({ ok: false, error: "Invalid JSON body" }, 400);
   }
 
-  const { enabled, intervalDays, cap } = body as Record<string, unknown>;
+  const { enabled, intervalDays, cap, minFollowersToKeep } = body as Record<string, unknown>;
 
   if (typeof enabled !== "boolean") {
     return c.json({ ok: false, error: "enabled (boolean) is required" }, 400);
@@ -37,15 +37,19 @@ route.post("/cron-settings", async (c) => {
   if (typeof intervalDays !== "number" || intervalDays < 1) {
     return c.json({ ok: false, error: "intervalDays (number >= 1) is required" }, 400);
   }
-  if (typeof cap !== "number" || cap < 1 || cap > 200) {
-    return c.json({ ok: false, error: "cap (number 1–200) is required" }, 400);
+  // cap: 0 = unlimited (queue all), or 1–200000
+  if (typeof cap !== "number" || cap < 0) {
+    return c.json({ ok: false, error: "cap (number >= 0) is required" }, 400);
   }
+  // minFollowersToKeep: 0 = unfollow everyone, else skip accounts with >= that many followers
+  const minFollowers = typeof minFollowersToKeep === "number" ? Math.max(0, Math.floor(minFollowersToKeep)) : 0;
 
   try {
     await saveAutoUnfollowSettings(c.env, {
       enabled,
       intervalDays: Math.floor(intervalDays),
       cap: Math.floor(cap),
+      minFollowersToKeep: minFollowers,
     });
     const settings = await getAutoUnfollowSettings(c.env);
     return c.json({ ok: true, settings });

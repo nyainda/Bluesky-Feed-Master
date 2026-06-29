@@ -16,7 +16,7 @@ import {
   ChevronLeft, ChevronRight, Search, CheckSquare, Square,
   TrendingUp, Heart, AlertTriangle, Filter, X, ArrowUpRight, BarChart2, Camera,
   Clock, Shield, Settings2, ToggleLeft, ToggleRight, History,
-  ListOrdered, Pause, Play, Ban, Loader2, Download,
+  ListOrdered, Pause, Play, Ban, Loader2, Download, CheckCircle,
 } from "lucide-react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -704,6 +704,7 @@ type AutoUnfollowSettings = {
   enabled: boolean;
   intervalDays: number;
   cap: number;
+  minFollowersToKeep: number;
   lastRun: string | null;
 };
 
@@ -712,6 +713,27 @@ const INTERVAL_OPTIONS = [
   { label: "Weekly", days: 7 },
   { label: "Bi-weekly", days: 14 },
   { label: "Monthly", days: 30 },
+];
+
+// 0 = queue all non-followers-back
+const CAP_OPTIONS = [
+  { label: "1k", value: 1_000 },
+  { label: "5k", value: 5_000 },
+  { label: "10k", value: 10_000 },
+  { label: "20k", value: 20_000 },
+  { label: "25k", value: 25_000 },
+  { label: "40k", value: 40_000 },
+  { label: "All", value: 0 },
+];
+
+// 0 = unfollow everyone regardless of their follower count
+const MIN_FOLLOWERS_OPTIONS = [
+  { label: "Everyone", value: 0 },
+  { label: "Skip 1k+", value: 1_000 },
+  { label: "Skip 5k+", value: 5_000 },
+  { label: "Skip 10k+", value: 10_000 },
+  { label: "Skip 20k+", value: 20_000 },
+  { label: "Skip 40k+", value: 40_000 },
 ];
 
 function AutoUnfollowCard() {
@@ -724,19 +746,26 @@ function AutoUnfollowCard() {
     staleTime: 30_000,
   });
 
+  const { data: queueStatus, refetch: refetchQueue } = useQuery<{
+    pending: number; done: number; failed: number; total: number; estimatedMinutesLeft: number;
+  }>({
+    queryKey: ["unfollow-queue-status"],
+    queryFn: () => customFetch("/api/bluesky/unfollow-schedule/status"),
+    refetchInterval: 30_000,
+  });
+
   const settings = data?.settings;
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [intervalDays, setIntervalDays] = useState<number | null>(null);
   const [cap, setCap] = useState<number | null>(null);
+  const [minFollowersToKeep, setMinFollowersToKeep] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
   const displayEnabled = enabled ?? settings?.enabled ?? false;
   const displayInterval = intervalDays ?? settings?.intervalDays ?? 7;
-  const displayCap = cap ?? settings?.cap ?? 50;
-  const isDirty =
-    enabled !== null ||
-    intervalDays !== null ||
-    cap !== null;
+  const displayCap = cap ?? settings?.cap ?? 0;
+  const displayMinFollowers = minFollowersToKeep ?? settings?.minFollowersToKeep ?? 0;
+  const isDirty = enabled !== null || intervalDays !== null || cap !== null || minFollowersToKeep !== null;
 
   async function handleSave() {
     setSaving(true);
@@ -744,11 +773,17 @@ function AutoUnfollowCard() {
       await customFetch("/api/cron-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: displayEnabled, intervalDays: displayInterval, cap: displayCap }),
+        body: JSON.stringify({
+          enabled: displayEnabled,
+          intervalDays: displayInterval,
+          cap: displayCap,
+          minFollowersToKeep: displayMinFollowers,
+        }),
       });
       setEnabled(null);
       setIntervalDays(null);
       setCap(null);
+      setMinFollowersToKeep(null);
       qc.invalidateQueries({ queryKey: ["cron-settings"] });
       toast({ title: "Auto-unfollow settings saved" });
     } catch {
@@ -757,6 +792,19 @@ function AutoUnfollowCard() {
       setSaving(false);
     }
   }
+
+  async function clearQueue() {
+    try {
+      await customFetch("/api/bluesky/unfollow-schedule", { method: "DELETE" });
+      refetchQueue();
+      toast({ title: "Queue cleared" });
+    } catch {
+      toast({ title: "Failed to clear queue", variant: "destructive" });
+    }
+  }
+
+  const hasPending = (queueStatus?.pending ?? 0) > 0;
+  const estimatedHours = queueStatus ? Math.ceil(queueStatus.estimatedMinutesLeft / 60) : 0;
 
   return (
     <motion.div
@@ -771,11 +819,17 @@ function AutoUnfollowCard() {
           <Shield className="w-4 h-4 text-primary" />
           <span className="text-sm font-semibold text-foreground">Auto-Unfollow</span>
           <span className={cn(
-            "text-[10px] px-1.5 py-0.5 rounded-full font-medium tabular-nums",
+            "text-[10px] px-1.5 py-0.5 rounded-full font-medium",
             displayEnabled ? "bg-emerald-500/10 text-emerald-500" : "bg-muted text-muted-foreground",
           )}>
             {displayEnabled ? "ON" : "OFF"}
           </span>
+          {hasPending && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-amber-500/10 text-amber-600 flex items-center gap-1">
+              <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+              {queueStatus!.pending.toLocaleString()} queued
+            </span>
+          )}
         </div>
         <button
           onClick={() => setEnabled(!displayEnabled)}
@@ -790,75 +844,109 @@ function AutoUnfollowCard() {
       </div>
 
       {/* Body */}
-      <div className="px-4 py-4">
+      <div className="px-4 py-4 space-y-4">
         {isLoading ? (
-          <div className="h-16 animate-pulse bg-muted rounded-lg" />
+          <div className="h-20 animate-pulse bg-muted rounded-lg" />
         ) : (
-          <div className="flex flex-wrap items-end gap-5">
-            {/* Interval */}
+          <>
+            {/* Row 1: Interval */}
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1.5">Run every</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">Scan every</label>
               <div className="flex gap-1.5 flex-wrap">
                 {INTERVAL_OPTIONS.map(opt => (
-                  <button
-                    key={opt.days}
-                    onClick={() => setIntervalDays(opt.days)}
-                    className={cn(
-                      "text-xs px-3 py-1.5 rounded-lg border transition-colors",
+                  <button key={opt.days} onClick={() => setIntervalDays(opt.days)}
+                    className={cn("text-xs px-3 py-1.5 rounded-lg border transition-colors",
                       displayInterval === opt.days
                         ? "bg-primary/10 border-primary/30 text-primary font-medium"
-                        : "border-border text-muted-foreground hover:bg-muted/50",
-                    )}
-                  >
+                        : "border-border text-muted-foreground hover:bg-muted/50")}>
                     {opt.label}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Cap */}
+            {/* Row 2: Queue size (cap) */}
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                Max unfollows per run
+                Queue up to (per scan)
               </label>
-              <div className="flex items-center gap-2.5">
-                <input
-                  type="range"
-                  min={1}
-                  max={200}
-                  step={5}
-                  value={displayCap}
-                  onChange={e => setCap(Number(e.target.value))}
-                  className="w-28 accent-primary"
-                />
-                <span className="text-xs font-mono text-foreground w-8 tabular-nums">{displayCap}</span>
+              <div className="flex gap-1.5 flex-wrap">
+                {CAP_OPTIONS.map(opt => (
+                  <button key={opt.value} onClick={() => setCap(opt.value)}
+                    className={cn("text-xs px-3 py-1.5 rounded-lg border transition-colors",
+                      displayCap === opt.value
+                        ? "bg-primary/10 border-primary/30 text-primary font-medium"
+                        : "border-border text-muted-foreground hover:bg-muted/50")}>
+                    {opt.label}
+                  </button>
+                ))}
               </div>
+              <p className="text-[10px] text-muted-foreground/60 mt-1">
+                Unfollows trickle out at ~200/hr (10 per cron). "All" queues every non-follower-back found.
+              </p>
             </div>
 
-            {/* Last run + save */}
-            <div className="ml-auto flex flex-col items-end gap-2">
-              {settings?.lastRun && (
-                <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                  <Clock className="w-3 h-3" />
-                  Last run: {format(new Date(settings.lastRun), "MMM d, h:mm a")}
-                </div>
-              )}
-              <Button
-                size="sm"
-                onClick={handleSave}
-                disabled={saving || (!isDirty && !settings)}
-                className={cn("h-8 text-xs gap-1.5", isDirty && "ring-1 ring-primary/40")}
-              >
+            {/* Row 3: Follower filter */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                Skip accounts with
+              </label>
+              <div className="flex gap-1.5 flex-wrap">
+                {MIN_FOLLOWERS_OPTIONS.map(opt => (
+                  <button key={opt.value} onClick={() => setMinFollowersToKeep(opt.value)}
+                    className={cn("text-xs px-3 py-1.5 rounded-lg border transition-colors",
+                      displayMinFollowers === opt.value
+                        ? "bg-primary/10 border-primary/30 text-primary font-medium"
+                        : "border-border text-muted-foreground hover:bg-muted/50")}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground/60 mt-1">
+                Keeps high-follower accounts in your following list — useful if you follow influencers.
+              </p>
+            </div>
+
+            {/* Row 4: Queue status + save */}
+            <div className="flex items-end justify-between gap-3 flex-wrap">
+              <div className="space-y-1">
+                {hasPending && (
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <RefreshCw className="w-3 h-3 text-amber-500" />
+                      <strong className="text-amber-600">{queueStatus!.pending.toLocaleString()}</strong> pending
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3 text-emerald-500" />
+                      {queueStatus!.done.toLocaleString()} done
+                    </span>
+                    {estimatedHours > 0 && (
+                      <span className="text-[10px] text-muted-foreground/70">~{estimatedHours}h left</span>
+                    )}
+                    <button onClick={clearQueue} className="text-[10px] text-destructive hover:underline ml-1">
+                      Clear queue
+                    </button>
+                  </div>
+                )}
+                {settings?.lastRun && (
+                  <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                    <Clock className="w-3 h-3" />
+                    Last scan: {format(new Date(settings.lastRun), "MMM d, h:mm a")}
+                  </div>
+                )}
+              </div>
+              <Button size="sm" onClick={handleSave} disabled={saving || (!isDirty && !settings)}
+                className={cn("h-8 text-xs gap-1.5", isDirty && "ring-1 ring-primary/40")}>
                 {saving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Settings2 className="w-3 h-3" />}
                 {saving ? "Saving…" : "Save Settings"}
               </Button>
             </div>
-          </div>
+          </>
         )}
 
-        <p className="text-[11px] text-muted-foreground/60 mt-3 leading-relaxed">
-          Automatically unfollows accounts that don't follow you back. Runs during the indexing cron once the interval has elapsed.
-          Non-followers-back are processed oldest-first, up to the per-run cap.
+        <p className="text-[11px] text-muted-foreground/60 leading-relaxed border-t border-border/40 pt-3">
+          Unfollows non-followers-back by queuing them — the cron processes 10 at a time so large queues
+          (10k, 40k+) trickle safely over hours or days without triggering Bluesky's rate limit.
         </p>
       </div>
 

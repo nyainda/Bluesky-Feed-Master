@@ -672,10 +672,28 @@ export default function FeedDetail() {
                     Ranked
                   </button>
                 </div>
+                {postMode === "ranked" && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        await customFetch("/api/admin/trigger-rank", { method: "POST" });
+                        queryClient.invalidateQueries({ queryKey: getGetFeedPostsQueryKey(id, { limit: 25, cursor: undefined, mode: "ranked" as GetFeedPostsMode }) });
+                        toast({ title: "Rankings refreshed" });
+                      } catch {
+                        toast({ title: "Ranking failed", variant: "destructive" });
+                      }
+                    }}
+                    className="text-xs text-muted-foreground hover:text-primary transition-colors flex items-center gap-1 border border-border rounded-md px-2 py-1 hover:bg-muted/50"
+                    title="Recompute all feed rankings now"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Refresh scores
+                  </button>
+                )}
                 <span className="text-xs text-muted-foreground tabular-nums ml-auto">
                   {(postsPage?.total ?? 0).toLocaleString()} total
                   {postsPage?.mode && postsPage.mode !== postMode && (
-                    <span className="ml-1 text-amber-500">(showing recent — no ranked scores yet)</span>
+                    <span className="ml-1 text-amber-500">(showing recent — no ranked scores yet, click Refresh scores)</span>
                   )}
                 </span>
               </div>

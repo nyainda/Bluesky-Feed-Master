@@ -58,7 +58,7 @@ route.post("/bluesky/notifications/seen", async (c) => {
   }
   try {
     const agent = await getAuthenticatedAgent(c.env);
-    await agent.updateSeenNotifications({ seenAt: new Date().toISOString() });
+    await agent.updateSeenNotifications(new Date().toISOString());
     return c.json({ ok: true });
   } catch (err) {
     console.error("updateSeenNotifications failed:", err);

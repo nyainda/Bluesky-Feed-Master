@@ -197,4 +197,58 @@ route.post("/bluesky/compose", async (c) => {
   }
 });
 
+// POST /api/bluesky/like  — like a post as the publisher account
+route.post("/bluesky/like", async (c) => {
+  if (!c.env.BLUESKY_HANDLE || !c.env.BLUESKY_APP_PASSWORD) {
+    return c.json({ error: "Bluesky credentials not configured" }, 400);
+  }
+  let uri: string, cid: string;
+  try {
+    const body = await c.req.json<{ uri: string; cid: string }>();
+    uri = body.uri;
+    cid = body.cid;
+    if (!uri || !cid) throw new Error("missing fields");
+  } catch {
+    return c.json({ error: "Body must be JSON with uri and cid" }, 400);
+  }
+  try {
+    const { AtpAgent } = await import("@atproto/api");
+    const agent = new AtpAgent({ service: "https://bsky.social" });
+    await agent.login({ identifier: c.env.BLUESKY_HANDLE, password: c.env.BLUESKY_APP_PASSWORD });
+    await agent.like(uri, cid);
+    return c.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[like] failed:", err);
+    return c.json({ error: "Failed to like post", message }, 500);
+  }
+});
+
+// POST /api/bluesky/repost  — repost a post as the publisher account
+route.post("/bluesky/repost", async (c) => {
+  if (!c.env.BLUESKY_HANDLE || !c.env.BLUESKY_APP_PASSWORD) {
+    return c.json({ error: "Bluesky credentials not configured" }, 400);
+  }
+  let uri: string, cid: string;
+  try {
+    const body = await c.req.json<{ uri: string; cid: string }>();
+    uri = body.uri;
+    cid = body.cid;
+    if (!uri || !cid) throw new Error("missing fields");
+  } catch {
+    return c.json({ error: "Body must be JSON with uri and cid" }, 400);
+  }
+  try {
+    const { AtpAgent } = await import("@atproto/api");
+    const agent = new AtpAgent({ service: "https://bsky.social" });
+    await agent.login({ identifier: c.env.BLUESKY_HANDLE, password: c.env.BLUESKY_APP_PASSWORD });
+    await agent.repost(uri, cid);
+    return c.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[repost] failed:", err);
+    return c.json({ error: "Failed to repost", message }, 500);
+  }
+});
+
 export default route;
