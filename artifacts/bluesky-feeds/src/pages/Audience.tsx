@@ -16,7 +16,7 @@ import {
   ChevronLeft, ChevronRight, Search, CheckSquare, Square,
   TrendingUp, Heart, AlertTriangle, Filter, X, ArrowUpRight, BarChart2, Camera,
   Clock, Shield, Settings2, ToggleLeft, ToggleRight, History,
-  ListOrdered, Pause, Play, Ban, Loader2, Download, CheckCircle,
+  ListOrdered, Pause, Play, Ban, Loader2, Download, CheckCircle, Zap, Activity,
 } from "lucide-react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -746,13 +746,18 @@ function AutoUnfollowCard() {
     staleTime: 30_000,
   });
 
+  const [queuePending, setQueuePending] = useState(0);
   const { data: queueStatus, refetch: refetchQueue } = useQuery<{
     pending: number; done: number; failed: number; total: number; estimatedMinutesLeft: number;
   }>({
     queryKey: ["unfollow-queue-status"],
     queryFn: () => customFetch("/api/bluesky/unfollow-schedule/status"),
-    refetchInterval: 30_000,
+    refetchInterval: queuePending > 0 ? 10_000 : 30_000,
   });
+
+  useEffect(() => {
+    setQueuePending(queueStatus?.pending ?? 0);
+  }, [queueStatus?.pending]);
 
   const settings = data?.settings;
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -760,12 +765,21 @@ function AutoUnfollowCard() {
   const [cap, setCap] = useState<number | null>(null);
   const [minFollowersToKeep, setMinFollowersToKeep] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
+  const [triggering, setTriggering] = useState(false);
 
   const displayEnabled = enabled ?? settings?.enabled ?? false;
   const displayInterval = intervalDays ?? settings?.intervalDays ?? 7;
   const displayCap = cap ?? settings?.cap ?? 0;
   const displayMinFollowers = minFollowersToKeep ?? settings?.minFollowersToKeep ?? 0;
   const isDirty = enabled !== null || intervalDays !== null || cap !== null || minFollowersToKeep !== null;
+
+  const isRunning = (queueStatus?.pending ?? 0) > 0;
+  const qTotal = queueStatus?.total ?? 0;
+  const qDone = queueStatus?.done ?? 0;
+  const qPending = queueStatus?.pending ?? 0;
+  const qFailed = queueStatus?.failed ?? 0;
+  const pct = qTotal > 0 ? Math.round((qDone / qTotal) * 100) : 0;
+  const estimatedHours = queueStatus ? Math.ceil(queueStatus.estimatedMinutesLeft / 60) : 0;
 
   async function handleSave() {
     setSaving(true);
@@ -793,6 +807,21 @@ function AutoUnfollowCard() {
     }
   }
 
+  async function triggerScan() {
+    setTriggering(true);
+    try {
+      await customFetch("/api/admin/trigger-scan", { method: "POST" });
+      toast({ title: "Scan started", description: "CF Worker is scanning your following list now" });
+      setTimeout(() => refetchQueue(), 4_000);
+      setTimeout(() => refetchQueue(), 10_000);
+      setTimeout(() => refetchQueue(), 20_000);
+    } catch {
+      toast({ title: "Failed to start scan", variant: "destructive" });
+    } finally {
+      setTriggering(false);
+    }
+  }
+
   async function clearQueue() {
     try {
       await customFetch("/api/bluesky/unfollow-schedule", { method: "DELETE" });
@@ -802,9 +831,6 @@ function AutoUnfollowCard() {
       toast({ title: "Failed to clear queue", variant: "destructive" });
     }
   }
-
-  const hasPending = (queueStatus?.pending ?? 0) > 0;
-  const estimatedHours = queueStatus ? Math.ceil(queueStatus.estimatedMinutesLeft / 60) : 0;
 
   return (
     <motion.div
@@ -824,10 +850,10 @@ function AutoUnfollowCard() {
           )}>
             {displayEnabled ? "ON" : "OFF"}
           </span>
-          {hasPending && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-amber-500/10 text-amber-600 flex items-center gap-1">
-              <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-              {queueStatus!.pending.toLocaleString()} queued
+          {isRunning && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-emerald-500/10 text-emerald-600 flex items-center gap-1">
+              <Activity className="w-2.5 h-2.5" />
+              {qPending.toLocaleString()} queued in CF
             </span>
           )}
         </div>
@@ -843,7 +869,98 @@ function AutoUnfollowCard() {
         </button>
       </div>
 
-      {/* Body */}
+      {/* Live CF Progress Panel */}
+      <div className={cn(
+        "px-4 pt-4 pb-0 transition-all",
+      )}>
+        <div className={cn(
+          "rounded-xl border p-3.5 space-y-2.5 transition-colors",
+          isRunning
+            ? "border-emerald-500/25 bg-emerald-500/5"
+            : qTotal > 0
+            ? "border-primary/15 bg-primary/4"
+            : "border-border bg-muted/25",
+        )}>
+          {/* Status row */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {isRunning ? (
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Running in CF Worker
+                </span>
+              ) : qTotal > 0 ? (
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+                  <span className="w-2 h-2 rounded-full bg-primary" />
+                  Queue complete
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  <span className="w-2 h-2 rounded-full bg-muted-foreground/30" />
+                  Idle — no queue
+                </span>
+              )}
+              {isRunning && (
+                <span className="text-[10px] text-muted-foreground hidden sm:block">
+                  Cron fires every 3 min · 10 unfollows per tick · ~200/hr
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {settings?.lastRun && (
+                <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  Last scan: {format(new Date(settings.lastRun), "MMM d, h:mm a")}
+                </span>
+              )}
+              {qTotal > 0 && (
+                <button onClick={clearQueue} className="text-[10px] text-destructive/70 hover:text-destructive hover:underline">
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Progress bar + stats when queue has items */}
+          {qTotal > 0 && (
+            <>
+              <div className="w-full h-2 rounded-full bg-muted/60 overflow-hidden">
+                <motion.div
+                  className={cn("h-full rounded-full", isRunning ? "bg-emerald-500" : "bg-primary")}
+                  animate={{ width: `${pct}%` }}
+                  transition={{ ease: "easeOut", duration: 0.6 }}
+                />
+              </div>
+              <div className="flex items-center gap-3 flex-wrap text-xs">
+                <span className={cn("flex items-center gap-1 font-semibold", isRunning ? "text-amber-600" : "text-muted-foreground")}>
+                  {isRunning && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}
+                  {qPending.toLocaleString()} pending
+                </span>
+                <span className="flex items-center gap-1 text-emerald-600 font-semibold">
+                  <CheckCircle className="w-3 h-3" />
+                  {qDone.toLocaleString()} done
+                </span>
+                {qFailed > 0 && (
+                  <span className="text-destructive/70 font-medium">{qFailed.toLocaleString()} failed</span>
+                )}
+                <span className="text-[10px] text-muted-foreground ml-auto tabular-nums">
+                  {pct}%
+                  {estimatedHours > 0 && ` · ~${estimatedHours}h left`}
+                </span>
+              </div>
+            </>
+          )}
+
+          {/* Idle state description */}
+          {!isRunning && qTotal === 0 && (
+            <p className="text-[11px] text-muted-foreground/70">
+              CF cron fires every 3 min · drains 10 unfollows per tick · ~200/hr for large queues
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Settings body */}
       <div className="px-4 py-4 space-y-4">
         {isLoading ? (
           <div className="h-20 animate-pulse bg-muted rounded-lg" />
@@ -907,47 +1024,27 @@ function AutoUnfollowCard() {
               </p>
             </div>
 
-            {/* Row 4: Queue status + save */}
-            <div className="flex items-end justify-between gap-3 flex-wrap">
-              <div className="space-y-1">
-                {hasPending && (
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <RefreshCw className="w-3 h-3 text-amber-500" />
-                      <strong className="text-amber-600">{queueStatus!.pending.toLocaleString()}</strong> pending
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <CheckCircle className="w-3 h-3 text-emerald-500" />
-                      {queueStatus!.done.toLocaleString()} done
-                    </span>
-                    {estimatedHours > 0 && (
-                      <span className="text-[10px] text-muted-foreground/70">~{estimatedHours}h left</span>
-                    )}
-                    <button onClick={clearQueue} className="text-[10px] text-destructive hover:underline ml-1">
-                      Clear queue
-                    </button>
-                  </div>
-                )}
-                {settings?.lastRun && (
-                  <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                    <Clock className="w-3 h-3" />
-                    Last scan: {format(new Date(settings.lastRun), "MMM d, h:mm a")}
-                  </div>
-                )}
-              </div>
+            {/* Row 4: Actions */}
+            <div className="flex items-center justify-between gap-3 pt-1 border-t border-border/40">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={triggerScan}
+                disabled={triggering}
+                className="h-8 text-xs gap-1.5"
+              >
+                {triggering
+                  ? <><RefreshCw className="w-3 h-3 animate-spin" />Starting…</>
+                  : <><Zap className="w-3 h-3" />Trigger Scan Now</>
+                }
+              </Button>
               <Button size="sm" onClick={handleSave} disabled={saving || (!isDirty && !settings)}
                 className={cn("h-8 text-xs gap-1.5", isDirty && "ring-1 ring-primary/40")}>
-                {saving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Settings2 className="w-3 h-3" />}
-                {saving ? "Saving…" : "Save Settings"}
+                {saving ? <><RefreshCw className="w-3 h-3 animate-spin" />Saving…</> : <><Settings2 className="w-3 h-3" />Save Settings</>}
               </Button>
             </div>
           </>
         )}
-
-        <p className="text-[11px] text-muted-foreground/60 leading-relaxed border-t border-border/40 pt-3">
-          Unfollows non-followers-back by queuing them — the cron processes 10 at a time so large queues
-          (10k, 40k+) trickle safely over hours or days without triggering Bluesky's rate limit.
-        </p>
       </div>
 
       <UnfollowLogPanel />

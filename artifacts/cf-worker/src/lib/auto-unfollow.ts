@@ -68,7 +68,7 @@ export async function saveAutoUnfollowSettings(
  * minFollowersToKeep: skip accounts with >= this many followers (0 = unfollow all)
  * cap: max items to queue per scan (0 = unlimited — queue all non-followers-back)
  */
-export async function runAutoUnfollow(env: Env): Promise<void> {
+export async function runAutoUnfollow(env: Env, options?: { force?: boolean }): Promise<void> {
   if (!env.BLUESKY_HANDLE || !env.BLUESKY_APP_PASSWORD || !env.FEEDGEN_PUBLISHER_DID) {
     console.log("[auto-unfollow] Missing credentials — skipping.");
     return;
@@ -76,10 +76,10 @@ export async function runAutoUnfollow(env: Env): Promise<void> {
 
   const settings = await getAutoUnfollowSettings(env);
 
-  if (!settings.enabled) return;
+  if (!settings.enabled && !options?.force) return;
 
-  // Gate by interval
-  if (settings.lastRun) {
+  // Gate by interval — bypassed when force=true (manual trigger)
+  if (!options?.force && settings.lastRun) {
     const lastRunMs = new Date(settings.lastRun).getTime();
     const intervalMs = settings.intervalDays * 24 * 60 * 60 * 1000;
     if (Date.now() - lastRunMs < intervalMs) {

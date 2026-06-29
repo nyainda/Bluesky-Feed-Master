@@ -149,6 +149,24 @@ app.post("/api/admin/trigger-rank", async (c) => {
   }
 });
 
+// Manual trigger — bypasses the interval gate; scans following/followers, queues
+// non-followers-back, then starts draining the queue. Uses waitUntil so we
+// return immediately and the CF worker keeps running in the background.
+app.post("/api/admin/trigger-scan", async (c) => {
+  c.executionCtx.waitUntil(
+    (async () => {
+      try {
+        await runAutoUnfollow(c.env, { force: true });
+        await runScheduledUnfollow(c.env);
+        console.log("[trigger-scan] Completed");
+      } catch (err) {
+        console.error("[trigger-scan] Error:", err instanceof Error ? err.message : String(err));
+      }
+    })(),
+  );
+  return c.json({ ok: true, message: "Scan started — queue status will update within seconds" });
+});
+
 // Manual trigger — starts the indexer in the background via waitUntil() and returns
 // immediately with 202. The HTTP fetch handler has a 30-second wall-clock limit so we
 // cannot await the full indexer (which takes ~40s with inter-feed delays).
