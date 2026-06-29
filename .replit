@@ -1,4 +1,4 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-20", "web", "bash"]
 
 [deployment]
 router = "application"
@@ -33,7 +33,7 @@ args = "pnpm install && pnpm --filter @workspace/bluesky-feeds run dev"
 waitForPort = 3000
 
 [agent]
-stack = "PNPM_WORKSPACE"
+stack = "BEST_EFFORT_FALLBACK"
 expertMode = true
 
 [postMerge]
@@ -44,3 +44,6 @@ timeoutMs = 20000
 
 [userenv.shared]
 VITE_API_BASE_URL = "https://feedforge-api.manmysterious2020.workers.dev"
+
+[nix]
+channel = "stable-25_05"
