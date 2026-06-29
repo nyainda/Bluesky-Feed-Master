@@ -752,12 +752,22 @@ function AutoUnfollowCard() {
   }>({
     queryKey: ["unfollow-queue-status"],
     queryFn: () => customFetch("/api/bluesky/unfollow-schedule/status"),
-    refetchInterval: queuePending > 0 ? 10_000 : 30_000,
+    refetchInterval: queuePending > 0 ? 15_000 : 30_000,
   });
 
   useEffect(() => {
     setQueuePending(queueStatus?.pending ?? 0);
   }, [queueStatus?.pending]);
+
+  const isRunningActive = (queueStatus?.pending ?? 0) > 0;
+
+  const { data: recentLog } = useQuery<{ ok: boolean; entries: UnfollowLogEntry[] }>({
+    queryKey: ["auto-unfollow-log-live"],
+    queryFn: () => customFetch("/api/auto-unfollow/log?limit=5"),
+    refetchInterval: isRunningActive ? 30_000 : false,
+    enabled: isRunningActive,
+    staleTime: 10_000,
+  });
 
   const settings = data?.settings;
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -951,11 +961,53 @@ function AutoUnfollowCard() {
             </>
           )}
 
-          {/* Idle state description */}
+          {/* Idle state: step-by-step guide */}
           {!isRunning && qTotal === 0 && (
-            <p className="text-[11px] text-muted-foreground/70">
-              CF cron fires every 3 min · drains 10 unfollows per tick · ~200/hr for large queues
-            </p>
+            <div className="space-y-2 pt-0.5">
+              <p className="text-[11px] text-muted-foreground/60 font-medium uppercase tracking-widest">How to trigger</p>
+              <div className="space-y-1.5">
+                {[
+                  { step: "1", text: 'Click "Trigger Scan Now" below — CF Worker scans your full following list and queues non-followers-back' },
+                  { step: "2", text: "CF cron fires every 3 min automatically — drains 10 unfollows per tick (~200/hr)" },
+                  { step: "3", text: "Watch this card: queue shows pending count dropping. Following count in the header updates every 30s" },
+                ].map(({ step, text }) => (
+                  <div key={step} className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{step}</span>
+                    <p className="text-[11px] text-muted-foreground/80 leading-relaxed">{text}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground/40 pt-0.5 border-t border-border/30">
+                CF cron fires every 3 min · 10 unfollows per tick · ~200/hr for large queues
+              </p>
+            </div>
+          )}
+
+          {/* Recent unfollows live ticker when running */}
+          {isRunning && recentLog?.entries && recentLog.entries.length > 0 && (
+            <div className="pt-1 border-t border-border/30">
+              <p className="text-[10px] text-muted-foreground/50 uppercase tracking-widest mb-1.5 font-medium">Recently unfollowed</p>
+              <div className="space-y-1">
+                {recentLog.entries.slice(0, 4).map(entry => (
+                  <div key={entry.id} className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded-full bg-destructive/8 border border-destructive/15 flex items-center justify-center flex-shrink-0">
+                      <UserMinus className="w-2.5 h-2.5 text-destructive/50" />
+                    </div>
+                    <a
+                      href={`https://bsky.app/profile/${entry.handle || entry.did}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[11px] text-foreground/70 hover:text-primary transition-colors truncate"
+                    >
+                      @{entry.handle || entry.did}
+                    </a>
+                    <span className="text-[10px] text-muted-foreground/40 ml-auto flex-shrink-0 tabular-nums">
+                      {format(new Date(entry.unfollowedAt), "h:mm a")}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -1357,7 +1409,7 @@ export default function Audience() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: profile } = useGetBlueskyProfile({ query: { retry: false, queryKey: ["profile-audience"] } });
+  const { data: profile } = useGetBlueskyProfile({ query: { retry: false, queryKey: ["profile-audience"], refetchInterval: 30_000 } });
   const { data: feeds } = useListFeeds();
 
   const { data: followers, isLoading: loadingFollowers } = useGetFollowers(
