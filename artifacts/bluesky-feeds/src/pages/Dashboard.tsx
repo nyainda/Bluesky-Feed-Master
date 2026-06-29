@@ -1,9 +1,10 @@
+import { useState, useRef, useEffect } from "react";
 import {
   useGetStatsOverview, useGetRecentActivity, useGetTopFeeds,
   useGetFirehoseStatus, useGetBlueskyProfile, useGet7DayActivity,
 } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
-import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Wifi, WifiOff, Activity, Rss, FileText, Clock, TrendingUp, TrendingDown, Users, Zap, ExternalLink, ArrowUpRight } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { Link } from "wouter";
@@ -149,12 +150,40 @@ function ProfileBanner() {
   );
 }
 
+const SPARKLINE_MAX = 20;
+
+function usePostsPerMin(postsIndexedTotal: number | undefined) {
+  const prevRef = useRef<{ total: number; ts: number } | null>(null);
+  const [rate, setRate] = useState(0);
+  const [sparkline, setSparkline] = useState<{ t: number; v: number }[]>([]);
+
+  useEffect(() => {
+    if (postsIndexedTotal == null) return;
+    const now = Date.now();
+    if (prevRef.current) {
+      const deltaPosts = postsIndexedTotal - prevRef.current.total;
+      const deltaMinutes = (now - prevRef.current.ts) / 60_000;
+      const ppm = deltaMinutes > 0 ? Math.round(deltaPosts / deltaMinutes) : 0;
+      setRate(ppm);
+      setSparkline(prev => {
+        const next = [...prev, { t: now, v: ppm }];
+        return next.slice(-SPARKLINE_MAX);
+      });
+    }
+    prevRef.current = { total: postsIndexedTotal, ts: now };
+  }, [postsIndexedTotal]);
+
+  return { rate, sparkline };
+}
+
 export default function Dashboard() {
   const { data: overview, isLoading } = useGetStatsOverview();
   const { data: activity } = useGetRecentActivity();
   const { data: activity7d } = useGet7DayActivity();
   const { data: topFeeds } = useGetTopFeeds();
   const { data: firehose } = useGetFirehoseStatus({ query: { refetchInterval: 5000, queryKey: ["firehose-dash"] } });
+
+  const { rate: postsPerMin, sparkline } = usePostsPerMin(firehose?.postsIndexedTotal);
 
   const chart24h = (activity || []).map(b => ({ time: formatHour(b.hour), posts: b.count }));
   const chart7d = (activity7d || []).map(b => ({ day: formatDay(b.day), posts: b.count }));
@@ -308,7 +337,14 @@ export default function Dashboard() {
           initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}
           className="bg-card border border-card-border rounded-xl p-5 md:p-6"
         >
-          <h2 className="text-sm font-semibold text-foreground mb-5">Firehose Status</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-foreground">Firehose Status</h2>
+            <div className="flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-xs font-bold tabular-nums text-foreground">{postsPerMin}</span>
+              <span className="text-[10px] text-muted-foreground">posts/min</span>
+            </div>
+          </div>
           <div className="space-y-3">
             <div className={cn(
               "flex items-center gap-3 p-3.5 rounded-xl border",
@@ -326,7 +362,7 @@ export default function Dashboard() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className={cn("text-sm font-semibold", firehose?.connected ? "text-emerald-600" : "text-red-400")}>
-                  {firehose?.connected ? "Connected" : "Disconnected"}
+                  {firehose?.connected ? "Connected" : (firehose as { mode?: string } | undefined)?.mode === "cron" ? "Cron Indexing" : "Disconnected"}
                 </div>
                 <div className="text-xs text-muted-foreground truncate">{firehose?.endpoint ?? "—"}</div>
               </div>
@@ -334,6 +370,48 @@ export default function Dashboard() {
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
               )}
             </div>
+
+            {/* Posts/min sparkline */}
+            <div className="bg-muted/40 rounded-xl border border-border/50 px-3 pt-2.5 pb-1">
+              <div className="flex items-end justify-between mb-1">
+                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-widest">Indexing rate</span>
+                <span className="text-[10px] text-muted-foreground tabular-nums">last {sparkline.length} samples</span>
+              </div>
+              {sparkline.length < 2 ? (
+                <div className="h-12 flex items-center justify-center text-[11px] text-muted-foreground/50">
+                  Collecting data… refreshes every 5s
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={52}>
+                  <LineChart data={sparkline} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+                    <defs>
+                      <linearGradient id="sparkGrad" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="hsl(210 100% 62%)" stopOpacity={0.4} />
+                        <stop offset="100%" stopColor="hsl(210 100% 62%)" stopOpacity={1} />
+                      </linearGradient>
+                    </defs>
+                    <Line
+                      type="monotone"
+                      dataKey="v"
+                      stroke="url(#sparkGrad)"
+                      strokeWidth={2}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                    <Tooltip
+                      content={({ active, payload }) =>
+                        active && payload?.length ? (
+                          <div className="text-[10px] bg-popover border border-border rounded-md px-2 py-1 shadow-lg text-foreground tabular-nums">
+                            {payload[0].value} posts/min
+                          </div>
+                        ) : null
+                      }
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+
             <div className="grid grid-cols-3 gap-2">
               {[
                 { label: "Indexed", value: (firehose?.postsIndexedTotal ?? 0).toLocaleString() },
