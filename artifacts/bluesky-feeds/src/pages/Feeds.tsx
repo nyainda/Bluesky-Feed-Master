@@ -473,6 +473,22 @@ function ToggleActiveButton({ feed }: { feed: Feed }) {
   );
 }
 
+type FeedIndexResult = {
+  feed: string;
+  keywords: number;
+  indexed: number;
+  skipped: number;
+  errors: string[];
+};
+
+type IndexResponse = {
+  ok: boolean;
+  message?: string;
+  error?: string;
+  elapsed?: number;
+  feeds?: FeedIndexResult[];
+};
+
 export default function Feeds() {
   const { data: feeds, isLoading } = useListFeeds();
   const [createOpen, setCreateOpen] = useState(false);
@@ -480,18 +496,19 @@ export default function Feeds() {
   const [deleteTarget, setDeleteTarget] = useState<Feed | null>(null);
   const [search, setSearch] = useState("");
   const [indexing, setIndexing] = useState(false);
+  const [indexResults, setIndexResults] = useState<IndexResponse | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   async function triggerIndex() {
     setIndexing(true);
     try {
-      const res = await customFetch<{ ok: boolean; message?: string; error?: string }>(
+      const res = await customFetch<IndexResponse>(
         "/api/admin/trigger-index",
         { method: "POST" },
       );
       if (res.ok) {
-        toast({ title: "Indexing complete", description: res.message ?? "Posts indexed successfully" });
+        setIndexResults(res);
         queryClient.invalidateQueries();
       } else {
         toast({ title: "Indexing failed", description: res.error ?? "Unknown error", variant: "destructive" });
@@ -681,6 +698,62 @@ export default function Feeds() {
       {deleteTarget && (
         <DeleteFeedDialog feed={deleteTarget} open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)} />
       )}
+
+      {/* Indexer diagnostic results dialog */}
+      <Dialog open={!!indexResults} onOpenChange={(v) => !v && setIndexResults(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-green-500" />
+              Indexer Results
+            </DialogTitle>
+          </DialogHeader>
+          {indexResults && (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">{indexResults.message}</p>
+              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                {(indexResults.feeds ?? []).map((r) => (
+                  <div key={r.feed} className={cn(
+                    "rounded-lg border px-3 py-2.5 text-sm",
+                    r.indexed > 0 ? "border-green-500/30 bg-green-500/5" : r.errors.length > 0 ? "border-destructive/30 bg-destructive/5" : "border-border bg-muted/30"
+                  )}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono font-medium text-xs">{r.feed}</span>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span>{r.keywords} kw</span>
+                        <span className={r.indexed > 0 ? "text-green-600 font-semibold" : ""}>+{r.indexed} posts</span>
+                        {r.errors.length > 0 && (
+                          <span className="text-destructive font-semibold flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3" />{r.errors.length} err
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {r.errors.length > 0 && (
+                      <div className="mt-1.5 space-y-0.5">
+                        {r.errors.slice(0, 3).map((e, i) => (
+                          <p key={i} className="text-xs text-destructive/80 truncate font-mono">{e}</p>
+                        ))}
+                        {r.errors.length > 3 && (
+                          <p className="text-xs text-muted-foreground">+{r.errors.length - 3} more errors</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {(indexResults.feeds ?? []).some(r => r.indexed === 0 && r.keywords > 0 && r.errors.some(e => e.includes("Rate") || e.includes("rate") || e.includes("429"))) && (
+                <p className="text-xs text-amber-600 bg-amber-500/10 border border-amber-500/30 rounded px-3 py-2">
+                  ⚠️ Some feeds were rate-limited. The new indexer adds delays between feeds — this will improve on the next run.
+                </p>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button size="sm" onClick={() => setIndexResults(null)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

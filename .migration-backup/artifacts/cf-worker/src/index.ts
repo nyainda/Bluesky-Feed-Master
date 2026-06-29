@@ -86,13 +86,19 @@ app.get("/api/firehose/status", (c) =>
   }),
 );
 
-// Manual trigger — runs the indexer immediately (useful after creating a new feed or adding keywords)
+// Manual trigger — runs the indexer immediately and returns per-feed diagnostics
 app.post("/api/admin/trigger-index", async (c) => {
   const start = Date.now();
   try {
-    await runIndexer(c.env);
+    const results = await runIndexer(c.env);
     const elapsed = Math.round((Date.now() - start) / 1000);
-    return c.json({ ok: true, message: `Indexer completed in ${elapsed}s` });
+    const totalIndexed = results.reduce((s, r) => s + r.indexed, 0);
+    return c.json({
+      ok: true,
+      message: `Indexer completed in ${elapsed}s — ${totalIndexed} posts across ${results.length} feeds`,
+      elapsed,
+      feeds: results,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return c.json({ ok: false, error: message }, 500);
@@ -120,8 +126,9 @@ export default {
         await runCleanup(env);
         return;
       }
-      // Every 3 minutes — index + score + rank + auto-unfollow (gated by its own interval)
-      await Promise.all([runIndexer(env), runScheduler(env)]);
+      // Every 3 minutes — index sequentially first (rate-limit safe), then score/rank in parallel
+      await runIndexer(env);
+      await runScheduler(env);
       await runAuthorScoring(env);
       await precomputeFeedRankings(env);
       await runAutoUnfollow(env);
