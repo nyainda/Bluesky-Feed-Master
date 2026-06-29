@@ -117,8 +117,11 @@ export async function runAutoUnfollow(env: Env, options?: { force?: boolean }): 
       password: env.BLUESKY_APP_PASSWORD,
     });
 
-    // On fresh scan start (no cursor): fetch the full followers list as a snapshot.
-    // On resume: re-fetch followers (they rarely change tick-to-tick, ~5s for 5k followers).
+    // Fetch up to 1,000 followers (10 pages × 100).
+    // This keeps the per-tick API budget to ~15 total calls (10 followers + 5 following).
+    // Anyone following back beyond position 1,000 in the followers list is a rare edge case
+    // — they'll simply be skipped when runScheduledUnfollow attempts the deleteFollow and
+    // Bluesky returns "not following" (no-op, marked done).
     const followerDids = new Set<string>();
     let followerCursor: string | undefined;
     do {
@@ -129,7 +132,7 @@ export async function runAutoUnfollow(env: Env, options?: { force?: boolean }): 
       });
       for (const f of result.data.followers) followerDids.add(f.did);
       followerCursor = result.data.cursor;
-    } while (followerCursor && followerDids.size < 10_000);
+    } while (followerCursor && followerDids.size < 1_000);
 
     console.log(`[auto-unfollow] Fetched ${followerDids.size} followers`);
 
