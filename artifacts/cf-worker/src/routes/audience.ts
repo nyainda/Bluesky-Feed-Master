@@ -5,6 +5,7 @@ import {
   getScheduledUnfollowStatus,
   clearScheduledUnfollowQueue,
 } from "../lib/scheduled-unfollow";
+import { getAutoFollowSettings } from "../lib/auto-follow";
 
 const route = new Hono<{ Bindings: Env }>();
 
@@ -443,6 +444,61 @@ route.get("/bluesky/search-users", async (c) => {
   } catch (err) {
     console.error("Failed to search users:", err);
     return c.json({ error: "Failed to search users" }, 500);
+  }
+});
+
+// ─── Auto-Follow Stats ────────────────────────────────────────────────────────
+route.get("/bluesky/auto-follow/stats", async (c) => {
+  try {
+    const settings = await getAutoFollowSettings(c.env);
+
+    let queuePending = 0;
+    let queueTotal = 0;
+    let recentLog: Array<{
+      did: string;
+      handle: string;
+      followers_count: number;
+      market: string;
+      followed_at: string;
+      follow_back_status: string;
+    }> = [];
+
+    try {
+      const qRow = await c.env.DB.prepare(
+        "SELECT COUNT(*) as cnt FROM auto_follow_queue WHERE status = 'pending'",
+      ).first<{ cnt: number }>();
+      queuePending = Number(qRow?.cnt ?? 0);
+
+      const qtRow = await c.env.DB.prepare(
+        "SELECT COUNT(*) as cnt FROM auto_follow_queue",
+      ).first<{ cnt: number }>();
+      queueTotal = Number(qtRow?.cnt ?? 0);
+    } catch {}
+
+    try {
+      const logRows = await c.env.DB.prepare(
+        "SELECT did, handle, followers_count, market, followed_at, follow_back_status FROM auto_follow_log ORDER BY followed_at DESC LIMIT 20",
+      ).all<{
+        did: string;
+        handle: string;
+        followers_count: number;
+        market: string;
+        followed_at: string;
+        follow_back_status: string;
+      }>();
+      recentLog = logRows.results;
+    } catch {}
+
+    return c.json({
+      settings,
+      queuePending,
+      queueTotal,
+      recentLog,
+      cronSchedule: "every 3 minutes",
+    });
+  } catch (err) {
+    console.error("Failed to fetch auto-follow stats:", err);
+    return c.json({ error: "Failed to fetch auto-follow stats" }, 500);
   }
 });
 

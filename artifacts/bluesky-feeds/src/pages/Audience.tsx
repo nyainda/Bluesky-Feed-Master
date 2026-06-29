@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-type Tab = "followers" | "following" | "not-following-back" | "top-authors" | "search" | "growth";
+type Tab = "followers" | "following" | "not-following-back" | "top-authors" | "search" | "growth" | "auto-follow";
 
 type SearchUser = {
   did: string;
@@ -1439,6 +1439,182 @@ function clearQueueFromStorage() {
   try { localStorage.removeItem(QUEUE_STORAGE_KEY); } catch {}
 }
 
+// ─── Auto-Follow Tab ────────────────────────────────────────────────────────
+
+type AutoFollowStats = {
+  settings: {
+    enabled: boolean;
+    cap: number;
+    markets: string[];
+    minFollowers: number;
+    maxFollowers: number;
+    minPosts: number;
+    followbackDays: number;
+    totalFollowed: number;
+  };
+  queuePending: number;
+  queueTotal: number;
+  recentLog: Array<{
+    did: string;
+    handle: string;
+    followers_count: number;
+    market: string;
+    followed_at: string;
+    follow_back_status: string;
+  }>;
+  cronSchedule: string;
+};
+
+function AutoFollowTab() {
+  const { data, isLoading, refetch, isFetching } = useQuery<AutoFollowStats>({
+    queryKey: ["auto-follow-stats"],
+    queryFn: () => customFetch<AutoFollowStats>("/api/bluesky/auto-follow/stats"),
+    refetchInterval: 30_000,
+  });
+
+  const statusColor = {
+    pending: "text-amber-500",
+    followed: "text-emerald-500",
+    unfollowed: "text-muted-foreground",
+  };
+
+  const statusLabel = {
+    pending: "Awaiting check",
+    followed: "Followed back ✓",
+    unfollowed: "Unfollowed",
+  };
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3 py-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-14 rounded-xl bg-muted animate-pulse" />
+        ))}
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-16 text-center">
+        <Activity className="w-8 h-8 text-muted-foreground/30" />
+        <p className="text-sm text-muted-foreground">Could not load auto-follow stats.</p>
+        <Button size="sm" variant="outline" onClick={() => refetch()}>Retry</Button>
+      </div>
+    );
+  }
+
+  const { settings, queuePending, queueTotal, recentLog, cronSchedule } = data;
+  const followedBack = recentLog.filter(r => r.follow_back_status === "followed").length;
+  const followBackRate = recentLog.length > 0 ? Math.round((followedBack / recentLog.length) * 100) : 0;
+
+  return (
+    <div className="space-y-4 py-2">
+      {/* Status header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className={cn(
+            "w-2.5 h-2.5 rounded-full",
+            settings.enabled ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground/30",
+          )} />
+          <span className="text-sm font-semibold text-foreground">
+            {settings.enabled ? "Auto-Follow Running" : "Auto-Follow Paused"}
+          </span>
+          <span className="text-xs text-muted-foreground">· {cronSchedule}</span>
+        </div>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+        >
+          <RefreshCw className={cn("w-3.5 h-3.5", isFetching && "animate-spin")} />
+        </button>
+      </div>
+
+      {/* Stats grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: "Total Followed", value: settings.totalFollowed, icon: CheckCircle, color: "text-emerald-500" },
+          { label: "Queue Pending", value: queuePending, icon: Clock, color: "text-amber-500" },
+          { label: "Queue Total", value: queueTotal, icon: Activity, color: "text-primary" },
+          { label: "Follow-back Rate", value: recentLog.length > 0 ? `${followBackRate}%` : "—", icon: Zap, color: "text-violet-500" },
+        ].map(({ label, value, icon: Icon, color }) => (
+          <div key={label} className="bg-card border border-card-border rounded-xl px-4 py-3">
+            <div className="flex items-center gap-2 mb-1">
+              <Icon className={cn("w-3.5 h-3.5", color)} />
+              <span className="text-xs text-muted-foreground">{label}</span>
+            </div>
+            <p className="text-xl font-bold text-foreground tabular-nums">{value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Settings summary */}
+      <div className="bg-card border border-card-border rounded-xl px-4 py-3 space-y-2">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Current Settings</p>
+        {[
+          { label: "Markets", value: settings.markets.join(", ") || "—" },
+          { label: "Follower range", value: `${settings.minFollowers.toLocaleString()} – ${settings.maxFollowers.toLocaleString()}` },
+          { label: "Min posts", value: settings.minPosts },
+          { label: "Follow-back window", value: `${settings.followbackDays} days` },
+          { label: "Cap", value: settings.cap > 0 ? settings.cap.toLocaleString() : "Unlimited" },
+        ].map(({ label, value }) => (
+          <div key={label} className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">{label}</span>
+            <span className="font-medium text-foreground">{value}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Recent follow log */}
+      {recentLog.length > 0 ? (
+        <div className="bg-card border border-card-border rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Recent Follows ({recentLog.length})
+            </p>
+          </div>
+          <div className="divide-y divide-border/40">
+            {recentLog.map((row) => (
+              <div key={row.did} className="flex items-center gap-3 px-4 py-2.5">
+                <div className="w-7 h-7 rounded-full bg-primary/10 border border-primary/15 flex items-center justify-center flex-shrink-0">
+                  <span className="text-[10px] font-bold text-primary">
+                    {row.handle[0]?.toUpperCase() ?? "?"}
+                  </span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-foreground truncate">@{row.handle}</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {row.market} · {row.followers_count.toLocaleString()} followers
+                  </p>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <p className={cn("text-[10px] font-medium", statusColor[row.follow_back_status as keyof typeof statusColor] ?? "text-muted-foreground")}>
+                    {statusLabel[row.follow_back_status as keyof typeof statusLabel] ?? row.follow_back_status}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {format(new Date(row.followed_at), "MMM d")}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center justify-center h-32 gap-2 text-center bg-card border border-card-border rounded-xl">
+          <Activity className="w-7 h-7 text-muted-foreground/20" />
+          <p className="text-sm text-muted-foreground">No follows logged yet.</p>
+          <p className="text-xs text-muted-foreground/60">
+            {settings.enabled
+              ? "The cron runs every 3 minutes — check back shortly."
+              : "Enable auto-follow in Settings to start the cron."}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 // Bluesky rate limit: 3000 req/300s = 10/s. CF worker uses concurrency-20 for deleteFollow.
@@ -1833,6 +2009,7 @@ export default function Audience() {
     { id: "not-following-back", label: "Not Following Back", shortLabel: "NFB", icon: UserMinus, count: nfbUsers.length || undefined },
     { id: "top-authors", label: "Top Authors", shortLabel: "Authors", icon: TrendingUp },
     { id: "growth", label: "Growth", shortLabel: "Growth", icon: BarChart2 },
+    { id: "auto-follow", label: "Auto-Follow", shortLabel: "Auto", icon: Zap },
     { id: "search", label: "Search & Follow", shortLabel: "Search", icon: Search },
   ];
 
@@ -2251,6 +2428,8 @@ export default function Audience() {
 
               {/* GROWTH */}
               {tab === "growth" && <FollowerGrowthTab />}
+
+              {tab === "auto-follow" && <AutoFollowTab />}
             </div>
           </motion.div>
         </AnimatePresence>

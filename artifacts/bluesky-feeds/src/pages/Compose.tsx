@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   useComposePost, useListScheduledPosts, useCreateScheduledPost, useDeleteScheduledPost,
@@ -9,6 +9,7 @@ import {
   PenLine, Send, Clock, Plus, Trash2, CheckCircle2, AlertCircle,
   ArrowUpRight, Layers, RefreshCw, Calendar, Hash, ChevronDown,
   Copy, Flame, Zap, MessageCircle, Clock3, CheckCheck,
+  ChevronLeft, ChevronRight, CalendarDays, List,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -436,9 +437,137 @@ function ThreadBuilderTab() {
   );
 }
 
+// ─── Calendar View ─────────────────────────────────────────────────────────────
+function CalendarView({ posts, onDelete }: { posts: ScheduledPost[]; onDelete: (id: number) => void }) {
+  const [calDate, setCalDate] = useState(() => new Date());
+  const [selectedDay, setSelectedDay] = useState<number | null>(null);
+
+  const year = calDate.getFullYear();
+  const month = calDate.getMonth();
+  const firstDayOfWeek = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const postsByDay = useMemo(() => {
+    const map: Record<number, ScheduledPost[]> = {};
+    for (const post of posts) {
+      const d = new Date(post.scheduledAt);
+      if (d.getFullYear() === year && d.getMonth() === month) {
+        const day = d.getDate();
+        if (!map[day]) map[day] = [];
+        map[day].push(post);
+      }
+    }
+    return map;
+  }, [posts, year, month]);
+
+  const today = new Date();
+  const isToday = (day: number) =>
+    today.getFullYear() === year && today.getMonth() === month && today.getDate() === day;
+
+  const monthName = calDate.toLocaleString("default", { month: "long", year: "numeric" });
+
+  const cells: (number | null)[] = [
+    ...Array(firstDayOfWeek).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ];
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  return (
+    <div className="space-y-3">
+      {/* Month navigation */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => { setCalDate(new Date(year, month - 1, 1)); setSelectedDay(null); }}
+          className="p-1.5 rounded-lg hover:bg-muted transition-colors"
+        >
+          <ChevronLeft className="w-4 h-4 text-muted-foreground" />
+        </button>
+        <span className="text-sm font-semibold text-foreground">{monthName}</span>
+        <button
+          onClick={() => { setCalDate(new Date(year, month + 1, 1)); setSelectedDay(null); }}
+          className="p-1.5 rounded-lg hover:bg-muted transition-colors"
+        >
+          <ChevronRight className="w-4 h-4 text-muted-foreground" />
+        </button>
+      </div>
+
+      {/* Day-of-week headers */}
+      <div className="grid grid-cols-7 text-center">
+        {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map(d => (
+          <div key={d} className="text-[10px] font-medium text-muted-foreground/50 py-1">{d}</div>
+        ))}
+      </div>
+
+      {/* Calendar grid */}
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((day, idx) => {
+          if (!day) return <div key={idx} />;
+          const dayPosts = postsByDay[day] ?? [];
+          const hasPending  = dayPosts.some(p => p.status === "pending");
+          const hasSent     = dayPosts.some(p => p.status === "sent");
+          const hasFailed   = dayPosts.some(p => p.status === "failed");
+          const isSelected  = selectedDay === day;
+
+          return (
+            <button
+              key={idx}
+              onClick={() => setSelectedDay(isSelected ? null : day)}
+              className={cn(
+                "aspect-square rounded-lg flex flex-col items-center justify-center gap-0.5 transition-all text-xs font-medium",
+                isSelected ? "bg-primary/15 ring-1 ring-primary/30" :
+                dayPosts.length > 0 ? "hover:bg-muted" : "hover:bg-muted/40",
+                isToday(day) && !isSelected && "ring-1 ring-primary/40",
+              )}
+            >
+              <span className={cn(isToday(day) ? "text-primary" : "text-foreground")}>{day}</span>
+              {dayPosts.length > 0 && (
+                <div className="flex gap-0.5">
+                  {hasPending  && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />}
+                  {hasSent     && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
+                  {hasFailed   && <span className="w-1.5 h-1.5 rounded-full bg-destructive" />}
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Legend */}
+      <div className="flex items-center gap-4 text-[10px] text-muted-foreground px-1">
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500 inline-block" /> Pending</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> Sent</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-destructive inline-block" /> Failed</span>
+      </div>
+
+      {/* Selected-day post detail */}
+      {selectedDay !== null && (postsByDay[selectedDay]?.length ?? 0) > 0 && (
+        <div className="space-y-2 pt-1 border-t border-border">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            {monthName.split(" ")[0]} {selectedDay}
+          </p>
+          {(postsByDay[selectedDay] ?? []).map(p => (
+            <ScheduledPostRow
+              key={p.id}
+              post={p}
+              onDelete={p.status !== "sent" ? () => onDelete(p.id) : undefined}
+            />
+          ))}
+        </div>
+      )}
+
+      {selectedDay !== null && (postsByDay[selectedDay]?.length ?? 0) === 0 && (
+        <p className="text-xs text-muted-foreground text-center py-3 border-t border-border">
+          No posts scheduled for {monthName.split(" ")[0]} {selectedDay}.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Scheduled Tab ─────────────────────────────────────────────────────────────
 function ScheduledTab() {
   const [showForm, setShowForm] = useState(false);
+  const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
   const [formText, setFormText] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
   const qc = useQueryClient();
@@ -485,16 +614,39 @@ function ScheduledTab() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">
-            {pending.length > 0 ? `${pending.length} post${pending.length > 1 ? "s" : ""} waiting to be sent` : "No posts scheduled"}
-          </p>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <p className="text-sm text-muted-foreground">
+          {pending.length > 0 ? `${pending.length} post${pending.length > 1 ? "s" : ""} waiting to be sent` : "No posts scheduled"}
+        </p>
+        <div className="flex items-center gap-2 ml-auto">
+          {/* List / Calendar toggle */}
+          <div className="flex items-center border border-border rounded-lg overflow-hidden">
+            <button
+              onClick={() => setViewMode("list")}
+              className={cn(
+                "p-1.5 transition-colors",
+                viewMode === "list" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground",
+              )}
+              title="List view"
+            >
+              <List className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => setViewMode("calendar")}
+              className={cn(
+                "p-1.5 transition-colors",
+                viewMode === "calendar" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground",
+              )}
+              title="Calendar view"
+            >
+              <CalendarDays className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <Button size="sm" className="gap-2" onClick={() => setShowForm(v => !v)}>
+            <Calendar className="w-3.5 h-3.5" />
+            Schedule Post
+          </Button>
         </div>
-        <Button size="sm" className="gap-2" onClick={() => setShowForm(v => !v)}>
-          <Calendar className="w-3.5 h-3.5" />
-          Schedule Post
-        </Button>
       </div>
 
       <AnimatePresence>
@@ -545,7 +697,14 @@ function ScheduledTab() {
             <div key={i} className="h-16 bg-card border border-card-border rounded-xl animate-pulse" />
           ))}
         </div>
+      ) : viewMode === "calendar" ? (
+        /* ── Calendar view ── */
+        <CalendarView
+          posts={posts ?? []}
+          onDelete={(id) => deletePost({ id })}
+        />
       ) : posts?.length === 0 ? (
+        /* ── Empty state ── */
         <div className="flex flex-col items-center justify-center h-48 gap-3 text-center">
           <div className="w-12 h-12 rounded-2xl bg-muted border border-border flex items-center justify-center">
             <Clock className="w-6 h-6 text-muted-foreground/40" />
@@ -556,6 +715,7 @@ function ScheduledTab() {
           </div>
         </div>
       ) : (
+        /* ── List view ── */
         <div className="space-y-4">
           {pending.length > 0 && (
             <section>

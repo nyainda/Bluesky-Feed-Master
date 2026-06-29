@@ -48,6 +48,18 @@ export default defineConfig({
     fs: {
       strict: false,
     },
+    // In dev the Vite server proxies /api/* → CF Worker so the browser never
+    // hits the CF Worker directly (no CORS, API URL stays server-side).
+    proxy: process.env.VITE_API_BASE_URL
+      ? {
+          "/api": {
+            target: process.env.VITE_API_BASE_URL,
+            changeOrigin: true,
+            secure: true,
+            rewrite: (path) => path,
+          },
+        }
+      : undefined,
   },
   preview: {
     port,

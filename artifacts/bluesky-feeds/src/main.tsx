@@ -7,12 +7,19 @@ import "./index.css";
 const queryClient = new QueryClient();
 
 const apiBase = import.meta.env.VITE_API_BASE_URL;
-if (apiBase) {
+// In dev the Vite server proxies /api/* → CF Worker so we use relative paths.
+// In a production build there is no Vite proxy — set the base URL directly.
+if (import.meta.env.PROD && apiBase) {
   setBaseUrl(apiBase.replace(/\/+$/, ""));
 }
 
 async function runConnectionDiagnostics() {
-  const base = apiBase ? apiBase.replace(/\/+$/, "") : window.location.origin;
+  const isDev = import.meta.env.DEV;
+  const base = isDev
+    ? window.location.origin + " (via dev proxy → CF Worker)"
+    : apiBase
+      ? apiBase.replace(/\/+$/, "")
+      : window.location.origin;
 
   console.groupCollapsed(
     "%c🔌 FeedForge API Diagnostics",
@@ -25,8 +32,14 @@ async function runConnectionDiagnostics() {
     "color:#e2e8f0",
   );
 
+  const sourceLabel = isDev
+    ? "Vite dev proxy → " + (apiBase ?? "localhost:5000") + " ✓"
+    : apiBase
+      ? "VITE_API_BASE_URL env var ✓"
+      : "relative (same domain)";
+
   console.log(
-    "%cSource:%c " + (apiBase ? "VITE_API_BASE_URL env var ✓" : "relative (same domain)"),
+    "%cSource:%c " + sourceLabel,
     "color:#94a3b8;font-weight:bold",
     apiBase ? "color:#4ade80" : "color:#fbbf24",
   );
