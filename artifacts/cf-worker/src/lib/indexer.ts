@@ -150,7 +150,7 @@ export async function runIndexer(env: Env, options?: { maxFeeds?: number }): Pro
                     target: indexedPostsTable.uri,
                     set: {
                       algoTags: sql`CASE
-                        WHEN algo_tags LIKE ${"%" + algoTag + "%"}
+                        WHEN instr(',' || algo_tags || ',', ',' || ${algoTag} || ',') > 0
                         THEN algo_tags
                         ELSE algo_tags || ',' || ${algoTag}
                       END`,

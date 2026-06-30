@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, like, desc, and, lt, asc, gt } from "drizzle-orm";
+import { eq, desc, and, lt, asc, gt, sql } from "drizzle-orm";
 import { createDb, feedsTable, indexedPostsTable, feedRankedPostsTable } from "../db";
 import type { Env } from "../index";
 
@@ -104,7 +104,7 @@ route.get("/xrpc/app.bsky.feed.getFeedSkeleton", async (c) => {
       }
     } else {
       // Fallback: plain recency order (first run or no ranked data yet)
-      const conditions = [like(indexedPostsTable.algoTags, `%${feed.recordName}%`)];
+      const conditions = [sql`instr(',' || ${indexedPostsTable.algoTags} || ',', ',' || ${feed.recordName} || ',') > 0`];
       if (cursor && !isRankedCursor) {
         const [ts] = cursor.split("::");
         conditions.push(lt(indexedPostsTable.indexedAt, ts));

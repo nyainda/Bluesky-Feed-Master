@@ -32,9 +32,10 @@ export function computeQualityScore(input: QualityInput): number {
 
 /**
  * Exponential recency decay.
- * Half-life = 12 hours → score 0.5 at 12h, ~0.25 at 24h, ~0.06 at 48h.
+ * Half-life = 6 hours → score 0.5 at 6h, ~0.25 at 12h, ~0.06 at 24h.
+ * Matches the active production decay used in feed-ranking.ts.
  */
 export function computeRecencyDecay(postAgeMinutes: number): number {
-  const halfLifeMinutes = 12 * 60; // 12 hours
+  const halfLifeMinutes = 6 * 60; // 6 hours
   return Math.exp((-Math.log(2) * Math.max(0, postAgeMinutes)) / halfLifeMinutes);
 }

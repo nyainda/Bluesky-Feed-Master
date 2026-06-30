@@ -1,4 +1,4 @@
-import { desc, eq, like, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { authorScoresTable, createDb, feedRankedPostsTable, feedsTable, indexedPostsTable } from "../db";
 import type { Env } from "../index";
 import { computeQualityScore, computeRecencyDecay } from "./quality-layer";
@@ -26,7 +26,7 @@ export async function precomputeFeedRankings(env: Env, candidateLimit = 200): Pr
       })
       .from(indexedPostsTable)
       .leftJoin(authorScoresTable, eq(authorScoresTable.did, indexedPostsTable.author))
-      .where(like(indexedPostsTable.algoTags, `%${feed.recordName}%`))
+      .where(sql`instr(',' || ${indexedPostsTable.algoTags} || ',', ',' || ${feed.recordName} || ',') > 0`)
       .orderBy(desc(indexedPostsTable.indexedAt))
       .limit(candidateLimit);
 
@@ -47,8 +47,8 @@ export async function precomputeFeedRankings(env: Env, candidateLimit = 200): Pr
           }),
         );
 
-        // Exponential recency decay: half-life of 6 hours (was 48h — content now ages out properly)
-        const recency = safeFinite(Math.exp(-ageHours / 6));
+        // Exponential recency decay — delegated to quality-layer for a single source of truth
+        const recency = safeFinite(computeRecencyDecay(ageMinutes));
 
         const rawEngagement = post.likes + post.reposts * 2 + post.replies * 3 + post.quotes * 2;
         const rawVelocity = rawEngagement / ageMinutes;

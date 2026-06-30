@@ -19,6 +19,19 @@ import { eq } from "drizzle-orm";
 import { markAuthorDirty } from "./author-scoring";
 import { enqueueFollowItems, ensureFollowQueueTable } from "./scheduled-follow";
 
+/**
+ * Merge new algo tags into an existing comma-separated tag string.
+ * Checks and appends per-tag (not as a blob) to prevent duplicates like
+ * "tech,tech,startups" when a post is re-indexed across multiple passes.
+ */
+function mergeAlgoTags(existing: string | null, newTags: Set<string>): string {
+  const existingSet = new Set(
+    (existing ?? "").split(",").map((t) => t.trim()).filter(Boolean),
+  );
+  for (const tag of newTags) existingSet.add(tag);
+  return [...existingSet].join(",");
+}
+
 const JETSTREAM_URL = "wss://jetstream2.us-east.bsky.network/subscribe";
 const COLLECT_MS = 20_000;  // collect for 20 seconds per cron tick
 const MAX_EVENTS = 5_000;   // hard cap to prevent memory blowup on firehose bursts
@@ -207,25 +220,29 @@ export async function runJetstreamIndexer(
   }
 
   // ── Phase 5a: Upsert matched posts ────────────────────────────────────────────
+  // Fetch existing algo_tags first so we can merge per-tag in JS (not as a blob),
+  // preventing duplicates like "tech,tech,startups" on repeated indexing passes.
   let indexed = 0;
   const now = new Date().toISOString();
 
   for (const post of matchedByUri.values()) {
-    const algoTagsStr = [...post.algoTags].join(",");
     try {
+      const existing = await env.DB
+        .prepare("SELECT algo_tags FROM indexed_posts WHERE uri = ?")
+        .bind(post.uri)
+        .first<{ algo_tags: string | null }>();
+
+      const mergedTags = mergeAlgoTags(existing?.algo_tags ?? null, post.algoTags);
+
       await env.DB
         .prepare(
           `INSERT INTO indexed_posts (uri, cid, author, text, algo_tags, indexed_at, likes, reposts, replies, quotes)
            VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0)
            ON CONFLICT(uri) DO UPDATE SET
-             algo_tags = CASE
-               WHEN instr(',' || algo_tags || ',', ',' || ? || ',') > 0
-               THEN algo_tags
-               ELSE algo_tags || ',' || ?
-             END,
-             engagement_synced_at = ?`
+             algo_tags = ?,
+             engagement_synced_at = ?`,
         )
-        .bind(post.uri, post.cid, post.author, post.text, algoTagsStr, now, algoTagsStr, algoTagsStr, now)
+        .bind(post.uri, post.cid, post.author, post.text, mergedTags, now, mergedTags, now)
         .run();
       await markAuthorDirty(env, post.author);
       indexed++;

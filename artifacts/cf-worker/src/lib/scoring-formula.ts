@@ -4,8 +4,9 @@ export const WEIGHTS = {
   replies: 4.0,
   posts: 0.2,
   consistency: 10,
-  spamPenalty: -12,
 } as const;
+
+const SPAM_THRESHOLD = 1200;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -33,15 +34,20 @@ export function computeAuthorScore(input: {
   // Consistency bonus: log-scaled, capped at 35 to prevent domination
   const consistencyScore = clamp(safeNum(Math.log1p(postCount) * WEIGHTS.consistency), 0, 35);
 
-  // Spam penalty for prolific low-quality posters
-  const spamPenalty = postCount > 1200 ? WEIGHTS.spamPenalty : 0;
+  // Spam multiplier: scales engagement down for prolific low-quality posters.
+  // A flat penalty was statistical noise (+240 from posts alone vs -12 penalty).
+  // This log-scaled multiplier visibly suppresses high-volume, low-engagement accounts.
+  const overage = Math.max(0, postCount - SPAM_THRESHOLD);
+  const spamMultiplier = postCount > SPAM_THRESHOLD
+    ? clamp(1 - Math.log1p(overage) * 0.05, 0.5, 1)
+    : 1;
 
   const base =
-    postCount * WEIGHTS.posts +
-    likes * WEIGHTS.likes +
-    reposts * WEIGHTS.reposts +
-    replies * WEIGHTS.replies +
-    engagementPerPost;
+    (postCount * WEIGHTS.posts +
+      likes * WEIGHTS.likes +
+      reposts * WEIGHTS.reposts +
+      replies * WEIGHTS.replies +
+      engagementPerPost) * spamMultiplier;
 
-  return clamp(safeNum(base) + consistencyScore + spamPenalty, 0, 10_000);
+  return clamp(safeNum(base) + consistencyScore, 0, 10_000);
 }
