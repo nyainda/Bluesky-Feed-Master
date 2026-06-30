@@ -108,6 +108,18 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
     return; // Table not created yet — skip silently
   }
 
+  // Auto-retry failed items that have been stuck in 'failed' state for > 15 minutes
+  try {
+    await env.DB.prepare(
+      `UPDATE ${TABLE} SET status = 'pending', processed_at = NULL, queued_at = datetime('now')
+       WHERE status = 'failed' AND datetime(processed_at, '+15 minutes') < datetime('now')`,
+    ).run();
+    // Re-read pending count after potential retry reset
+    pendingRow = await env.DB.prepare(
+      `SELECT COUNT(*) as cnt FROM ${TABLE} WHERE status = 'pending'`,
+    ).first<{ cnt: number }>();
+  } catch {}
+
   if (!pendingRow || pendingRow.cnt === 0) return;
 
   console.log(

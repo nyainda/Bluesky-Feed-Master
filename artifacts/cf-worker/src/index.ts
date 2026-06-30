@@ -16,6 +16,8 @@ import { runJetstreamIndexer } from "./lib/jetstream";
 import { precomputeFeedRankings } from "./lib/feed-ranking";
 import { runAutoUnfollow } from "./lib/auto-unfollow";
 import { runScheduledUnfollow } from "./lib/scheduled-unfollow";
+import { runAutoFollow } from "./lib/auto-follow";
+import { runScheduledFollow } from "./lib/scheduled-follow";
 
 export interface Env {
   DB: D1Database;
@@ -211,6 +213,37 @@ app.post("/api/admin/trigger-scan", async (c) => {
   return c.json({ ok: true, message: "Scan started — queue status will update within seconds" });
 });
 
+// Manual trigger — runs auto-follow discovery + drains the follow queue immediately
+app.post("/api/admin/trigger-follow", async (c) => {
+  c.executionCtx.waitUntil(
+    (async () => {
+      try {
+        await runAutoFollow(c.env, { force: true });
+        await runScheduledFollow(c.env);
+        console.log("[trigger-follow] Completed");
+      } catch (err) {
+        console.error("[trigger-follow] Error:", err instanceof Error ? err.message : String(err));
+      }
+    })(),
+  );
+  return c.json({ ok: true, message: "Auto-follow discovery + drain started — queue status will update within seconds" });
+});
+
+// Manual retry — re-queues all failed unfollow items as pending so the next cron picks them up
+app.post("/api/admin/retry-failed-unfollows", async (c) => {
+  try {
+    const result = await c.env.DB.prepare(
+      `UPDATE unfollow_scheduled_queue SET status = 'pending', processed_at = NULL, queued_at = datetime('now')
+       WHERE status = 'failed'`,
+    ).run();
+    const retried = (result.meta as { changes?: number })?.changes ?? 0;
+    c.executionCtx.waitUntil(runScheduledUnfollow(c.env));
+    return c.json({ ok: true, retried, message: `${retried} failed items re-queued as pending. First batch draining now.` });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
 // Manual trigger — indexes ALL feeds (bypasses stagger) + runs Jetstream pass
 app.post("/api/admin/trigger-index", async (c) => {
   c.executionCtx.waitUntil(
@@ -253,7 +286,8 @@ app.get("/api/admin/cron-health", async (c) => {
       `SELECT key, value FROM cron_settings WHERE key IN (
         'last_cron_tick','auto_unfollow_scan_cursor','auto_unfollow_last_run',
         'auto_unfollow_scan_pages_done','jetstream_cursor','jetstream_last_indexed',
-        'jetstream_last_events','jetstream_last_run','jetstream_last_followers'
+        'jetstream_last_events','jetstream_last_run','jetstream_last_followers',
+        'jetstream_do_last_ping'
       )`
     ).all<{ key: string; value: string }>();
 
@@ -272,6 +306,11 @@ app.get("/api/admin/cron-health", async (c) => {
       ? Math.round((Date.now() - jetstreamCursorMs) / 1_000)
       : null;
 
+    const doLastPing = kv["jetstream_do_last_ping"] ?? null;
+    const doConnected = doLastPing
+      ? Date.now() - new Date(doLastPing).getTime() < 10 * 60 * 1000
+      : false;
+
     return c.json({
       ok: true,
       lastCronTick: lastTick,
@@ -287,6 +326,8 @@ app.get("/api/admin/cron-health", async (c) => {
         lagSeconds: jetstreamLagSeconds,
         active: (kv["jetstream_last_run"] ?? "") !== "",
         lastFollowers: parseInt(kv["jetstream_last_followers"] ?? "0", 10) || 0,
+        doLastPing,
+        doConnected,
       },
     });
   } catch (err) {

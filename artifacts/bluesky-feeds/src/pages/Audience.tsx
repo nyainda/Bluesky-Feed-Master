@@ -1003,7 +1003,24 @@ function AutoUnfollowCard() {
                   {qDone.toLocaleString()} done
                 </span>
                 {qFailed > 0 && (
-                  <span className="text-destructive/70 font-medium">{qFailed.toLocaleString()} failed</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-destructive/70 font-medium">{qFailed.toLocaleString()} failed</span>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await customFetch("/api/admin/retry-failed-unfollows", { method: "POST" });
+                          setTimeout(() => refetchQueue(), 3_000);
+                          toast({ title: `Retrying ${qFailed} failed unfollows` });
+                        } catch {
+                          toast({ title: "Retry failed", variant: "destructive" });
+                        }
+                      }}
+                      className="text-[10px] font-medium text-destructive/80 hover:text-destructive bg-destructive/8 hover:bg-destructive/15 border border-destructive/20 px-1.5 py-0.5 rounded transition-colors"
+                      title="Re-queue all failed unfollows as pending"
+                    >
+                      Retry
+                    </button>
+                  </span>
                 )}
                 <span className="text-[10px] text-muted-foreground ml-auto tabular-nums">
                   {pct}%
@@ -1562,23 +1579,73 @@ function AutoFollowTab() {
     );
   }
 
+  const [triggering, setTriggering] = useState(false);
+
+  async function triggerFollow() {
+    setTriggering(true);
+    try {
+      await customFetch("/api/admin/trigger-follow", { method: "POST" });
+      toast({ title: "Auto-follow triggered", description: "Discovery + first batch of follows starting now." });
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["af-settings"] }), 5_000);
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["af-log"] }), 10_000);
+    } catch {
+      toast({ title: "Failed to trigger", variant: "destructive" });
+    } finally {
+      setTriggering(false);
+    }
+  }
+
   return (
     <div className="space-y-4 py-2">
 
-      {/* ── Always-On banner ── */}
-      <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl border bg-emerald-500/8 border-emerald-500/20">
+      {/* ── Enable / disable toggle ── */}
+      <div className={cn(
+        "flex items-center justify-between gap-3 px-4 py-3 rounded-xl border transition-colors",
+        settings.enabled
+          ? "bg-emerald-500/8 border-emerald-500/20"
+          : "bg-muted/30 border-border",
+      )}>
         <div className="flex items-center gap-3">
-          <div className="w-2.5 h-2.5 rounded-full flex-shrink-0 bg-emerald-500 animate-pulse" />
+          <div className={cn(
+            "w-2.5 h-2.5 rounded-full flex-shrink-0",
+            settings.enabled ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground/30",
+          )} />
           <div>
-            <p className="text-sm font-semibold text-foreground">Auto-Follow is Always On</p>
+            <p className="text-sm font-semibold text-foreground">
+              Auto-Follow {settings.enabled ? "Active" : "Paused"}
+            </p>
             <p className="text-xs text-muted-foreground">
-              Cron runs every 3 min · discovers & follows matching accounts continuously
+              {settings.enabled
+                ? "Cron runs every 3 min · discovers & follows matching accounts"
+                : "Toggle on to start auto-discovering and following accounts"}
             </p>
           </div>
         </div>
-        <span className="flex-shrink-0 text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/25">
-          Always On
-        </span>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs gap-1"
+            onClick={triggerFollow}
+            disabled={triggering || settingsFetching}
+            title="Run auto-follow discovery + first follow batch immediately"
+          >
+            {triggering
+              ? <RefreshCw className="w-3 h-3 animate-spin" />
+              : <Zap className="w-3 h-3" />}
+            {triggering ? "Running…" : "Trigger Now"}
+          </Button>
+          <button
+            onClick={toggleEnabled}
+            disabled={toggling}
+            className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+            title={settings.enabled ? "Pause auto-follow" : "Enable auto-follow"}
+          >
+            {settings.enabled
+              ? <ToggleRight className="w-6 h-6 text-emerald-500" />
+              : <ToggleLeft className="w-6 h-6" />}
+          </button>
+        </div>
       </div>
 
       {/* ── Stats ── */}

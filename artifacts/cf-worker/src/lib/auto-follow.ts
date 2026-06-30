@@ -102,6 +102,12 @@ export async function runAutoFollow(env: Env, options?: { force?: boolean }): Pr
 
   const settings = await getAutoFollowSettings(env);
 
+  // Respect the enabled toggle — skip discovery unless force-triggered
+  if (!settings.enabled && !options?.force) {
+    console.log("[auto-follow] Disabled via settings — skipping discovery");
+    return;
+  }
+
   // Stop discovery if hard cap reached (0 = unlimited)
   if (settings.cap > 0 && settings.totalFollowed >= settings.cap) {
     console.log(`[auto-follow] Cap reached (${settings.totalFollowed}/${settings.cap}) — paused`);

@@ -193,6 +193,8 @@ interface CronHealth {
     cursorMs: number | null;
     lagSeconds: number | null;
     active: boolean;
+    doLastPing: string | null;
+    doConnected: boolean;
   };
 }
 
@@ -426,10 +428,20 @@ export default function Dashboard() {
                     : "—",
                 },
                 {
-                  label: "Events / tick",
-                  value: cronHealth?.jetstream?.lastEvents != null
-                    ? cronHealth.jetstream.lastEvents.toLocaleString()
-                    : "—",
+                  label: "Cursor lag",
+                  value: formatLag(cronHealth?.jetstream?.lagSeconds ?? null),
+                },
+                {
+                  label: "DO WebSocket",
+                  value: cronHealth == null
+                    ? "Loading…"
+                    : cronHealth.jetstream.doConnected
+                    ? "Connected"
+                    : cronHealth.jetstream.doLastPing
+                    ? `Stale (${formatDistanceToNow(new Date(cronHealth.jetstream.doLastPing), { addSuffix: true })})`
+                    : "No ping yet",
+                  highlight: cronHealth?.jetstream?.doConnected === true,
+                  warn: cronHealth != null && !cronHealth.jetstream.doConnected && cronHealth.jetstream.doLastPing != null,
                 },
                 {
                   label: "New followers",
@@ -438,21 +450,19 @@ export default function Dashboard() {
                     : "—",
                   highlight: (cronHealth?.jetstream?.lastFollowers ?? 0) > 0,
                 },
-                {
-                  label: "Cursor lag",
-                  value: formatLag(cronHealth?.jetstream?.lagSeconds ?? null),
-                },
-              ].map(({ label, value, highlight }) => (
+              ].map(({ label, value, highlight, warn }) => (
                 <div key={label} className={cn(
                   "rounded-lg px-3 py-2.5 border",
                   highlight
                     ? "bg-emerald-500/8 border-emerald-500/20"
+                    : warn
+                    ? "bg-amber-500/5 border-amber-500/20"
                     : "bg-muted/60 border-border/50"
                 )}>
                   <div className="text-[10px] text-muted-foreground mb-0.5 font-medium">{label}</div>
                   <div className={cn(
                     "text-xs font-semibold tabular-nums truncate",
-                    highlight ? "text-emerald-600" : "text-foreground"
+                    highlight ? "text-emerald-600" : warn ? "text-amber-500" : "text-foreground"
                   )}>{value}</div>
                 </div>
               ))}

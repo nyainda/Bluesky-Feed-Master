@@ -351,16 +351,20 @@ export class JetstreamConsumerDO {
     if (this.lastEventTimeUs !== null) {
       await this.state.storage.put("cursor", String(this.lastEventTimeUs));
 
+      const now = new Date().toISOString();
       const statsStmts = [
         this.env.DB.prepare(
           "INSERT INTO cron_settings (key, value) VALUES ('jetstream_cursor', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
         ).bind(String(this.lastEventTimeUs)),
         this.env.DB.prepare(
           "INSERT INTO cron_settings (key, value) VALUES ('jetstream_last_run', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
-        ).bind(new Date().toISOString()),
+        ).bind(now),
         this.env.DB.prepare(
           "INSERT INTO cron_settings (key, value) VALUES ('jetstream_last_indexed', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
         ).bind(String(indexed)),
+        this.env.DB.prepare(
+          "INSERT INTO cron_settings (key, value) VALUES ('jetstream_do_last_ping', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+        ).bind(now),
       ];
       await this.env.DB.batch(statsStmts).catch(() => {});
     }

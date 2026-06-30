@@ -212,7 +212,10 @@ route.post("/bluesky/sync-engagement", async (c) => {
         (await import("drizzle-orm")).eq(feedsTable.id, body.feedId)
       ).limit(1);
       if (!feed) return c.json({ error: "Feed not found" }, 404);
-      conditions.push(like(indexedPostsTable.algoTags, `%${feed.recordName}%`));
+      const tag = feed.recordName;
+      conditions.push(
+        (await import("drizzle-orm")).sql`instr(',' || ${indexedPostsTable.algoTags} || ',', ',' || ${tag} || ',') > 0` as unknown as ReturnType<typeof like>
+      );
     }
 
     const posts = await db
