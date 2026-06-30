@@ -2,10 +2,12 @@ import { useState, useRef, useEffect } from "react";
 import {
   useGetStatsOverview, useGetRecentActivity, useGetTopFeeds,
   useGetFirehoseStatus, useGetBlueskyProfile, useGet7DayActivity,
+  customFetch,
 } from "@workspace/api-client-react";
+import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { Wifi, WifiOff, Activity, Rss, FileText, Clock, TrendingUp, TrendingDown, Users, Zap, ExternalLink, ArrowUpRight } from "lucide-react";
+import { Wifi, WifiOff, Activity, Rss, FileText, Clock, TrendingUp, TrendingDown, Users, Zap, ExternalLink, ArrowUpRight, Radio } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { Link } from "wouter";
 import { cn } from "@/lib/utils";
@@ -176,12 +178,42 @@ function usePostsPerMin(postsIndexedTotal: number | undefined) {
   return { rate, sparkline };
 }
 
+interface CronHealth {
+  ok: boolean;
+  lastCronTick: string | null;
+  isHealthy: boolean;
+  scanInProgress: boolean;
+  scanPagesDone: number;
+  lastScanCompleted: string | null;
+  jetstream: {
+    lastRun: string | null;
+    lastIndexed: number;
+    lastEvents: number;
+    cursorMs: number | null;
+    lagSeconds: number | null;
+    active: boolean;
+  };
+}
+
+function formatLag(seconds: number | null) {
+  if (seconds == null) return "—";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  return `${Math.round(seconds / 3600)}h`;
+}
+
 export default function Dashboard() {
   const { data: overview, isLoading } = useGetStatsOverview();
   const { data: activity } = useGetRecentActivity();
   const { data: activity7d } = useGet7DayActivity();
   const { data: topFeeds } = useGetTopFeeds();
   const { data: firehose } = useGetFirehoseStatus({ query: { refetchInterval: 5000, queryKey: ["firehose-dash"] } });
+  const { data: cronHealth } = useQuery<CronHealth>({
+    queryKey: ["cron-health"],
+    queryFn: () => customFetch("/api/admin/cron-health"),
+    refetchInterval: 15_000,
+    staleTime: 10_000,
+  });
 
   const { rate: postsPerMin, sparkline } = usePostsPerMin(firehose?.postsIndexedTotal);
 
@@ -338,51 +370,96 @@ export default function Dashboard() {
           className="bg-card border border-card-border rounded-xl p-5 md:p-6"
         >
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-foreground">Firehose Status</h2>
-            <div className="flex items-center gap-1.5">
-              <Zap className="w-3.5 h-3.5 text-amber-400" />
-              <span className="text-xs font-bold tabular-nums text-foreground">{postsPerMin}</span>
-              <span className="text-[10px] text-muted-foreground">posts/min</span>
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">Jetstream Indexer</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Bluesky firehose via cron WebSocket</p>
+            </div>
+            <div className={cn(
+              "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border",
+              cronHealth?.jetstream?.active
+                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600"
+                : "bg-muted border-border text-muted-foreground"
+            )}>
+              {cronHealth?.jetstream?.active
+                ? <><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Active</>
+                : <><span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40" /> Waiting</>}
             </div>
           </div>
+
           <div className="space-y-3">
+            {/* Connection banner */}
             <div className={cn(
               "flex items-center gap-3 p-3.5 rounded-xl border",
-              firehose?.connected
+              cronHealth?.isHealthy
                 ? "bg-emerald-500/5 border-emerald-500/20"
-                : "bg-red-500/5 border-red-500/20",
+                : "bg-amber-500/5 border-amber-500/20"
             )}>
               <div className={cn(
                 "w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0",
-                firehose?.connected ? "bg-emerald-500/12" : "bg-red-500/12",
+                cronHealth?.isHealthy ? "bg-emerald-500/12" : "bg-amber-500/12"
               )}>
-                {firehose?.connected
-                  ? <Wifi className="w-4 h-4 text-emerald-500" />
-                  : <WifiOff className="w-4 h-4 text-red-400" />}
+                <Radio className={cn("w-4 h-4", cronHealth?.isHealthy ? "text-emerald-500" : "text-amber-400")} />
               </div>
               <div className="flex-1 min-w-0">
-                <div className={cn("text-sm font-semibold", firehose?.connected ? "text-emerald-600" : "text-red-400")}>
-                  {firehose?.connected ? "Connected" : (firehose as { mode?: string } | undefined)?.mode === "cron" ? "Cron Indexing" : "Disconnected"}
+                <div className={cn("text-sm font-semibold", cronHealth?.isHealthy ? "text-emerald-600" : "text-amber-500")}>
+                  {cronHealth == null ? "Loading…" : cronHealth.isHealthy ? "Cron Healthy" : "Cron Stalled"}
                 </div>
-                <div className="text-xs text-muted-foreground truncate">{firehose?.endpoint ?? "—"}</div>
+                <div className="text-xs text-muted-foreground truncate">
+                  {cronHealth?.lastCronTick
+                    ? `Last tick ${formatDistanceToNow(new Date(cronHealth.lastCronTick), { addSuffix: true })}`
+                    : "No cron ticks recorded yet"}
+                </div>
               </div>
-              {firehose?.connected && (
+              {cronHealth?.jetstream?.active && (
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
               )}
+            </div>
+
+            {/* Stat grid */}
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                {
+                  label: "Indexed / tick",
+                  value: cronHealth?.jetstream?.lastIndexed != null
+                    ? cronHealth.jetstream.lastIndexed.toLocaleString()
+                    : "—",
+                },
+                {
+                  label: "Events / tick",
+                  value: cronHealth?.jetstream?.lastEvents != null
+                    ? cronHealth.jetstream.lastEvents.toLocaleString()
+                    : "—",
+                },
+                {
+                  label: "Cursor lag",
+                  value: formatLag(cronHealth?.jetstream?.lagSeconds ?? null),
+                },
+                {
+                  label: "Last run",
+                  value: cronHealth?.jetstream?.lastRun
+                    ? formatDistanceToNow(new Date(cronHealth.jetstream.lastRun), { addSuffix: true })
+                    : "—",
+                },
+              ].map(({ label, value }) => (
+                <div key={label} className="bg-muted/60 rounded-lg px-3 py-2.5 border border-border/50">
+                  <div className="text-[10px] text-muted-foreground mb-0.5 font-medium">{label}</div>
+                  <div className="text-xs font-semibold text-foreground tabular-nums truncate">{value}</div>
+                </div>
+              ))}
             </div>
 
             {/* Posts/min sparkline */}
             <div className="bg-muted/40 rounded-xl border border-border/50 px-3 pt-2.5 pb-1">
               <div className="flex items-end justify-between mb-1">
                 <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-widest">Indexing rate</span>
-                <span className="text-[10px] text-muted-foreground tabular-nums">last {sparkline.length} samples</span>
+                <span className="text-[10px] text-primary font-semibold tabular-nums">{postsPerMin} posts/min</span>
               </div>
               {sparkline.length < 2 ? (
-                <div className="h-12 flex items-center justify-center text-[11px] text-muted-foreground/50">
-                  Collecting data… refreshes every 5s
+                <div className="h-10 flex items-center justify-center text-[11px] text-muted-foreground/50">
+                  Collecting data…
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height={52}>
+                <ResponsiveContainer width="100%" height={40}>
                   <LineChart data={sparkline} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
                     <defs>
                       <linearGradient id="sparkGrad" x1="0" y1="0" x2="1" y2="0">
@@ -390,14 +467,7 @@ export default function Dashboard() {
                         <stop offset="100%" stopColor="hsl(210 100% 62%)" stopOpacity={1} />
                       </linearGradient>
                     </defs>
-                    <Line
-                      type="monotone"
-                      dataKey="v"
-                      stroke="url(#sparkGrad)"
-                      strokeWidth={2}
-                      dot={false}
-                      isAnimationActive={false}
-                    />
+                    <Line type="monotone" dataKey="v" stroke="url(#sparkGrad)" strokeWidth={2} dot={false} isAnimationActive={false} />
                     <Tooltip
                       content={({ active, payload }) =>
                         active && payload?.length ? (
@@ -410,19 +480,6 @@ export default function Dashboard() {
                   </LineChart>
                 </ResponsiveContainer>
               )}
-            </div>
-
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { label: "Indexed", value: (firehose?.postsIndexedTotal ?? 0).toLocaleString() },
-                { label: "Reconnects", value: firehose?.reconnectCount ?? 0 },
-                { label: "Last Event", value: firehose?.lastEventAt ? formatDistanceToNow(new Date(firehose.lastEventAt), { addSuffix: true }) : "—" },
-              ].map(({ label, value }) => (
-                <div key={label} className="bg-muted/60 rounded-lg px-3 py-2.5 border border-border/50">
-                  <div className="text-[10px] text-muted-foreground mb-0.5 font-medium">{label}</div>
-                  <div className="text-xs font-semibold text-foreground tabular-nums truncate">{value}</div>
-                </div>
-              ))}
             </div>
           </div>
         </motion.div>

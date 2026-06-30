@@ -212,30 +212,44 @@ app.route("/", xrpcRoute);
 // detect stalled crons (missed ticks) and surface a recovery warning to the user.
 app.get("/api/admin/cron-health", async (c) => {
   try {
-    const [tickRow, scanCursorRow, lastRunRow, scanPagesRow] = await Promise.all([
-      c.env.DB.prepare("SELECT value FROM cron_settings WHERE key = 'last_cron_tick'").first<{ value: string }>(),
-      c.env.DB.prepare("SELECT value FROM cron_settings WHERE key = 'auto_unfollow_scan_cursor'").first<{ value: string }>(),
-      c.env.DB.prepare("SELECT value FROM cron_settings WHERE key = 'auto_unfollow_last_run'").first<{ value: string }>(),
-      c.env.DB.prepare("SELECT value FROM cron_settings WHERE key = 'auto_unfollow_scan_pages_done'").first<{ value: string }>(),
-    ]);
+    const rows = await c.env.DB.prepare(
+      `SELECT key, value FROM cron_settings WHERE key IN (
+        'last_cron_tick','auto_unfollow_scan_cursor','auto_unfollow_last_run',
+        'auto_unfollow_scan_pages_done','jetstream_cursor','jetstream_last_indexed',
+        'jetstream_last_events','jetstream_last_run'
+      )`
+    ).all<{ key: string; value: string }>();
 
-    const lastTick = tickRow?.value ?? null;
-    const scanCursor = scanCursorRow?.value ?? "";
-    const lastRun = lastRunRow?.value ?? null;
-    const scanPagesDone = parseInt(scanPagesRow?.value ?? "0", 10) || 0;
+    const kv: Record<string, string> = {};
+    for (const r of rows.results) kv[r.key] = r.value;
 
-    // Healthy = last tick within 6 minutes (2× the 3-min cron interval)
+    const lastTick = kv["last_cron_tick"] ?? null;
     const isHealthy = lastTick
       ? Date.now() - new Date(lastTick).getTime() < 6 * 60 * 1000
       : false;
+
+    // Jetstream cursor is Unix microseconds — convert to ms for lag calculation
+    const jetstreamCursorUs = kv["jetstream_cursor"] ? Number(kv["jetstream_cursor"]) : null;
+    const jetstreamCursorMs = jetstreamCursorUs ? Math.round(jetstreamCursorUs / 1_000) : null;
+    const jetstreamLagSeconds = jetstreamCursorMs
+      ? Math.round((Date.now() - jetstreamCursorMs) / 1_000)
+      : null;
 
     return c.json({
       ok: true,
       lastCronTick: lastTick,
       isHealthy,
-      scanInProgress: scanCursor !== "",
-      scanPagesDone,
-      lastScanCompleted: lastRun,
+      scanInProgress: (kv["auto_unfollow_scan_cursor"] ?? "") !== "",
+      scanPagesDone: parseInt(kv["auto_unfollow_scan_pages_done"] ?? "0", 10) || 0,
+      lastScanCompleted: kv["auto_unfollow_last_run"] ?? null,
+      jetstream: {
+        lastRun: kv["jetstream_last_run"] ?? null,
+        lastIndexed: parseInt(kv["jetstream_last_indexed"] ?? "0", 10) || 0,
+        lastEvents: parseInt(kv["jetstream_last_events"] ?? "0", 10) || 0,
+        cursorMs: jetstreamCursorMs,
+        lagSeconds: jetstreamLagSeconds,
+        active: (kv["jetstream_last_run"] ?? "") !== "",
+      },
     });
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);

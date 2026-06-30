@@ -199,16 +199,26 @@ export async function runJetstreamIndexer(
     }
   }
 
-  // ── Phase 6: Save cursor so next tick resumes here ────────────────────────────
+  // ── Phase 6: Save cursor + stats so cron-health can surface them ─────────────
+  const saveStmts = [
+    env.DB.prepare(
+      "INSERT INTO cron_settings (key, value) VALUES ('jetstream_last_indexed', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')"
+    ).bind(String(indexed)),
+    env.DB.prepare(
+      "INSERT INTO cron_settings (key, value) VALUES ('jetstream_last_events', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')"
+    ).bind(String(events.length)),
+    env.DB.prepare(
+      "INSERT INTO cron_settings (key, value) VALUES ('jetstream_last_run', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')"
+    ).bind(new Date().toISOString()),
+  ];
   if (lastTimeUs !== null) {
-    await env.DB
-      .prepare(
+    saveStmts.push(
+      env.DB.prepare(
         "INSERT INTO cron_settings (key, value) VALUES ('jetstream_cursor', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')"
-      )
-      .bind(String(lastTimeUs))
-      .run()
-      .catch(() => { /* non-fatal */ });
+      ).bind(String(lastTimeUs))
+    );
   }
+  await env.DB.batch(saveStmts).catch(() => { /* non-fatal */ });
 
   console.log(`[jetstream] Done — ${indexed} indexed, ${matched} matched, ${events.length} events`);
   return { indexed, matched, events: events.length };
