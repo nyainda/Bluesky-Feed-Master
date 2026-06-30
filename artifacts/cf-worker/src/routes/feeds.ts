@@ -148,7 +148,8 @@ route.get("/feeds/:id/posts", async (c) => {
   const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 100);
   const cursor = c.req.query("cursor");
 
-  const conditions = [like(indexedPostsTable.algoTags, `%${feed.recordName}%`)];
+  const tagCondition = sql`instr(',' || ${indexedPostsTable.algoTags} || ',', ',' || ${feed.recordName} || ',') > 0`;
+  const conditions = [tagCondition];
   if (cursor) {
     const [ts] = cursor.split("::");
     conditions.push(lt(indexedPostsTable.indexedAt, ts));
@@ -183,7 +184,7 @@ route.get("/feeds/:id/posts", async (c) => {
   const [{ total }] = await db
     .select({ total: count() })
     .from(indexedPostsTable)
-    .where(like(indexedPostsTable.algoTags, `%${feed.recordName}%`));
+    .where(sql`instr(',' || ${indexedPostsTable.algoTags} || ',', ',' || ${feed.recordName} || ',') > 0`);
 
   let nextCursor: string | undefined;
   if (mode !== "ranked" && posts.length >= limit) {

@@ -81,18 +81,19 @@ export async function precomputeFeedRankings(env: Env, candidateLimit = 200): Pr
 
     await db.delete(feedRankedPostsTable).where(eq(feedRankedPostsTable.feedId, feed.id));
 
-    for (const row of scored) {
-      // Skip rows with non-finite scores to prevent DB corruption
-      if (!Number.isFinite(row.finalScore)) continue;
-      await db.insert(feedRankedPostsTable).values({
-        feedId: feed.id,
-        postUri: row.post.uri,
-        rank: row.rank,
-        finalScore: row.finalScore,
-        qualityScore: row.qualityScore,
-        computedAt: new Date().toISOString(),
-      });
-    }
+    const validRows = scored.filter(row => Number.isFinite(row.finalScore));
+    await Promise.all(
+      validRows.map(row =>
+        db.insert(feedRankedPostsTable).values({
+          feedId: feed.id,
+          postUri: row.post.uri,
+          rank: row.rank,
+          finalScore: row.finalScore,
+          qualityScore: row.qualityScore,
+          computedAt: new Date().toISOString(),
+        }),
+      ),
+    );
 
     console.log(`[feed-ranking] Feed "${feed.recordName}" — ${scored.length} ranked posts written.`);
   }
