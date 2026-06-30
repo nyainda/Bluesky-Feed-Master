@@ -12,6 +12,7 @@ import cronSettingsRoute from "./routes/cron-settings";
 import syndicationRoute from "./routes/syndication";
 import followSettingsRoute from "./routes/follow-settings";
 import { runIndexer, runCleanup } from "./lib/indexer";
+import { runJetstreamIndexer } from "./lib/jetstream";
 import { runScheduler } from "./lib/scheduler";
 import { runAuthorScoring } from "./lib/author-scoring";
 import { precomputeFeedRankings } from "./lib/feed-ranking";
@@ -173,24 +174,24 @@ app.post("/api/admin/trigger-scan", async (c) => {
   return c.json({ ok: true, message: "Scan started — queue status will update within seconds" });
 });
 
-// Manual trigger — starts the indexer in the background via waitUntil() and returns
-// immediately with 202. The HTTP fetch handler has a 30-second wall-clock limit so we
-// cannot await the full indexer (which takes ~40s with inter-feed delays).
-// The frontend should re-fetch feed counts ~30s after clicking "Index Now".
+// Manual trigger — indexes ALL feeds (bypasses stagger) + runs Jetstream pass
 app.post("/api/admin/trigger-index", async (c) => {
   c.executionCtx.waitUntil(
-    runIndexer(c.env)
-      .then((results) => {
-        const total = results.reduce((s, r) => s + r.indexed, 0);
-        console.log(`[trigger-index] Done — ${total} posts across ${results.length} feeds`);
-      })
-      .catch((err) => {
-        console.error("[trigger-index] Error:", err instanceof Error ? err.message : String(err));
-      }),
+    Promise.allSettled([
+      runJetstreamIndexer(c.env)
+        .then((r) => console.log(`[trigger-index] Jetstream: ${r.indexed} indexed from ${r.events} events`))
+        .catch((err) => console.error("[trigger-index] Jetstream error:", err instanceof Error ? err.message : String(err))),
+      runIndexer(c.env, { maxFeeds: Infinity })
+        .then((results) => {
+          const total = results.reduce((s, r) => s + r.indexed, 0);
+          console.log(`[trigger-index] Search: ${total} posts across ${results.length} feeds`);
+        })
+        .catch((err) => console.error("[trigger-index] Search error:", err instanceof Error ? err.message : String(err))),
+    ]),
   );
   return c.json({
     ok: true,
-    message: "Indexing started — feed counts will update in ~30 seconds",
+    message: "Full index started (Jetstream + all feeds) — counts update in ~30s",
   });
 });
 
@@ -256,22 +257,28 @@ export default {
         await runCleanup(env);
         return;
       }
-      // Every 3 minutes — all jobs run sequentially to stay within Bluesky rate limits
+      // Every 3 minutes — drain jobs run first, then indexing, then heavy scans
 
-      // Run drain jobs FIRST so they always execute regardless of how long heavier jobs take
-      await runScheduledUnfollow(env);  // drain unfollow queue (40/tick)
-      await runScheduledFollow(env);    // drain follow queue (10/tick)
+      // 1. Drain queues FIRST — guaranteed to run every tick
+      await runScheduledUnfollow(env);  // 40 unfollows/tick
+      await runScheduledFollow(env);    // 10 follows/tick
 
-      await runIndexer(env);
+      // 2. Jetstream — primary real-time indexer (firehose, no search rate limits)
+      await runJetstreamIndexer(env);
+
+      // 3. Scheduler + search backfill (staggered: 1 feed/tick round-robin)
       await runScheduler(env);
+      await runIndexer(env);            // supplemental search-API pass, 1 feed/tick
+
+      // 4. Scoring + ranking
       await runAuthorScoring(env);
       await precomputeFeedRankings(env);
 
-      // Auto-follow loop: discover new accounts, queue follows, check follow-backs
+      // 5. Auto-follow discovery + follow-back check
       await runAutoFollow(env);
       await runFollowBackCheck(env);
 
-      // Auto-unfollow scan: 500 following/tick — queues candidates for runScheduledUnfollow above
+      // 6. Auto-unfollow scan (500 following/tick — queues for step 1 above)
       await runAutoUnfollow(env);
       await runAmplifier(env);
     })());

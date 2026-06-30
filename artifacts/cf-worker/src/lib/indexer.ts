@@ -12,29 +12,56 @@ export type FeedIndexResult = {
 };
 
 /**
- * Cron-based post indexer — runs every 3 minutes via Cloudflare Cron Triggers.
+ * Search-API indexer — supplemental backfill pass.
  *
- * Key design decisions:
- * - ALL D1 reads happen upfront before any external HTTP calls (Bluesky login/search).
- *   CF Workers can have issues mixing D1 prepared statements with external fetch calls,
- *   so we batch all reads first, then do external work, then do D1 writes.
- * - Feeds are processed ONE AT A TIME with a 1.5-second pause between them to avoid
- *   exhausting the Bluesky search rate limit (~50 req/min) on early feeds.
- * - Within each feed, keywords are batched 4 at a time (8 API calls), 400ms apart.
- * - All errors are captured per-feed so the trigger endpoint can surface diagnostics.
+ * In cron mode (default): staggered round-robin — indexes ONE feed per tick so
+ * each feed gets fresh search results every (feeds.length × 3) minutes without
+ * hammering the rate limit. Pass maxFeeds=Infinity for manual full-index.
+ *
+ * Jetstream (jetstream.ts) is the primary real-time indexer; this catches posts
+ * that predate the Jetstream cursor or fall outside its filter window.
  */
-export async function runIndexer(env: Env): Promise<FeedIndexResult[]> {
+export async function runIndexer(env: Env, options?: { maxFeeds?: number }): Promise<FeedIndexResult[]> {
   const db = createDb(env.DB);
 
   // ── Phase 1: Read all config from D1 BEFORE any external HTTP calls ──────────
-  const feeds = await db
+  const allActiveFeeds = await db
     .select()
     .from(feedsTable)
     .where(eq(feedsTable.isActive, true));
 
-  if (feeds.length === 0) {
+  if (allActiveFeeds.length === 0) {
     console.log("[indexer] No active feeds — skipping.");
     return [];
+  }
+
+  const maxFeeds = options?.maxFeeds ?? 1; // default: 1 feed per tick (staggered)
+
+  // Round-robin: pick which feed(s) to index this tick
+  let feeds = allActiveFeeds;
+  if (maxFeeds < allActiveFeeds.length) {
+    const idxRow = await env.DB
+      .prepare("SELECT value FROM cron_settings WHERE key = 'indexer_feed_cursor'")
+      .first<{ value: string }>();
+    const currentIdx = parseInt(idxRow?.value ?? "0", 10) || 0;
+    const nextIdx = (currentIdx + maxFeeds) % allActiveFeeds.length;
+
+    feeds = allActiveFeeds.slice(currentIdx, currentIdx + maxFeeds);
+    if (feeds.length < maxFeeds) {
+      // Wrap around
+      feeds = [...feeds, ...allActiveFeeds.slice(0, maxFeeds - feeds.length)];
+    }
+
+    // Advance cursor for next tick
+    await env.DB
+      .prepare(
+        "INSERT INTO cron_settings (key, value) VALUES ('indexer_feed_cursor', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')"
+      )
+      .bind(String(nextIdx))
+      .run()
+      .catch(() => {});
+
+    console.log(`[indexer] Staggered — indexing feed ${currentIdx + 1}/${allActiveFeeds.length}: "${feeds.map(f => f.recordName).join(", ")}"`);
   }
 
   // Load all keywords across all active feeds in a single D1 query
