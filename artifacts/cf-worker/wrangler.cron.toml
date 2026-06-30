@@ -1,0 +1,38 @@
+name = "feedforge-cron"
+main = "src/cron.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# ─── D1 Database (shared with feedforge-api) ───────────────────────────────────
+[[d1_databases]]
+binding = "DB"
+database_name = "feedforge-db"
+database_id = "6d1329cc-e8b9-4183-bbf6-42ede9a83b74"
+
+# ─── Cron triggers ─────────────────────────────────────────────────────────────
+[triggers]
+crons = ["*/3 * * * *", "0 2 * * *"]
+
+# ─── Smart Placement ───────────────────────────────────────────────────────────
+# Write-heavy / D1-heavy workload — Smart Placement correctly anchors this worker
+# near D1's primary region. Cron latency is not user-facing so this is fine.
+[placement]
+mode = "smart"
+
+# ─── Durable Objects ───────────────────────────────────────────────────────────
+# JetstreamConsumerDO maintains a persistent WebSocket to the Bluesky Jetstream
+# firehose, replacing the old cron-tick open→collect→close pattern.
+[[durable_objects.bindings]]
+name = "JETSTREAM_DO"
+class_name = "JetstreamConsumerDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["JetstreamConsumerDO"]
+
+# ─── Secrets (set via `wrangler secret put --config wrangler.cron.toml`) ───────
+# FEEDGEN_PUBLISHER_DID
+# BLUESKY_HANDLE
+# BLUESKY_APP_PASSWORD
+# FEEDGEN_HOSTNAME

@@ -11,27 +11,20 @@ binding = "DB"
 database_name = "feedforge-db"
 database_id = "6d1329cc-e8b9-4183-bbf6-42ede9a83b74"
 
-# ─── Cron Trigger (replaces firehose — indexes posts every 3 minutes) ──────────
-[triggers]
-crons = ["*/3 * * * *", "0 2 * * *"]
+# ─── No cron triggers ──────────────────────────────────────────────────────────
+# All cron jobs moved to feedforge-cron worker (wrangler.cron.toml).
+# This worker handles HTTP only — no scheduled() handler.
 
-# ─── Smart Placement — CF auto-routes each request to the optimal PoP ──────────
-# Minimises latency for readers in US, EU, APAC by running the Worker at the
-# edge node closest to D1's primary region for write-heavy cron tasks and at
-# the PoP closest to the requester for feed-skeleton reads.
-[placement]
-mode = "smart"
+# ─── No Smart Placement ────────────────────────────────────────────────────────
+# Removed: Smart Placement picks ONE location for the whole worker based on D1
+# proximity. That's correct for write-heavy cron work, but it anchors this
+# read-path worker too — hurting global getFeedSkeleton latency.
+# Without placement each request is handled at the nearest PoP to the reader,
+# letting the existing Cache-Control headers (s-maxage=30) do their job.
+# Smart Placement now lives only in wrangler.cron.toml.
 
-# ─── Non-secret env vars (set secrets via `wrangler secret put`) ────────────────
-# Secrets to set via CLI:
+# ─── Secrets (set via `wrangler secret put`) ───────────────────────────────────
 #   wrangler secret put FEEDGEN_PUBLISHER_DID
 #   wrangler secret put BLUESKY_HANDLE
 #   wrangler secret put BLUESKY_APP_PASSWORD
 #   wrangler secret put FEEDGEN_HOSTNAME
-
-# ─── Local dev vars (.dev.vars file — git-ignored) ─────────────────────────────
-# Copy this block into a .dev.vars file for local development:
-# FEEDGEN_PUBLISHER_DID=did:plc:xxxxx
-# BLUESKY_HANDLE=you.bsky.social
-# BLUESKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
-# FEEDGEN_HOSTNAME=feedforge-api.your-subdomain.workers.dev

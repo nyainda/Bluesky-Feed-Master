@@ -11,16 +11,11 @@ import xrpcRoute from "./routes/xrpc";
 import cronSettingsRoute from "./routes/cron-settings";
 import syndicationRoute from "./routes/syndication";
 import followSettingsRoute from "./routes/follow-settings";
-import { runIndexer, runCleanup } from "./lib/indexer";
+import { runIndexer } from "./lib/indexer";
 import { runJetstreamIndexer } from "./lib/jetstream";
-import { runScheduler } from "./lib/scheduler";
-import { runAuthorScoring } from "./lib/author-scoring";
 import { precomputeFeedRankings } from "./lib/feed-ranking";
 import { runAutoUnfollow } from "./lib/auto-unfollow";
-import { runAmplifier } from "./lib/amplifier";
-import { runScheduledUnfollow, ensureScheduledUnfollowTable } from "./lib/scheduled-unfollow";
-import { runAutoFollow } from "./lib/auto-follow";
-import { runScheduledFollow, runFollowBackCheck } from "./lib/scheduled-follow";
+import { runScheduledUnfollow } from "./lib/scheduled-unfollow";
 
 export interface Env {
   DB: D1Database;
@@ -100,7 +95,7 @@ app.get("/api/admin/debug-index-feed", async (c) => {
   try {
     const { createDb: mkDb, feedsTable: ft, indexedPostsTable: ipt } = await import("./db");
     const db = mkDb(c.env.DB);
-    const { eq, sql: drizzleSql, like, count: cnt } = await import("drizzle-orm");
+    const { eq, sql: drizzleSql, count: cnt } = await import("drizzle-orm");
 
     const [feed] = await db.select().from(ft).where(eq(ft.id, feedId));
     if (!feed) return c.json({ error: `feed ${feedId} not found` }, 404);
@@ -125,7 +120,7 @@ app.get("/api/admin/debug-index-feed", async (c) => {
         }).onConflictDoUpdate({
           target: ipt.uri,
           set: {
-            algoTags: drizzleSql`CASE WHEN algo_tags LIKE ${"%" + algoTag + "%"} THEN algo_tags ELSE algo_tags || ',' || ${algoTag} END`,
+            algoTags: drizzleSql`CASE WHEN instr(',' || algo_tags || ',', ',' || ${algoTag} || ',') > 0 THEN algo_tags ELSE algo_tags || ',' || ${algoTag} END`,
             likes: post.likeCount ?? 0,
           },
         });
@@ -135,11 +130,53 @@ app.get("/api/admin/debug-index-feed", async (c) => {
       }
     }
 
-    const [{ count: postCount }] = await db.select({ count: cnt() }).from(ipt).where(like(ipt.algoTags, `%${algoTag}%`));
+    const [{ count: postCount }] = await db.select({ count: cnt() }).from(ipt)
+      .where(drizzleSql`instr(',' || ${ipt.algoTags} || ',', ',' || ${algoTag} || ',') > 0`);
 
     return c.json({ feed: feed.recordName, keyword, postsFound: posts.length, insertResults, postCountAfter: postCount });
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+// One-off cleanup — dedupes any algo_tags rows already corrupted with repeats
+// e.g. "tech,tech,startups" → "tech,startups". Safe to run multiple times.
+app.post("/api/admin/dedup-tags", async (c) => {
+  try {
+    const rows = await c.env.DB.prepare(
+      "SELECT uri, algo_tags FROM indexed_posts WHERE algo_tags LIKE '%,%'"
+    ).all<{ uri: string; algo_tags: string }>();
+
+    let fixed = 0;
+    const stmts: D1PreparedStatement[] = [];
+
+    for (const row of rows.results) {
+      const tags = row.algo_tags.split(",").map((t) => t.trim()).filter(Boolean);
+      const deduped = [...new Set(tags)].join(",");
+      if (deduped !== row.algo_tags) {
+        stmts.push(
+          c.env.DB.prepare("UPDATE indexed_posts SET algo_tags = ? WHERE uri = ?")
+            .bind(deduped, row.uri)
+        );
+        fixed++;
+      }
+    }
+
+    if (stmts.length > 0) {
+      // Batch in groups of 100 to stay within D1 batch limits
+      for (let i = 0; i < stmts.length; i += 100) {
+        await c.env.DB.batch(stmts.slice(i, i + 100));
+      }
+    }
+
+    return c.json({
+      ok: true,
+      scanned: rows.results.length,
+      fixed,
+      message: `Deduped ${fixed} rows out of ${rows.results.length} scanned`,
+    });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
   }
 });
 
@@ -257,45 +294,7 @@ app.get("/api/admin/cron-health", async (c) => {
   }
 });
 
-export default {
-  fetch: app.fetch,
-
-  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil((async () => {
-      // Record this tick for health-check monitoring
-      await env.DB.prepare(
-        "INSERT INTO cron_settings (key, value) VALUES ('last_cron_tick', datetime('now')) ON CONFLICT(key) DO UPDATE SET value = datetime('now'), updated_at = datetime('now')"
-      ).run().catch(() => {});
-
-      // 2am daily cron — cleanup only
-      if (event.cron === "0 2 * * *") {
-        await runCleanup(env);
-        return;
-      }
-      // Every 3 minutes — drain jobs run first, then indexing, then heavy scans
-
-      // 1. Drain queues FIRST — guaranteed to run every tick
-      await runScheduledUnfollow(env);  // 40 unfollows/tick
-      await runScheduledFollow(env);    // 10 follows/tick
-
-      // 2. Jetstream — primary real-time indexer (firehose, no search rate limits)
-      await runJetstreamIndexer(env);
-
-      // 3. Scheduler + search backfill (staggered: 1 feed/tick round-robin)
-      await runScheduler(env);
-      await runIndexer(env);            // supplemental search-API pass, 1 feed/tick
-
-      // 4. Scoring + ranking
-      await runAuthorScoring(env);
-      await precomputeFeedRankings(env);
-
-      // 5. Auto-follow discovery + follow-back check
-      await runAutoFollow(env);
-      await runFollowBackCheck(env);
-
-      // 6. Auto-unfollow scan (500 following/tick — queues for step 1 above)
-      await runAutoUnfollow(env);
-      await runAmplifier(env);
-    })());
-  },
-};
+// Scheduled handler removed — all cron jobs now live in the feedforge-cron
+// worker (src/cron.ts / wrangler.cron.toml) so Smart Placement can be applied
+// only to the write-heavy D1 work without anchoring the read path.
+export default { fetch: app.fetch };
