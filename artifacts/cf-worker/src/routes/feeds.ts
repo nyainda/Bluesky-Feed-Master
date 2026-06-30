@@ -271,4 +271,40 @@ route.post("/feeds/:id/publish", async (c) => {
   }
 });
 
+// ── Auto-amplify settings (stored as cron_settings JSON) ─────────────────────
+
+route.get("/feeds/:id/auto-amplify", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  const key = `auto_amplify_feed_${id}`;
+  const row = await c.env.DB.prepare("SELECT value FROM cron_settings WHERE key = ?")
+    .bind(key)
+    .first<{ value: string }>();
+  if (!row) return c.json({ enabled: false, minScore: 0.3, maxPerDay: 3, delayMinutes: 60 });
+  try {
+    return c.json({ enabled: false, minScore: 0.3, maxPerDay: 3, delayMinutes: 60, ...JSON.parse(row.value) });
+  } catch {
+    return c.json({ enabled: false, minScore: 0.3, maxPerDay: 3, delayMinutes: 60 });
+  }
+});
+
+route.post("/feeds/:id/auto-amplify", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  const key = `auto_amplify_feed_${id}`;
+  const value = JSON.stringify(body);
+  await c.env.DB.prepare(
+    "INSERT INTO cron_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = datetime('now')",
+  )
+    .bind(key, value, value)
+    .run();
+  return c.json(body);
+});
+
 export default route;

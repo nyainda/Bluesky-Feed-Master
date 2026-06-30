@@ -490,4 +490,34 @@ route.get("/bluesky/auto-follow/stats", async (c) => {
   }
 });
 
+route.get("/bluesky/search-actors", async (c) => {
+  const q = (c.req.query("q") ?? "").trim();
+  if (!q) return c.json({ users: [], cursor: null });
+  const limit = Math.min(parseInt(c.req.query("limit") || "20", 10), 25);
+  const cursor = c.req.query("cursor");
+
+  try {
+    const { AtpAgent } = await import("@atproto/api");
+    const agent = new AtpAgent({ service: "https://public.api.bsky.app" });
+    const result = await agent.searchActors({ q, limit, cursor });
+    return c.json({
+      users: result.data.actors.map((a) => ({
+        did: a.did,
+        handle: a.handle,
+        displayName: a.displayName ?? null,
+        avatar: a.avatar ?? null,
+        description: a.description ?? null,
+        followersCount: a.followersCount ?? 0,
+        followsCount: a.followsCount ?? 0,
+        postsCount: a.postsCount ?? 0,
+        followedAt: null,
+      })),
+      cursor: result.data.cursor ?? null,
+    });
+  } catch (err) {
+    console.error("[search-actors]", err);
+    return c.json({ error: "Search failed" }, 500);
+  }
+});
+
 export default route;

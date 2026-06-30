@@ -16,7 +16,7 @@ import {
   ChevronLeft, ChevronRight, Search, CheckSquare, Square,
   TrendingUp, Heart, AlertTriangle, Filter, X, ArrowUpRight, BarChart2, Camera,
   Clock, Shield, Settings2, ToggleLeft, ToggleRight, History,
-  ListOrdered, Pause, Play, Ban, Loader2, Download, CheckCircle, Zap, Activity,
+  ListOrdered, Pause, Play, Ban, Loader2, Download, CheckCircle, Zap, Activity, Globe,
 } from "lucide-react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-type Tab = "followers" | "following" | "not-following-back" | "top-authors" | "search" | "growth" | "auto-follow";
+type Tab = "followers" | "following" | "not-following-back" | "top-authors" | "search" | "growth" | "auto-follow" | "discover";
 
 type SearchUser = {
   did: string;
@@ -1832,6 +1832,142 @@ function AutoFollowTab() {
   );
 }
 
+// ─── Discover Tab ────────────────────────────────────────────────────────────
+
+function DiscoverTab() {
+  const [query, setQuery] = useState("");
+  const [submitted, setSubmitted] = useState("");
+  const [cursor, setCursor] = useState<string | undefined>();
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const { toast } = useToast();
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["discover-actors", submitted, cursor],
+    queryFn: async () => {
+      if (!submitted) return { users: [], cursor: null };
+      const params = new URLSearchParams({ q: submitted, limit: "20" });
+      if (cursor) params.set("cursor", cursor);
+      return customFetch<{ users: AudienceUser[]; cursor: string | null }>(
+        `/api/bluesky/search-actors?${params}`,
+      );
+    },
+    enabled: !!submitted,
+    staleTime: 60_000,
+  });
+
+  function handleSearch(e: React.FormEvent) {
+    e.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+    setSubmitted(q);
+    setCursor(undefined);
+    setCursorStack([]);
+  }
+
+  async function handleFollow(did: string) {
+    await customFetch("/api/bluesky/follow", { method: "POST", body: JSON.stringify({ did }) });
+  }
+
+  const users = data?.users ?? [];
+
+  return (
+    <div className="mt-4">
+      <form onSubmit={handleSearch} className="flex gap-2 mb-5">
+        <div className="relative flex-1">
+          <Globe className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search Bluesky (e.g. indie hacker, founder, web3…)"
+            className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-border bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
+          />
+        </div>
+        <Button type="submit" disabled={isLoading || !query.trim()} className="gap-1.5">
+          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+          Search
+        </Button>
+      </form>
+
+      {!submitted && (
+        <div className="flex flex-col items-center justify-center h-48 gap-3 text-center">
+          <Globe className="w-12 h-12 text-muted-foreground/20" />
+          <p className="text-sm text-muted-foreground">Search all of Bluesky for accounts to follow.</p>
+          <p className="text-xs text-muted-foreground/60">Try "indie hacker", "AI researcher", "open source", "startup founder"…</p>
+        </div>
+      )}
+
+      {submitted && isLoading && (
+        <div className="space-y-1">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 px-4 py-3 border-b border-border/40">
+              <div className="w-9 h-9 rounded-full bg-muted animate-pulse flex-shrink-0" />
+              <div className="flex-1 space-y-1.5">
+                <div className="h-3 w-32 bg-muted rounded animate-pulse" />
+                <div className="h-2.5 w-48 bg-muted/60 rounded animate-pulse" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {submitted && !isLoading && users.length === 0 && (
+        <div className="flex flex-col items-center justify-center h-36 gap-2 text-center">
+          <Search className="w-8 h-8 text-muted-foreground/20" />
+          <p className="text-sm text-muted-foreground">No results for "{submitted}"</p>
+        </div>
+      )}
+
+      {users.length > 0 && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+          <div className="bg-card border border-card-border rounded-xl overflow-hidden mb-3">
+            {users.map((user, i) => (
+              <motion.div key={user.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
+                <UserCard
+                  user={user as AudienceUser & { postCount?: number }}
+                  onQuickFollow={handleFollow}
+                />
+              </motion.div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between px-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const s = [...cursorStack];
+                const prev = s.pop();
+                setCursorStack(s);
+                setCursor(prev === "" ? undefined : prev);
+              }}
+              disabled={cursorStack.length === 0}
+              className="gap-1"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" /> Prev
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              {users.length} result{users.length !== 1 ? "s" : ""}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (data?.cursor) {
+                  setCursorStack(s => [...s, cursor ?? ""]);
+                  setCursor(data.cursor!);
+                }
+              }}
+              disabled={!data?.cursor}
+              className="gap-1"
+            >
+              Next <ChevronRight className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        </motion.div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 // Bluesky rate limit: 3000 req/300s = 10/s. CF worker uses concurrency-20 for deleteFollow.
@@ -2228,6 +2364,7 @@ export default function Audience() {
     { id: "growth", label: "Growth", shortLabel: "Growth", icon: BarChart2 },
     { id: "auto-follow", label: "Auto-Follow", shortLabel: "Auto", icon: Zap },
     { id: "search", label: "Search & Follow", shortLabel: "Search", icon: Search },
+    { id: "discover", label: "Discover", shortLabel: "Discover", icon: Globe },
   ];
 
   function filterUsers(users: AudienceUser[]) {
@@ -2649,6 +2786,8 @@ export default function Audience() {
               {tab === "growth" && <FollowerGrowthTab />}
 
               {tab === "auto-follow" && <AutoFollowTab />}
+
+              {tab === "discover" && <DiscoverTab />}
             </div>
           </motion.div>
         </AnimatePresence>

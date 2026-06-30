@@ -359,4 +359,83 @@ route.get("/bluesky/feed-info/:recordName", async (c) => {
   }
 });
 
+route.get("/feeds/:id/keyword-suggestions", async (c) => {
+  const db = createDb(c.env.DB);
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid feed ID" }, 400);
+
+  const [feed] = await db.select().from(feedsTable).where(eq(feedsTable.id, id));
+  if (!feed) return c.json({ error: "Feed not found" }, 404);
+
+  const existingKeywords = await db.select().from(keywordsTable).where(eq(keywordsTable.feedId, id));
+  const existingSet = new Set(existingKeywords.map((k) => k.keyword.toLowerCase()));
+
+  const posts = await db.all<{ text: string; likes: number; reposts: number }>(sql`
+    SELECT text, likes, reposts
+    FROM indexed_posts
+    WHERE algo_tags LIKE ${"%" + feed.recordName + "%"}
+    ORDER BY (likes + reposts * 2) DESC
+    LIMIT 2000
+  `);
+
+  if (posts.length === 0) return c.json([]);
+
+  const STOP = new Set([
+    "the","a","an","and","or","but","in","on","at","to","for","of","with","is","are","was","were",
+    "be","been","being","have","has","had","do","does","did","will","would","could","should",
+    "may","might","shall","this","that","these","those","i","you","he","she","it","we","they",
+    "my","your","his","her","its","our","their","me","him","us","them","what","which","who","how",
+    "when","where","why","all","any","both","each","few","more","most","other","some","such","no",
+    "not","only","own","same","so","than","too","very","just","can","now","then","here","there",
+    "if","as","by","from","up","about","into","through","after","before","out","over","under",
+    "once","https","http","bluesky","bsky","com","www","org","net","app","via","cc","re","rt",
+    "get","go","got","new","like","love","good","great","well","also","even","still","much",
+    "many","want","need","know","think","make","see","use","using","used","made","take","look",
+    "say","said","way","time","day","year","people","work","one","two","three","post","thread",
+    "reply","check","share","read","feel","really","actually","always","never","every","since",
+  ]);
+
+  const wordStats = new Map<string, { count: number; totalEngagement: number }>();
+
+  for (const post of posts) {
+    const engagement = (post.likes ?? 0) + (post.reposts ?? 0) * 2;
+    const words = post.text
+      .toLowerCase()
+      .replace(/https?:\/\/\S+/g, "")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter(
+        (w) =>
+          w.length >= 4 &&
+          w.length <= 30 &&
+          !STOP.has(w) &&
+          !existingSet.has(w) &&
+          !/^\d+$/.test(w),
+      );
+
+    const seenInPost = new Set<string>();
+    for (const word of words) {
+      if (seenInPost.has(word)) continue;
+      seenInPost.add(word);
+      const s = wordStats.get(word) ?? { count: 0, totalEngagement: 0 };
+      s.count++;
+      s.totalEngagement += engagement;
+      wordStats.set(word, s);
+    }
+  }
+
+  const suggestions = [...wordStats.entries()]
+    .filter(([, s]) => s.count >= 2)
+    .map(([word, s]) => ({
+      word,
+      count: s.count,
+      avgEngagement: Math.round((s.totalEngagement / s.count) * 10) / 10,
+      score: Math.round(s.count * (1 + s.totalEngagement / s.count) * 10) / 10,
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 15);
+
+  return c.json(suggestions);
+});
+
 export default route;

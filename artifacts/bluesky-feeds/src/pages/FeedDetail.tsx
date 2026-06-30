@@ -16,6 +16,7 @@ import {
   Upload, CheckCircle, AlertTriangle, BarChart3, FileText, Hash,
   Users, Heart, TrendingUp, Play, RefreshCw, Rss, ArrowUpRight,
   Repeat2, MessageCircle, Image, Zap, Trophy, Clock,
+  Sparkles, ToggleLeft, ToggleRight, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -422,6 +423,11 @@ export default function FeedDetail() {
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
   const [repostedPosts, setRepostedPosts] = useState<Set<string>>(new Set());
   const [engagingPost, setEngagingPost] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<{ word: string; count: number; avgEngagement: number }[]>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [autoAmplify, setAutoAmplify] = useState({ enabled: false, minScore: 0.3, maxPerDay: 3, delayMinutes: 60 });
+  const [savingAmplify, setSavingAmplify] = useState(false);
 
   const { data: feed, isLoading: loadingFeed } = useGetFeed(id);
   const { data: keywords } = useGetFeedKeywords(id);
@@ -494,6 +500,47 @@ export default function FeedDetail() {
       onError: () => toast({ title: "Failed to remove keyword", variant: "destructive" }),
     });
   }
+
+  async function handleSuggestKeywords() {
+    setLoadingSuggestions(true);
+    setShowSuggestions(true);
+    try {
+      const result = await customFetch<{ word: string; count: number; avgEngagement: number }[]>(
+        `/api/feeds/${id}/keyword-suggestions`,
+      );
+      setSuggestions(result);
+      if (result.length === 0) toast({ title: "No new suggestions found", description: "Try indexing more posts first." });
+    } catch {
+      toast({ title: "Failed to get suggestions", variant: "destructive" });
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  }
+
+  async function handleSaveAutoAmplify(settings: typeof autoAmplify) {
+    setSavingAmplify(true);
+    try {
+      await customFetch(`/api/feeds/${id}/auto-amplify`, { method: "POST", body: JSON.stringify(settings) });
+      setAutoAmplify(settings);
+      toast({ title: settings.enabled ? "Auto-repost enabled" : "Auto-repost disabled" });
+    } catch {
+      toast({ title: "Failed to save settings", variant: "destructive" });
+    } finally {
+      setSavingAmplify(false);
+    }
+  }
+
+  // Load auto-amplify settings when on keywords tab
+  useQuery({
+    queryKey: ["auto-amplify", id],
+    queryFn: async () => {
+      const result = await customFetch<typeof autoAmplify>(`/api/feeds/${id}/auto-amplify`);
+      setAutoAmplify(result);
+      return result;
+    },
+    enabled: !isNaN(id) && tab === "keywords",
+    staleTime: 30_000,
+  });
 
   if (loadingFeed) return (
     <div className="px-4 py-5 md:px-8 md:py-8 max-w-5xl mx-auto">
@@ -951,7 +998,7 @@ export default function FeedDetail() {
               <p className="text-xs text-muted-foreground mb-4">
                 Keywords are matched against Bluesky posts in real-time. Posts containing any keyword will be indexed into this feed. The Cloudflare Worker runs every 3 minutes to find new matches.
               </p>
-              <form onSubmit={handleAddKeyword} className="flex gap-2 mb-5">
+              <form onSubmit={handleAddKeyword} className="flex gap-2 mb-4">
                 <div className="relative flex-1">
                   <Hash className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                   <Input
@@ -965,10 +1012,63 @@ export default function FeedDetail() {
                 <Button type="submit" disabled={addKeyword.isPending || !newKeyword.trim()} data-testid="button-add-keyword" className="gap-1.5">
                   <Plus className="w-4 h-4" />Add
                 </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleSuggestKeywords}
+                  disabled={loadingSuggestions}
+                  className="gap-1.5 text-primary border-primary/30 hover:bg-primary/5"
+                  title="Suggest keywords based on your indexed posts"
+                >
+                  {loadingSuggestions ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  <span className="hidden sm:inline">Suggest</span>
+                </Button>
               </form>
 
-              {/* Keyword suggestions */}
-              {(!keywords || keywords.length === 0) && (
+              {/* Smart keyword suggestions panel */}
+              <AnimatePresence>
+                {showSuggestions && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    className="mb-4 p-3 rounded-xl bg-primary/3 border border-primary/15"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-primary" />
+                        <span className="text-xs font-semibold text-primary">AI-powered suggestions</span>
+                        <span className="text-[10px] text-muted-foreground">based on your indexed posts</span>
+                      </div>
+                      <button onClick={() => setShowSuggestions(false)} className="text-muted-foreground hover:text-foreground"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                    {loadingSuggestions ? (
+                      <p className="text-xs text-muted-foreground">Analysing posts…</p>
+                    ) : suggestions.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No suggestions yet — index more posts first.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {suggestions.map(s => (
+                          <button
+                            key={s.word}
+                            onClick={() => { setNewKeyword(s.word); setShowSuggestions(false); }}
+                            title={`${s.count} posts, avg engagement ${s.avgEngagement}`}
+                            className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-card border border-primary/20 hover:bg-primary/8 hover:border-primary/40 text-foreground transition-colors font-mono"
+                          >
+                            {s.word}
+                            {s.avgEngagement > 0 && (
+                              <span className="text-[9px] text-primary/60">+{s.avgEngagement}</span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Quick-start suggestions when no keywords yet */}
+              {(!keywords || keywords.length === 0) && !showSuggestions && (
                 <div className="mb-4">
                   <p className="text-xs text-muted-foreground mb-2 font-medium">Suggestions to get started:</p>
                   <div className="flex flex-wrap gap-2">
@@ -1028,6 +1128,83 @@ export default function FeedDetail() {
                   })}
                 </div>
               )}
+
+              {/* ── Auto-repost section ─────────────────────────────────────── */}
+              <div className="mt-6 pt-5 border-t border-border/50">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                      <Repeat2 className="w-4 h-4 text-primary" />
+                      Auto-Repost
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Automatically repost top-ranked posts from this feed on your account.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleSaveAutoAmplify({ ...autoAmplify, enabled: !autoAmplify.enabled })}
+                    disabled={savingAmplify}
+                    className="flex-shrink-0"
+                  >
+                    {autoAmplify.enabled
+                      ? <ToggleRight className="w-9 h-9 text-primary" />
+                      : <ToggleLeft className="w-9 h-9 text-muted-foreground" />
+                    }
+                  </button>
+                </div>
+                {autoAmplify.enabled && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="grid grid-cols-3 gap-3 mt-3"
+                  >
+                    <div>
+                      <label className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Min quality score</label>
+                      <select
+                        value={autoAmplify.minScore}
+                        onChange={e => setAutoAmplify(s => ({ ...s, minScore: parseFloat(e.target.value) }))}
+                        className="mt-1 w-full text-xs rounded-lg border border-border bg-background px-2 py-1.5 text-foreground"
+                      >
+                        <option value="0.1">Low (0.1)</option>
+                        <option value="0.3">Medium (0.3)</option>
+                        <option value="0.5">High (0.5)</option>
+                        <option value="0.7">Very high (0.7)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Max per day</label>
+                      <select
+                        value={autoAmplify.maxPerDay}
+                        onChange={e => setAutoAmplify(s => ({ ...s, maxPerDay: parseInt(e.target.value) }))}
+                        className="mt-1 w-full text-xs rounded-lg border border-border bg-background px-2 py-1.5 text-foreground"
+                      >
+                        {[1, 2, 3, 5, 10].map(n => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Delay (minutes)</label>
+                      <select
+                        value={autoAmplify.delayMinutes}
+                        onChange={e => setAutoAmplify(s => ({ ...s, delayMinutes: parseInt(e.target.value) }))}
+                        className="mt-1 w-full text-xs rounded-lg border border-border bg-background px-2 py-1.5 text-foreground"
+                      >
+                        {[15, 30, 60, 120, 240].map(n => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                    </div>
+                    <div className="col-span-3">
+                      <Button
+                        size="sm"
+                        onClick={() => handleSaveAutoAmplify(autoAmplify)}
+                        disabled={savingAmplify}
+                        className="gap-1.5 mt-1"
+                      >
+                        {savingAmplify ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
+                        Save settings
+                      </Button>
+                    </div>
+                  </motion.div>
+                )}
+              </div>
             </div>
           </motion.div>
         )}

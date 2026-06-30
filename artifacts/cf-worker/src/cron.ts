@@ -18,6 +18,7 @@ import { runAuthorScoring } from "./lib/author-scoring";
 import { precomputeFeedRankings } from "./lib/feed-ranking";
 import { runAutoUnfollow } from "./lib/auto-unfollow";
 import { runAmplifier } from "./lib/amplifier";
+import { runAutoAmplify } from "./lib/auto-amplify";
 import { runScheduledUnfollow } from "./lib/scheduled-unfollow";
 import { runAutoFollow } from "./lib/auto-follow";
 import { runScheduledFollow, runFollowBackCheck } from "./lib/scheduled-follow";
@@ -104,6 +105,7 @@ export default {
         // ── 5. Auto-unfollow scan + content amplifier ─────────────────────
         await runAutoUnfollow(env);
         await runAmplifier(env);
+        await runAutoAmplify(env);
       })(),
     );
   },
