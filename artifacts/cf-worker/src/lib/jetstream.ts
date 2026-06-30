@@ -178,6 +178,14 @@ export async function runJetstreamIndexer(
 
       if (matchingTags.size === 0) continue;
 
+      // ── Quality gate: skip obvious spam / low-quality posts ─────────────
+      // Short posts (<20 chars) are almost never feed-worthy content
+      if (text.trim().length < 20) continue;
+      // Skip posts that are almost entirely hashtags / mentions (spammy)
+      const wordCount = text.trim().split(/\s+/).length;
+      const hashtagCount = (text.match(/#\w+/g) ?? []).length;
+      if (wordCount > 2 && hashtagCount / wordCount > 0.6) continue;
+
       if (matchedByUri.has(uri)) {
         for (const tag of matchingTags) matchedByUri.get(uri)!.algoTags.add(tag);
       } else {

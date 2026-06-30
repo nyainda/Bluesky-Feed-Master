@@ -49,6 +49,8 @@ function UserCard({
   actionPending,
   rank,
   botWarning,
+  onQuickFollow,
+  alreadyFollowing,
 }: {
   user: AudienceUser & { postCount?: number };
   selected?: boolean;
@@ -59,7 +61,24 @@ function UserCard({
   actionPending?: boolean;
   rank?: number;
   botWarning?: boolean;
+  onQuickFollow?: (did: string) => Promise<void>;
+  alreadyFollowing?: boolean;
 }) {
+  const [followState, setFollowState] = useState<"idle" | "pending" | "done">(
+    alreadyFollowing ? "done" : "idle"
+  );
+
+  async function handleQuickFollow() {
+    if (!onQuickFollow || followState !== "idle") return;
+    setFollowState("pending");
+    try {
+      await onQuickFollow(user.did);
+      setFollowState("done");
+    } catch {
+      setFollowState("idle");
+    }
+  }
+
   return (
     <div
       className={cn(
@@ -137,6 +156,29 @@ function UserCard({
         >
           <ArrowUpRight className="w-3.5 h-3.5" />
         </a>
+        {/* One-click follow button — shows when onQuickFollow is provided and no actionLabel */}
+        {onQuickFollow && !actionLabel && (
+          <button
+            onClick={handleQuickFollow}
+            disabled={followState !== "idle"}
+            className={cn(
+              "flex items-center gap-1 h-7 px-2.5 rounded-lg border text-xs font-medium transition-all",
+              followState === "done"
+                ? "border-emerald-500/30 bg-emerald-500/8 text-emerald-600 cursor-default"
+                : followState === "pending"
+                ? "border-border bg-muted text-muted-foreground cursor-wait"
+                : "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10",
+            )}
+          >
+            {followState === "done" ? (
+              <><CheckCircle className="w-3 h-3" /><span className="hidden sm:inline">Following</span></>
+            ) : followState === "pending" ? (
+              <><Loader2 className="w-3 h-3 animate-spin" /><span className="hidden sm:inline">Following…</span></>
+            ) : (
+              <><UserPlus className="w-3 h-3" /><span className="hidden sm:inline">Follow</span></>
+            )}
+          </button>
+        )}
         {actionLabel && ActionIcon && onAction && (
           <Button
             size="sm"
@@ -438,6 +480,7 @@ function SearchFollowTab({ defaultUsers = [], defaultLoading = false }: { defaul
                     user={u}
                     selected={selected.has(u.did)}
                     onToggle={() => toggleSelect(u.did)}
+                    onQuickFollow={(did) => customFetch("/api/bluesky/follow", { method: "POST", body: JSON.stringify({ did }) })}
                   />
                 </motion.div>
               ))}
@@ -501,6 +544,7 @@ function SearchFollowTab({ defaultUsers = [], defaultLoading = false }: { defaul
                     selected={selected.has(u.did)}
                     onToggle={() => toggleSelect(u.did)}
                     botWarning={!hidePossibleBots && isBotLike(u)}
+                    onQuickFollow={(did) => customFetch("/api/bluesky/follow", { method: "POST", body: JSON.stringify({ did }) })}
                   />
                 </motion.div>
               );
@@ -2428,6 +2472,7 @@ export default function Audience() {
                           user={user}
                           selected={selected.has(user.did)}
                           onToggle={() => toggleSelect(user.did)}
+                          onQuickFollow={(did) => customFetch("/api/bluesky/follow", { method: "POST", body: JSON.stringify({ did }) })}
                         />
                       </motion.div>
                     ))}</div>
@@ -2512,6 +2557,7 @@ export default function Audience() {
                           selected={selected.has(user.did)}
                           onToggle={() => toggleSelect(user.did)}
                           rank={i + 1}
+                          onQuickFollow={(did) => customFetch("/api/bluesky/follow", { method: "POST", body: JSON.stringify({ did }) })}
                         />
                       </motion.div>
                     ))}
