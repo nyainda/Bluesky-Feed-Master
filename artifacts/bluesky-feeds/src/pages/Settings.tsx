@@ -4,6 +4,7 @@ import {
   Server, Globe, Zap, Database, Cloud, ChevronRight,
   Link2, Eye, EyeOff, Loader2,
 } from "lucide-react";
+import WebhookNotifications from "@/components/WebhookNotifications";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -340,6 +341,9 @@ export default function Settings() {
 
       {/* Quick Connect */}
       <QuickConnect />
+
+      {/* Webhook Notifications */}
+      <WebhookNotifications />
 
       {/* Environment Variables */}
       <Section title="Environment Variables" icon={Database} delay={0}>

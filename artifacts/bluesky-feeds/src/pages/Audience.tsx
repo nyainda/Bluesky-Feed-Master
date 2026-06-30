@@ -1551,6 +1551,7 @@ function AutoFollowTab() {
   const [form, setForm] = useState<Partial<AFSettings>>({});
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [triggering, setTriggering] = useState(false);
 
   // Sync form when settings load (only on first load)
   useEffect(() => {
@@ -1631,8 +1632,6 @@ function AutoFollowTab() {
       </div>
     );
   }
-
-  const [triggering, setTriggering] = useState(false);
 
   async function triggerFollow() {
     setTriggering(true);
