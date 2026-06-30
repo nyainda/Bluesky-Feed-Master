@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { createDb, feedsTable, keywordsTable, indexedPostsTable } from "../db";
-import { markAuthorDirty } from "./author-scoring";
+import { batchMarkAuthorsDirty } from "./author-scoring";
 import type { Env } from "../index";
 
 export type FeedIndexResult = {
@@ -128,6 +128,7 @@ export async function runIndexer(env: Env, options?: { maxFeeds?: number }): Pro
             ];
 
             const uniquePosts = [...new Map(posts.map((p) => [p.uri, p])).values()];
+            const dirtyAuthors: string[] = [];
 
             for (const post of uniquePosts) {
               const postText = (post.record as { text?: string }).text ?? "";
@@ -161,13 +162,18 @@ export async function runIndexer(env: Env, options?: { maxFeeds?: number }): Pro
                       engagementSyncedAt: new Date().toISOString(),
                     },
                   });
-                await markAuthorDirty(env, post.author.did);
+                dirtyAuthors.push(post.author.did);
                 feedIndexed++;
               } catch (insertErr) {
                 const msg = insertErr instanceof Error ? insertErr.message : String(insertErr);
                 feedErrors.push(`insert(${post.uri.slice(-12)}): ${msg}`);
                 feedSkipped++;
               }
+            }
+            // One batched D1 write for all authors in this keyword batch
+            // instead of one write per post (saves ~N-1 writes per batch)
+            if (dirtyAuthors.length > 0) {
+              await batchMarkAuthorsDirty(env, dirtyAuthors).catch(() => {});
             }
           } catch (searchErr) {
             const msg = searchErr instanceof Error ? searchErr.message : String(searchErr);

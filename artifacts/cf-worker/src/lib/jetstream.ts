@@ -16,7 +16,7 @@
 import type { Env } from "../index";
 import { createDb, feedsTable, keywordsTable, indexedPostsTable } from "../db";
 import { eq } from "drizzle-orm";
-import { markAuthorDirty } from "./author-scoring";
+import { batchMarkAuthorsDirty } from "./author-scoring";
 import { enqueueFollowItems, ensureFollowQueueTable } from "./scheduled-follow";
 
 /**
@@ -232,6 +232,7 @@ export async function runJetstreamIndexer(
   // preventing duplicates like "tech,tech,startups" on repeated indexing passes.
   let indexed = 0;
   const now = new Date().toISOString();
+  const dirtyAuthorDids: string[] = [];
 
   for (const post of matchedByUri.values()) {
     try {
@@ -252,11 +253,15 @@ export async function runJetstreamIndexer(
         )
         .bind(post.uri, post.cid, post.author, post.text, mergedTags, now, mergedTags, now)
         .run();
-      await markAuthorDirty(env, post.author);
+      dirtyAuthorDids.push(post.author);
       indexed++;
     } catch (err) {
       console.error("[jetstream] Insert failed for", post.uri.slice(-20), err);
     }
+  }
+  // Batch all author-dirty marks in one D1 batch instead of one write per post
+  if (dirtyAuthorDids.length > 0) {
+    await batchMarkAuthorsDirty(env, dirtyAuthorDids).catch(() => {});
   }
 
   // ── Phase 5b: Queue new followers for immediate follow-back ───────────────────

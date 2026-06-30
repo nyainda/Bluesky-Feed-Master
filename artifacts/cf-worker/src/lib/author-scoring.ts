@@ -8,30 +8,48 @@ const FORMULA_VERSION = "v1";
 const RECALC_COOLDOWN_MS = 2 * 60 * 1000;
 const MAX_RECALC_ATTEMPTS = 20;
 
+/**
+ * Mark a single author as needing score recalculation.
+ * Prefer batchMarkAuthorsDirty() when marking multiple authors in one pass
+ * to avoid one D1 write per post.
+ */
 export async function markAuthorDirty(env: Env, did: string): Promise<void> {
-  const db = createDb(env.DB);
-  const nowIso = new Date().toISOString();
-
-  await db
-    .insert(authorsTable)
-    .values({
-      did,
-      needsRecalc: true,
-      recalcAttempts: 0,
-      nextRecalcAt: nowIso,
-      updatedAt: nowIso,
-    })
-    .onConflictDoUpdate({
-      target: authorsTable.did,
-      set: {
-        needsRecalc: true,
-        nextRecalcAt: nowIso,
-        updatedAt: nowIso,
-      },
-    });
+  await batchMarkAuthorsDirty(env, [did]);
 }
 
-export async function runAuthorScoring(env: Env, batchSize = 50): Promise<void> {
+/**
+ * Mark multiple authors dirty in a single D1 batch — one statement per unique
+ * DID, submitted together. Replaces N individual markAuthorDirty() calls that
+ * previously fired one D1 write per indexed post.
+ */
+export async function batchMarkAuthorsDirty(env: Env, dids: string[]): Promise<void> {
+  if (dids.length === 0) return;
+  const uniqueDids = [...new Set(dids)];
+  const nowIso = new Date().toISOString();
+
+  await env.DB.batch(
+    uniqueDids.map(did =>
+      env.DB
+        .prepare(
+          `INSERT INTO authors (did, needs_recalc, recalc_attempts, next_recalc_at, updated_at)
+           VALUES (?, 1, 0, ?, ?)
+           ON CONFLICT(did) DO UPDATE SET
+             needs_recalc = 1,
+             next_recalc_at = ?,
+             updated_at = ?`
+        )
+        .bind(did, nowIso, nowIso, nowIso, nowIso)
+    )
+  );
+}
+
+/**
+ * Recalculate scores for dirty authors.
+ * batchSize reduced from 50 → 20 to stay within D1 free-tier write limits
+ * (each author costs 2 writes: upsert author_scores + update authors).
+ * 20 × 2 × 480 ticks/day = 19,200 writes/day.
+ */
+export async function runAuthorScoring(env: Env, batchSize = 20): Promise<void> {
   const db = createDb(env.DB);
   const nowIso = new Date().toISOString();
 

@@ -15,7 +15,7 @@
 
 import { createDb, feedsTable, keywordsTable, indexedPostsTable } from "../db";
 import { eq } from "drizzle-orm";
-import { markAuthorDirty } from "./author-scoring";
+import { batchMarkAuthorsDirty } from "./author-scoring";
 import { ensureFollowQueueTable } from "./scheduled-follow";
 
 const JETSTREAM_URL = "wss://jetstream2.us-east.bsky.network/subscribe";
@@ -275,6 +275,7 @@ export class JetstreamConsumerDO {
 
     // ── Flush matched posts to D1 ──────────────────────────────────────────
     let indexed = 0;
+    const dirtyAuthorDids: string[] = [];
     for (const post of posts) {
       try {
         const existing = await this.env.DB.prepare(
@@ -305,12 +306,16 @@ export class JetstreamConsumerDO {
           )
           .run();
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await markAuthorDirty(this.env as any, post.author);
+        dirtyAuthorDids.push(post.author);
         indexed++;
       } catch (err) {
         console.error("[jetstream-do] Insert failed:", post.uri.slice(-20), err);
       }
+    }
+    // One batched D1 write for all dirty authors instead of one per post
+    if (dirtyAuthorDids.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await batchMarkAuthorsDirty(this.env as any, dirtyAuthorDids).catch(() => {});
     }
 
     // ── Queue new followers for follow-back ───────────────────────────────
