@@ -257,20 +257,23 @@ export default {
         return;
       }
       // Every 3 minutes — all jobs run sequentially to stay within Bluesky rate limits
+
+      // Run drain jobs FIRST so they always execute regardless of how long heavier jobs take
+      await runScheduledUnfollow(env);  // drain unfollow queue (40/tick)
+      await runScheduledFollow(env);    // drain follow queue (10/tick)
+
       await runIndexer(env);
       await runScheduler(env);
       await runAuthorScoring(env);
       await precomputeFeedRankings(env);
 
-      // Auto-follow loop: discover 25 new accounts, follow 10, check 5 for follow-back
+      // Auto-follow loop: discover new accounts, queue follows, check follow-backs
       await runAutoFollow(env);
-      await runScheduledFollow(env);
       await runFollowBackCheck(env);
 
-      // Auto-unfollow: scan 500 following/tick + drain 10 unfollows/tick
+      // Auto-unfollow scan: 500 following/tick — queues candidates for runScheduledUnfollow above
       await runAutoUnfollow(env);
       await runAmplifier(env);
-      await runScheduledUnfollow(env);
     })());
   },
 };
