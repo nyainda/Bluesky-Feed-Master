@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 import {
   Copy, ExternalLink, CheckCircle, XCircle, AlertTriangle,
   Server, Globe, Zap, Database, Cloud, ChevronRight,
-  Link2, Eye, EyeOff, Loader2,
+  Link2, Eye, EyeOff, Loader2, BarChart2,
 } from "lucide-react";
 import WebhookNotifications from "@/components/WebhookNotifications";
 import { useState } from "react";
@@ -95,6 +95,147 @@ const ENV_DESCRIPTIONS: Record<string, string> = {
   BLUESKY_APP_PASSWORD: "App password from bsky.app/settings/app-passwords. Required for write operations.",
   DATABASE_URL: "PostgreSQL connection string. Used by the Replit dev environment.",
 };
+
+// ─── D1 Usage Estimator ────────────────────────────────────────────────────────
+const D1_LIMIT = 100_000;
+const CRON_TICKS_PER_DAY = 480;          // every 3 min
+const RANKING_RUNS_PER_DAY = 103;        // 14-min cooldown ≈ 103 runs/day
+const CANDIDATES_PER_FEED = 50;          // candidateLimit in feed-ranking.ts
+const AUTHOR_SCORING_WRITES = 20 * 2 * CRON_TICKS_PER_DAY;   // batchSize 20 × 2 writes × 480
+const QUEUE_DRAIN_WRITES = 70 * CRON_TICKS_PER_DAY;           // ~70 items/tick (follow + unfollow)
+const CRON_OVERHEAD_WRITES = 6 * CRON_TICKS_PER_DAY;          // settings stamps per tick
+
+function D1UsageEstimator() {
+  const { data: feeds, isLoading } = useQuery<{ isActive: boolean }[]>({
+    queryKey: ["feeds-for-d1"],
+    queryFn: () => customFetch("/api/feeds"),
+    staleTime: 60_000,
+  });
+
+  const activeFeeds = (feeds ?? []).filter(f => f.isActive).length;
+
+  // Per-feed: 1 DELETE + 50 INSERTs per ranking run
+  const rankingWrites = activeFeeds * (1 + CANDIDATES_PER_FEED) * RANKING_RUNS_PER_DAY;
+  const baseWrites = AUTHOR_SCORING_WRITES + QUEUE_DRAIN_WRITES + CRON_OVERHEAD_WRITES;
+  const totalWrites = rankingWrites + baseWrites;
+  const pct = Math.min(100, (totalWrites / D1_LIMIT) * 100);
+
+  const status =
+    pct >= 90 ? { color: "red", label: "Over limit", bar: "bg-red-500" } :
+    pct >= 70 ? { color: "amber", label: "Getting close", bar: "bg-amber-400" } :
+                { color: "emerald", label: "Healthy", bar: "bg-emerald-500" };
+
+  const rows = [
+    { label: "Feed ranking", writes: rankingWrites, note: `${activeFeeds} feed${activeFeeds !== 1 ? "s" : ""} × 51 writes × 103 runs/day` },
+    { label: "Author scoring", writes: AUTHOR_SCORING_WRITES, note: "20 authors × 2 writes × 480 ticks" },
+    { label: "Queue draining", writes: QUEUE_DRAIN_WRITES, note: "~70 follow/unfollow items × 480 ticks" },
+    { label: "Cron overhead", writes: CRON_OVERHEAD_WRITES, note: "Settings stamps × 480 ticks" },
+  ];
+
+  return (
+    <Section title="D1 Database Usage Estimator" icon={BarChart2} delay={0.05}>
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Calculating…
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {/* Headline gauge */}
+          <div>
+            <div className="flex items-end justify-between mb-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Estimated writes / day</span>
+              <span className={cn(
+                "text-xs font-semibold",
+                status.color === "red" ? "text-red-500" :
+                status.color === "amber" ? "text-amber-500" : "text-emerald-600"
+              )}>
+                {totalWrites.toLocaleString()} / {D1_LIMIT.toLocaleString()}
+              </span>
+            </div>
+            <div className="h-2 bg-muted rounded-full overflow-hidden">
+              <div
+                className={cn("h-full rounded-full transition-all duration-500", status.bar)}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between mt-1.5">
+              <span className={cn(
+                "text-[11px] font-medium",
+                status.color === "red" ? "text-red-500" :
+                status.color === "amber" ? "text-amber-500" : "text-emerald-600"
+              )}>
+                {status.label} — {pct.toFixed(0)}% of free tier
+              </span>
+              <span className="text-[11px] text-muted-foreground">
+                {Math.max(0, D1_LIMIT - totalWrites).toLocaleString()} headroom
+              </span>
+            </div>
+          </div>
+
+          {/* Breakdown table */}
+          <div className="rounded-lg border border-border overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-muted/50 border-b border-border">
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium">Component</th>
+                  <th className="text-right px-3 py-2 text-muted-foreground font-medium">Writes/day</th>
+                  <th className="text-right px-3 py-2 text-muted-foreground font-medium hidden sm:table-cell">Share</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {rows.map(row => (
+                  <tr key={row.label} className="hover:bg-muted/30 transition-colors">
+                    <td className="px-3 py-2.5">
+                      <div className="font-medium text-foreground">{row.label}</div>
+                      <div className="text-[10px] text-muted-foreground mt-0.5">{row.note}</div>
+                    </td>
+                    <td className="px-3 py-2.5 text-right font-mono font-semibold text-foreground tabular-nums">
+                      {row.writes.toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2.5 text-right text-muted-foreground hidden sm:table-cell">
+                      {((row.writes / D1_LIMIT) * 100).toFixed(0)}%
+                    </td>
+                  </tr>
+                ))}
+                <tr className="bg-muted/40 font-semibold">
+                  <td className="px-3 py-2.5 text-foreground text-xs font-semibold">Total</td>
+                  <td className="px-3 py-2.5 text-right font-mono text-xs font-semibold text-foreground tabular-nums">
+                    {totalWrites.toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2.5 text-right text-xs text-muted-foreground hidden sm:table-cell">
+                    {pct.toFixed(0)}%
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Tip */}
+          {pct >= 70 && (
+            <div className={cn(
+              "flex gap-2 text-xs rounded-lg p-3 border",
+              pct >= 90
+                ? "bg-red-500/6 border-red-500/20 text-red-700"
+                : "bg-amber-500/6 border-amber-500/20 text-amber-700"
+            )}>
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>
+                {pct >= 90
+                  ? `You are over the 100K free limit with ${activeFeeds} active feeds. Deactivate some feeds or reduce keyword count to bring writes back down.`
+                  : `With ${activeFeeds} active feeds you're at ${pct.toFixed(0)}% of the free limit. Each additional feed adds ~5,250 writes/day.`
+                }
+              </span>
+            </div>
+          )}
+
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            Estimates assume 480 cron ticks/day (every 3 min) and the 14-min ranking cooldown. Actual usage varies with keyword match rate and follow queue activity.
+          </p>
+        </div>
+      )}
+    </Section>
+  );
+}
 
 type DeployOption = "cf-full" | "cf-render" | "vercel" | "replit";
 
@@ -344,6 +485,9 @@ export default function Settings() {
 
       {/* Webhook Notifications */}
       <WebhookNotifications />
+
+      {/* D1 Usage Estimator */}
+      <D1UsageEstimator />
 
       {/* Environment Variables */}
       <Section title="Environment Variables" icon={Database} delay={0}>
