@@ -584,7 +584,7 @@ function nextOccurrenceOfHour(utcHour: number): string {
 function BestTimePanel({ onPickTime }: { onPickTime: (datetime: string) => void }) {
   const [open, setOpen] = useState(false);
   const { data, isLoading } = useGetBestTimeToPost({
-    query: { staleTime: 10 * 60_000 },
+    query: { queryKey: ["best-time-compose"], staleTime: 10 * 60_000 },
   });
 
   const hourly = data?.hourly ?? [];

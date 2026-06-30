@@ -216,7 +216,7 @@ app.get("/api/admin/cron-health", async (c) => {
       `SELECT key, value FROM cron_settings WHERE key IN (
         'last_cron_tick','auto_unfollow_scan_cursor','auto_unfollow_last_run',
         'auto_unfollow_scan_pages_done','jetstream_cursor','jetstream_last_indexed',
-        'jetstream_last_events','jetstream_last_run'
+        'jetstream_last_events','jetstream_last_run','jetstream_last_followers'
       )`
     ).all<{ key: string; value: string }>();
 
@@ -249,6 +249,7 @@ app.get("/api/admin/cron-health", async (c) => {
         cursorMs: jetstreamCursorMs,
         lagSeconds: jetstreamLagSeconds,
         active: (kv["jetstream_last_run"] ?? "") !== "",
+        lastFollowers: parseInt(kv["jetstream_last_followers"] ?? "0", 10) || 0,
       },
     });
   } catch (err) {

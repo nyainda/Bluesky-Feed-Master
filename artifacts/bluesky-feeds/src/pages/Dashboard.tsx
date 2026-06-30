@@ -189,6 +189,7 @@ interface CronHealth {
     lastRun: string | null;
     lastIndexed: number;
     lastEvents: number;
+    lastFollowers: number;
     cursorMs: number | null;
     lagSeconds: number | null;
     active: boolean;
@@ -419,7 +420,7 @@ export default function Dashboard() {
             <div className="grid grid-cols-2 gap-2">
               {[
                 {
-                  label: "Indexed / tick",
+                  label: "Posts / tick",
                   value: cronHealth?.jetstream?.lastIndexed != null
                     ? cronHealth.jetstream.lastIndexed.toLocaleString()
                     : "—",
@@ -431,19 +432,28 @@ export default function Dashboard() {
                     : "—",
                 },
                 {
+                  label: "New followers",
+                  value: cronHealth?.jetstream?.lastFollowers != null
+                    ? `+${cronHealth.jetstream.lastFollowers}`
+                    : "—",
+                  highlight: (cronHealth?.jetstream?.lastFollowers ?? 0) > 0,
+                },
+                {
                   label: "Cursor lag",
                   value: formatLag(cronHealth?.jetstream?.lagSeconds ?? null),
                 },
-                {
-                  label: "Last run",
-                  value: cronHealth?.jetstream?.lastRun
-                    ? formatDistanceToNow(new Date(cronHealth.jetstream.lastRun), { addSuffix: true })
-                    : "—",
-                },
-              ].map(({ label, value }) => (
-                <div key={label} className="bg-muted/60 rounded-lg px-3 py-2.5 border border-border/50">
+              ].map(({ label, value, highlight }) => (
+                <div key={label} className={cn(
+                  "rounded-lg px-3 py-2.5 border",
+                  highlight
+                    ? "bg-emerald-500/8 border-emerald-500/20"
+                    : "bg-muted/60 border-border/50"
+                )}>
                   <div className="text-[10px] text-muted-foreground mb-0.5 font-medium">{label}</div>
-                  <div className="text-xs font-semibold text-foreground tabular-nums truncate">{value}</div>
+                  <div className={cn(
+                    "text-xs font-semibold tabular-nums truncate",
+                    highlight ? "text-emerald-600" : "text-foreground"
+                  )}>{value}</div>
                 </div>
               ))}
             </div>
