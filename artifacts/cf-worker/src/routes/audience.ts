@@ -141,20 +141,17 @@ route.post("/bluesky/bulk-follow", async (c) => {
     return c.json({ error: "dids must be a non-empty array" }, 400);
   }
 
-  const agent = await getAuthenticatedAgent(c.env);
-  let succeeded = 0;
-  let failed = 0;
+  // Queue into the drain system (handles any size, 40/tick = ~4,800/day)
+  const { enqueueFollowItems, ensureFollowQueueTable, runScheduledFollow } = await import("../lib/scheduled-follow");
+  await ensureFollowQueueTable(c.env);
+  const items = dids.map((did) => ({ did: String(did), handle: "", followersCount: 0, market: "bulk" }));
+  const { enqueued, skipped } = await enqueueFollowItems(c.env, items);
 
-  for (const did of dids) {
-    try {
-      await agent.follow(String(did));
-      succeeded++;
-    } catch {
-      failed++;
-    }
-  }
+  // Kick off an immediate partial drain so the first 40 follow right away
+  c.executionCtx.waitUntil(runScheduledFollow(c.env));
 
-  return c.json({ succeeded, failed });
+  return c.json({ succeeded: enqueued, failed: 0, enqueued, skipped,
+    message: `${enqueued} queued for follow (${skipped} already tracked). First batch draining now.` });
 });
 
 route.post("/bluesky/bulk-unfollow", async (c) => {
@@ -167,45 +164,33 @@ route.post("/bluesky/bulk-unfollow", async (c) => {
   }
   const { dids, followUris } = body as Record<string, unknown>;
 
-  const CONCURRENCY = 20;
-  const MAX_PER_REQUEST = 500;
-
-  const agent = await getAuthenticatedAgent(c.env);
-  let succeeded = 0;
-  let failed = 0;
-
-  // ── Fast path: followUris provided directly — skip profile lookup entirely ──
-  if (Array.isArray(followUris) && followUris.length > 0) {
-    const uris = followUris.slice(0, MAX_PER_REQUEST).map(String);
-    for (let i = 0; i < uris.length; i += CONCURRENCY) {
-      const batch = uris.slice(i, i + CONCURRENCY);
-      const results = await Promise.allSettled(batch.map((uri) => agent.deleteFollow(uri)));
-      for (const r of results) {
-        if (r.status === "fulfilled") succeeded++;
-        else failed++;
-      }
-    }
-    return c.json({ succeeded, failed });
-  }
-
-  // ── Slow path: only DIDs provided — look up follow URIs in parallel (capped at 50) ──
-  if (!Array.isArray(dids) || dids.length === 0) {
+  if ((!Array.isArray(dids) || dids.length === 0) && (!Array.isArray(followUris) || followUris.length === 0)) {
     return c.json({ error: "dids or followUris must be a non-empty array" }, 400);
   }
-  const didList = dids.slice(0, 50).map(String);
-  const lookupResults = await Promise.allSettled(
-    didList.map(async (did) => {
-      const profile = await agent.getProfile({ actor: did });
-      const followUri = profile.data.viewer?.following;
-      if (followUri) await agent.deleteFollow(followUri);
-      return !!followUri;
-    }),
-  );
-  for (const r of lookupResults) {
-    if (r.status === "fulfilled") succeeded++;
-    else failed++;
+
+  // Queue into the drain system (handles any size, 100/tick = ~2,000/hour)
+  const { enqueueScheduledUnfollowItems, ensureScheduledUnfollowTable, runScheduledUnfollow } = await import("../lib/scheduled-unfollow");
+  await ensureScheduledUnfollowTable(c.env);
+
+  // Build items — prefer followUris for fast-path (no profile lookup needed during drain)
+  const unfollowItems: Array<{ did: string; followUri?: string | null }> = [];
+  if (Array.isArray(followUris) && followUris.length > 0) {
+    // followUris provided: pair them with dids if available
+    const didArr = Array.isArray(dids) ? dids.map(String) : [];
+    followUris.forEach((uri, i) => {
+      unfollowItems.push({ did: didArr[i] ?? `bulk-${i}`, followUri: String(uri) });
+    });
+  } else if (Array.isArray(dids)) {
+    dids.forEach((did) => unfollowItems.push({ did: String(did), followUri: null }));
   }
-  return c.json({ succeeded, failed });
+
+  const { enqueued, skipped } = await enqueueScheduledUnfollowItems(c.env, unfollowItems);
+
+  // Kick off an immediate partial drain so the first 100 unfollow right away
+  c.executionCtx.waitUntil(runScheduledUnfollow(c.env));
+
+  return c.json({ succeeded: enqueued, failed: 0, enqueued, skipped,
+    message: `${enqueued} queued for unfollow (${skipped} already tracked). First batch draining now.` });
 });
 
 route.post("/bluesky/sync-engagement", async (c) => {

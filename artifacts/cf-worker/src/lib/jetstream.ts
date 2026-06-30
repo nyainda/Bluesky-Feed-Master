@@ -124,7 +124,14 @@ export async function runJetstreamIndexer(
   }
 
   console.log(`[jetstream] Collected ${events.length} events (cursor=${cursor ? "stored" : "latest"})`);
-  if (events.length === 0) return { indexed: 0, matched: 0, events: 0, newFollowers: 0 };
+
+  // Always save lastRun even on 0 events so dashboard shows "Active" instead of "Waiting"
+  if (events.length === 0) {
+    await env.DB.prepare(
+      "INSERT INTO cron_settings (key, value) VALUES ('jetstream_last_run', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')"
+    ).bind(new Date().toISOString()).run().catch(() => {});
+    return { indexed: 0, matched: 0, events: 0, newFollowers: 0 };
+  }
 
   // ── Phase 4a: Filter post events against keyword index ────────────────────────
   type MatchedPost = {

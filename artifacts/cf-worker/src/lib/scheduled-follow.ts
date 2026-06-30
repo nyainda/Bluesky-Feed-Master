@@ -2,10 +2,10 @@ import type { Env } from "../index";
 
 const TABLE = "auto_follow_queue";
 
-// 10 follows per 3-min cron = ~4,800/day — just under Bluesky's 5,000/day limit.
-// 500ms delay between each follow = safe burst rate.
-const BATCH_PER_CRON = 10;
-const DELAY_MS = 500;
+// 40 follows per 3-min cron = ~19,200/day attempts, capped by Bluesky at 5,000/day.
+// 200ms delay between follows = 40 × 200ms = 8s overhead per tick, well within 3min.
+const BATCH_PER_CRON = 40;
+const DELAY_MS = 200;
 
 // Follow-back check: verify 5 accounts per tick that haven't followed back after N days.
 // 5 × 480 ticks/day = 2,400 checks/day — more than enough to track follow→followback loop.
