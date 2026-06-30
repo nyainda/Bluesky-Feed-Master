@@ -490,6 +490,29 @@ route.get("/bluesky/auto-follow/stats", async (c) => {
   }
 });
 
+// ─── Follow Queue Status ──────────────────────────────────────────────────────
+route.get("/auto-follow/queue-status", async (c) => {
+  try {
+    const { getFollowQueueStatus } = await import("../lib/scheduled-follow");
+    const status = await getFollowQueueStatus(c.env);
+    return c.json({ ok: true, ...status });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ ok: false, error: message, pending: 0, done: 0, failed: 0, total: 0, estimatedMinutesLeft: 0 }, 500);
+  }
+});
+
+route.post("/auto-follow/queue-clear", async (c) => {
+  try {
+    const { clearFollowQueue } = await import("../lib/scheduled-follow");
+    await clearFollowQueue(c.env);
+    return c.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ ok: false, error: message }, 500);
+  }
+});
+
 route.get("/bluesky/search-actors", async (c) => {
   const q = (c.req.query("q") ?? "").trim();
   if (!q) return c.json({ users: [], cursor: null });

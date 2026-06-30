@@ -1833,12 +1833,36 @@ function AutoFollowTab() {
 
 // ─── Discover Tab ────────────────────────────────────────────────────────────
 
+type FollowQueueStatus = {
+  ok?: boolean;
+  pending: number;
+  done: number;
+  failed: number;
+  total: number;
+  estimatedMinutesLeft: number;
+};
+
 function DiscoverTab() {
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [cursor, setCursor] = useState<string | undefined>();
   const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const { toast } = useToast();
+  const bulkFollow = useBulkFollow();
+
+  // Live follow-queue progress — polls faster when items are pending
+  const [queueActive, setQueueActive] = useState(false);
+  const { data: queueStatus, refetch: refetchQueue } = useQuery<FollowQueueStatus>({
+    queryKey: ["follow-queue-status"],
+    queryFn: () => customFetch<FollowQueueStatus>("/api/auto-follow/queue-status"),
+    refetchInterval: queueActive ? 10_000 : 30_000,
+    staleTime: 5_000,
+  });
+
+  useEffect(() => {
+    setQueueActive((queueStatus?.pending ?? 0) > 0);
+  }, [queueStatus?.pending]);
 
   const { data, isLoading } = useQuery({
     queryKey: ["discover-actors", submitted, cursor],
@@ -1854,6 +1878,8 @@ function DiscoverTab() {
     staleTime: 60_000,
   });
 
+  const users = data?.users ?? [];
+
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
     const q = query.trim();
@@ -1861,54 +1887,192 @@ function DiscoverTab() {
     setSubmitted(q);
     setCursor(undefined);
     setCursorStack([]);
+    setSelected(new Set());
   }
 
-  async function handleFollow(did: string) {
-    await customFetch("/api/bluesky/follow", { method: "POST", body: JSON.stringify({ did }) });
+  function toggleSelect(did: string) {
+    setSelected(prev => {
+      const n = new Set(prev);
+      n.has(did) ? n.delete(did) : n.add(did);
+      return n;
+    });
   }
 
-  const users = data?.users ?? [];
+  function selectAll() { setSelected(new Set(users.map(u => u.did))); }
+  function clearSelection() { setSelected(new Set()); }
+
+  function handleBulkFollow() {
+    if (selected.size === 0 || bulkFollow.isPending) return;
+    const dids = Array.from(selected);
+    bulkFollow.mutate({ data: { dids } }, {
+      onSuccess: (r: { succeeded: number; enqueued?: number; skipped?: number }) => {
+        const n = r.enqueued ?? r.succeeded;
+        const skipped = r.skipped ?? 0;
+        toast({
+          title: `${n} follow${n !== 1 ? "s" : ""} queued`,
+          description: skipped > 0
+            ? `${skipped} already tracked. CF Worker drains ~40 per 3-min tick.`
+            : "CF Worker drains ~40 follows per 3-minute cron tick.",
+        });
+        clearSelection();
+        setTimeout(() => refetchQueue(), 2_000);
+        setTimeout(() => refetchQueue(), 8_000);
+      },
+      onError: () => toast({ title: "Failed to queue follows", variant: "destructive" }),
+    });
+  }
+
+  const qTotal = queueStatus?.total ?? 0;
+  const qDone = queueStatus?.done ?? 0;
+  const qPending = queueStatus?.pending ?? 0;
+  const qFailed = queueStatus?.failed ?? 0;
+  const qPct = qTotal > 0 ? Math.round((qDone / qTotal) * 100) : 0;
+  const allSelected = users.length > 0 && selected.size === users.length;
 
   return (
-    <div className="mt-4">
-      <form onSubmit={handleSearch} className="flex gap-2 mb-5">
+    <div className="mt-4 space-y-3">
+      {/* Search bar */}
+      <form onSubmit={handleSearch} className="flex gap-2">
         <div className="relative flex-1">
           <Globe className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <input
             value={query}
             onChange={e => setQuery(e.target.value)}
-            placeholder="Search Bluesky (e.g. indie hacker, founder, web3…)"
-            className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-border bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
+            placeholder="Search Bluesky — e.g. indie hacker, founder, web3, AI researcher…"
+            className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-border bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
-        <Button type="submit" disabled={isLoading || !query.trim()} className="gap-1.5">
+        <Button type="submit" disabled={isLoading || !query.trim()} className="gap-1.5 flex-shrink-0">
           {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
           Search
         </Button>
       </form>
 
-      {!submitted && (
-        <div className="flex flex-col items-center justify-center h-48 gap-3 text-center">
-          <Globe className="w-12 h-12 text-muted-foreground/20" />
-          <p className="text-sm text-muted-foreground">Search all of Bluesky for accounts to follow.</p>
-          <p className="text-xs text-muted-foreground/60">Try "indie hacker", "AI researcher", "open source", "startup founder"…</p>
+      {/* Follow queue progress card — shown whenever there are items */}
+      {qTotal > 0 && (
+        <div className="bg-card border border-card-border rounded-xl px-4 py-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              {qPending > 0 ? (
+                <Loader2 className="w-3.5 h-3.5 text-primary animate-spin flex-shrink-0" />
+              ) : (
+                <CheckCircle className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+              )}
+              <span className="text-xs font-semibold text-foreground truncate">
+                {qPending > 0
+                  ? `${qPending.toLocaleString()} follow${qPending !== 1 ? "s" : ""} queued`
+                  : "All follows complete"}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 flex-shrink-0">
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {qDone.toLocaleString()} / {qTotal.toLocaleString()}
+                {qFailed > 0 && <span className="text-destructive ml-1">({qFailed} failed)</span>}
+                {qPending > 0 && (queueStatus?.estimatedMinutesLeft ?? 0) > 0
+                  ? ` · ~${queueStatus!.estimatedMinutesLeft}m left`
+                  : ""}
+              </span>
+              {qPending === 0 && (
+                <button
+                  onClick={() => customFetch("/api/auto-follow/queue-clear", { method: "POST" }).then(() => refetchQueue())}
+                  className="text-[10px] text-muted-foreground hover:text-destructive transition-colors"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+            <motion.div
+              className={cn("h-full rounded-full", qPending > 0 ? "bg-primary" : "bg-emerald-500")}
+              initial={false}
+              animate={{ width: `${qPct}%` }}
+              transition={{ duration: 0.6, ease: "easeOut" }}
+            />
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Drains at ~40 follows per 3-min cron tick · ≈4,800/day max · follow-back check after 7 days
+          </p>
         </div>
       )}
 
+      {/* Bulk action bar — appears when items are selected */}
+      <AnimatePresence>
+        {selected.size > 0 && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="flex items-center gap-3 px-3 py-2.5 bg-primary/5 border border-primary/20 rounded-xl">
+              <UserPlus className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+              <span className="text-xs font-semibold text-primary flex-1">
+                {selected.size} account{selected.size !== 1 ? "s" : ""} selected
+              </span>
+              <Button
+                size="sm"
+                className="h-7 text-xs gap-1 flex-shrink-0"
+                onClick={handleBulkFollow}
+                disabled={bulkFollow.isPending}
+              >
+                {bulkFollow.isPending
+                  ? <><Loader2 className="w-3 h-3 animate-spin" /> Queueing…</>
+                  : <><Zap className="w-3 h-3" /> Queue {selected.size} Follows</>
+                }
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 text-xs px-2" onClick={clearSelection}>
+                <X className="w-3 h-3" />
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Empty state */}
+      {!submitted && (
+        <div className="flex flex-col items-center justify-center h-52 gap-3 text-center px-6">
+          <div className="w-14 h-14 rounded-2xl bg-muted border border-border flex items-center justify-center">
+            <Globe className="w-6 h-6 text-muted-foreground/40" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-foreground">Mass-follow by topic</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Search, select any number of accounts, and queue them all at once.
+            </p>
+          </div>
+          <div className="flex flex-wrap justify-center gap-1.5">
+            {["indie hacker", "AI researcher", "open source", "startup founder", "web developer"].map(hint => (
+              <button
+                key={hint}
+                onClick={() => { setQuery(hint); setSubmitted(hint); setCursor(undefined); setCursorStack([]); setSelected(new Set()); }}
+                className="text-[11px] px-2.5 py-1 rounded-full border border-border bg-muted/40 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+              >
+                {hint}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Loading skeleton */}
       {submitted && isLoading && (
-        <div className="space-y-1">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3 px-4 py-3 border-b border-border/40">
+        <div className="bg-card border border-card-border rounded-xl overflow-hidden">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 px-4 py-3 border-b border-border/40 last:border-0">
+              <div className="w-4 h-4 rounded bg-muted animate-pulse flex-shrink-0" />
               <div className="w-9 h-9 rounded-full bg-muted animate-pulse flex-shrink-0" />
               <div className="flex-1 space-y-1.5">
-                <div className="h-3 w-32 bg-muted rounded animate-pulse" />
-                <div className="h-2.5 w-48 bg-muted/60 rounded animate-pulse" />
+                <div className="h-3 w-28 bg-muted rounded animate-pulse" />
+                <div className="h-2.5 w-44 bg-muted/60 rounded animate-pulse" />
               </div>
+              <div className="w-16 h-6 bg-muted rounded-lg animate-pulse flex-shrink-0" />
             </div>
           ))}
         </div>
       )}
 
+      {/* No results */}
       {submitted && !isLoading && users.length === 0 && (
         <div className="flex flex-col items-center justify-center h-36 gap-2 text-center">
           <Search className="w-8 h-8 text-muted-foreground/20" />
@@ -1916,43 +2080,64 @@ function DiscoverTab() {
         </div>
       )}
 
+      {/* Results */}
       {users.length > 0 && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+          {/* Header row: result count + select-all */}
+          <div className="flex items-center justify-between px-1 mb-2">
+            <span className="text-xs text-muted-foreground">
+              {users.length} result{users.length !== 1 ? "s" : ""} for "<span className="text-foreground">{submitted}</span>"
+            </span>
+            <button
+              onClick={allSelected ? clearSelection : selectAll}
+              className="text-xs text-primary hover:underline flex items-center gap-1 transition-colors"
+            >
+              {allSelected
+                ? <><Square className="w-3 h-3" /> Deselect all</>
+                : <><CheckSquare className="w-3 h-3" /> Select all {users.length}</>
+              }
+            </button>
+          </div>
+
           <div className="bg-card border border-card-border rounded-xl overflow-hidden mb-3">
             {users.map((user, i) => (
-              <motion.div key={user.did} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
+              <motion.div
+                key={user.did}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: i * 0.02 }}
+              >
                 <UserCard
                   user={user as AudienceUser & { postCount?: number }}
-                  onQuickFollow={handleFollow}
+                  selected={selected.has(user.did)}
+                  onToggle={() => toggleSelect(user.did)}
+                  onQuickFollow={async (did) => {
+                    await customFetch("/api/bluesky/follow", { method: "POST", body: JSON.stringify({ did }) });
+                  }}
                 />
               </motion.div>
             ))}
           </div>
+
+          {/* Pagination */}
           <div className="flex items-center justify-between px-1">
             <Button
-              variant="outline"
-              size="sm"
+              variant="outline" size="sm"
               onClick={() => {
-                const s = [...cursorStack];
-                const prev = s.pop();
-                setCursorStack(s);
-                setCursor(prev === "" ? undefined : prev);
+                const s = [...cursorStack]; const prev = s.pop();
+                setCursorStack(s); setCursor(prev === "" ? undefined : prev); setSelected(new Set());
               }}
               disabled={cursorStack.length === 0}
               className="gap-1"
             >
               <ChevronLeft className="w-3.5 h-3.5" /> Prev
             </Button>
-            <span className="text-xs text-muted-foreground">
-              {users.length} result{users.length !== 1 ? "s" : ""}
-            </span>
+            <span className="text-xs text-muted-foreground">Page {cursorStack.length + 1}</span>
             <Button
-              variant="outline"
-              size="sm"
+              variant="outline" size="sm"
               onClick={() => {
                 if (data?.cursor) {
-                  setCursorStack(s => [...s, cursor ?? ""]);
-                  setCursor(data.cursor!);
+                  setCursorStack(s => [...s, cursor ?? ""]); setCursor(data.cursor!); setSelected(new Set());
                 }
               }}
               disabled={!data?.cursor}
