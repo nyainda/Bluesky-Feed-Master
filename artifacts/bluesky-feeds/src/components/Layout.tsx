@@ -2,13 +2,15 @@ import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard, Rss, FileText, Settings, Wifi, WifiOff,
-  BarChart3, Users2, Menu, X, ChevronRight, PenLine, Bell, Globe,
+  BarChart3, Users2, Menu, ChevronRight, PenLine, Bell, Globe,
+  Sun, Moon, Monitor,
 } from "lucide-react";
 import { useGetFirehoseStatus, useGetStatsOverview, useGetBlueskyProfile, customFetch } from "@workspace/api-client-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { useTheme } from "next-themes";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -33,6 +35,50 @@ function useUnreadCount() {
   return data?.count ?? 0;
 }
 
+function ThemeToggle({ compact = false }: { compact?: boolean }) {
+  const { theme, setTheme } = useTheme();
+
+  const options = [
+    { value: "light", icon: Sun, label: "Light" },
+    { value: "system", icon: Monitor, label: "System" },
+    { value: "dark", icon: Moon, label: "Dark" },
+  ] as const;
+
+  if (compact) {
+    const next = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
+    const CurrentIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
+    return (
+      <button
+        onClick={() => setTheme(next)}
+        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+        title={`Theme: ${theme}`}
+      >
+        <CurrentIcon className="w-4 h-4" />
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-0.5 p-1 bg-sidebar-accent/60 rounded-lg border border-sidebar-border/50">
+      {options.map(({ value, icon: Icon, label }) => (
+        <button
+          key={value}
+          onClick={() => setTheme(value)}
+          title={label}
+          className={cn(
+            "flex items-center justify-center w-7 h-6 rounded-md transition-all duration-150",
+            theme === value
+              ? "bg-sidebar-primary/90 text-white shadow-sm"
+              : "text-sidebar-foreground/40 hover:text-sidebar-foreground/70",
+          )}
+        >
+          <Icon className="w-3 h-3" />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function FirehoseIndicator() {
   const { data: firehose } = useGetFirehoseStatus({
     query: { refetchInterval: 5000, queryKey: ["firehose-status-layout"] },
@@ -42,7 +88,8 @@ function FirehoseIndicator() {
   });
 
   return (
-    <div className="px-3 py-3 border-t border-sidebar-border">
+    <div className="px-3 pb-3 space-y-2">
+      <ThemeToggle />
       <div className="rounded-lg bg-sidebar-accent px-3 py-2.5 space-y-2">
         <div className="flex items-center gap-2">
           <div className="relative flex-shrink-0">
@@ -193,7 +240,9 @@ function NavContent({ onNavClick }: { onNavClick?: () => void }) {
         })}
       </nav>
 
-      <FirehoseIndicator />
+      <div className="border-t border-sidebar-border pt-2">
+        <FirehoseIndicator />
+      </div>
     </>
   );
 }
@@ -203,7 +252,7 @@ function BottomNav() {
   const unread = useUnreadCount();
   const mainItems = navItems.slice(0, 5);
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-border md:hidden safe-area-pb">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-background/95 backdrop-blur-md border-t border-border md:hidden safe-area-pb">
       <div className="flex items-stretch h-14">
         {mainItems.map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? location === "/" : location.startsWith(href);
@@ -223,7 +272,7 @@ function BottomNav() {
                   )}
                 </div>
                 <span className="text-[10px] font-medium">{label}</span>
-                {active && <div className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary" />}
+                {active && <div className="absolute bottom-1 left-1/2 -translate-x-1/2 w-4 h-0.5 rounded-full bg-primary" />}
               </div>
             </Link>
           );
@@ -245,7 +294,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Mobile Top Bar */}
-      <div className="flex md:hidden fixed top-0 left-0 right-0 z-50 h-14 bg-background/95 backdrop-blur-sm border-b border-border items-center px-4 gap-3">
+      <div className="flex md:hidden fixed top-0 left-0 right-0 z-50 h-14 bg-background/90 backdrop-blur-lg border-b border-border items-center px-4 gap-3">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>
             <button className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
@@ -256,12 +305,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <NavContent onNavClick={() => setMobileOpen(false)} />
           </SheetContent>
         </Sheet>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1">
           <div className="w-6 h-6 rounded-md bg-primary flex items-center justify-center">
             <Rss className="w-3 h-3 text-white" />
           </div>
           <span className="text-sm font-bold text-foreground">FeedForge</span>
         </div>
+        <ThemeToggle compact />
       </div>
 
       {/* Main Content */}
