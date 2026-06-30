@@ -157,22 +157,44 @@ route.get("/feeds/:id/posts", async (c) => {
 
   const mode = c.req.query("mode") || "recent";
 
-  let posts = mode === "ranked"
-    ? await db
-        .select({ post: indexedPostsTable, rank: feedRankedPostsTable.rank, finalScore: feedRankedPostsTable.finalScore, qualityScore: feedRankedPostsTable.qualityScore })
-        .from(feedRankedPostsTable)
-        .innerJoin(indexedPostsTable, eq(feedRankedPostsTable.postUri, indexedPostsTable.uri))
-        .where(eq(feedRankedPostsTable.feedId, feed.id))
-        .orderBy(feedRankedPostsTable.rank)
-        .limit(limit)
-    : await db
+  let posts: unknown[];
+  let actualMode = mode;
+
+  if (mode === "ranked") {
+    const rankedRows = await db
+      .select({
+        post: indexedPostsTable,
+        rank: feedRankedPostsTable.rank,
+        finalScore: feedRankedPostsTable.finalScore,
+        qualityScore: feedRankedPostsTable.qualityScore,
+        computedAt: feedRankedPostsTable.computedAt,
+      })
+      .from(feedRankedPostsTable)
+      .innerJoin(indexedPostsTable, eq(feedRankedPostsTable.postUri, indexedPostsTable.uri))
+      .where(eq(feedRankedPostsTable.feedId, feed.id))
+      .orderBy(feedRankedPostsTable.rank)
+      .limit(limit);
+
+    if (rankedRows.length > 0) {
+      // Flatten: spread the indexed post fields then overlay rank/score fields
+      posts = rankedRows.map(r => ({
+        ...r.post,
+        rank: r.rank,
+        finalScore: r.finalScore,
+        qualityScore: r.qualityScore,
+        computedAt: r.computedAt,
+      }));
+    } else {
+      // Fallback to recency when ranking table is empty (first run)
+      posts = await db
         .select()
         .from(indexedPostsTable)
         .where(and(...conditions))
         .orderBy(desc(indexedPostsTable.indexedAt))
         .limit(limit);
-
-  if (mode === "ranked" && posts.length === 0) {
+      actualMode = "recent";
+    }
+  } else {
     posts = await db
       .select()
       .from(indexedPostsTable)
@@ -192,7 +214,7 @@ route.get("/feeds/:id/posts", async (c) => {
     nextCursor = `${last.indexedAt}::${last.cid}`;
   }
 
-  return c.json({ posts, cursor: nextCursor, total, mode });
+  return c.json({ posts, cursor: nextCursor, total, mode: actualMode });
 });
 
 route.post("/feeds/:id/publish", async (c) => {

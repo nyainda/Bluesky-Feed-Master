@@ -937,7 +937,16 @@ function AutoUnfollowCard() {
               <div className="flex-1 min-w-0">
                 <p className="text-[11px] font-semibold">Scan in progress</p>
                 <p className="text-[10px] text-blue-600/70">
-                  {(cronHealth?.scanPagesDone ?? settings?.scanPagesDone ?? 0) * 100} following checked so far · 500 more per cron tick
+                  {(() => {
+                    const pagesDone = cronHealth?.scanPagesDone ?? settings?.scanPagesDone ?? 0;
+                    const checked = pagesDone * 100;
+                    const ticksLeft = Math.ceil(Math.max(0, (qPending - checked) / 500));
+                    const etaMins = ticksLeft * 3;
+                    const etaStr = etaMins > 60
+                      ? `~${Math.round(etaMins / 60)}h remaining`
+                      : etaMins > 0 ? `~${etaMins}m remaining` : "almost done";
+                    return `${checked.toLocaleString()} following checked so far · 500 per tick · ${etaStr}`;
+                  })()}
                 </p>
               </div>
             </div>
