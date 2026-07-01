@@ -1,21 +1,154 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useListPosts, getListPostsQueryKey } from "@workspace/api-client-react";
 import type { ListPostsParams } from "@workspace/api-client-react";
-import { motion } from "framer-motion";
-import { Search, ExternalLink, ChevronLeft, ChevronRight } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Search, ExternalLink, ChevronLeft, ChevronRight,
+  Heart, Repeat2, MessageCircle, User,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatDistanceToNow } from "date-fns";
 import { useDebounce } from "@/hooks/use-debounce";
+import { cn } from "@/lib/utils";
 
-function shortenDid(did: string) {
-  if (did.length <= 22) return did;
-  return did.substring(0, 16) + "..." + did.substring(did.length - 6);
+type BskyProfile = {
+  handle: string;
+  displayName?: string;
+  avatar?: string;
+};
+
+const profileCache = new Map<string, BskyProfile>();
+
+async function batchResolveProfiles(dids: string[]): Promise<Map<string, BskyProfile>> {
+  const unresolved = dids.filter(d => !profileCache.has(d));
+  if (unresolved.length > 0) {
+    for (let i = 0; i < unresolved.length; i += 25) {
+      const chunk = unresolved.slice(i, i + 25);
+      const qs = chunk.map(d => `actors[]=${encodeURIComponent(d)}`).join("&");
+      try {
+        const res = await fetch(`https://public.api.bsky.app/xrpc/app.bsky.actor.getProfiles?${qs}`);
+        if (res.ok) {
+          const data = await res.json() as { profiles: Array<{ did: string; handle: string; displayName?: string; avatar?: string }> };
+          for (const p of data.profiles ?? []) {
+            profileCache.set(p.did, { handle: p.handle, displayName: p.displayName, avatar: p.avatar });
+          }
+        }
+      } catch { /* ignore */ }
+    }
+  }
+  const result = new Map<string, BskyProfile>();
+  for (const did of dids) {
+    const cached = profileCache.get(did);
+    if (cached) result.set(did, cached);
+  }
+  return result;
 }
 
-function truncate(text: string, max = 120) {
-  return text.length > max ? text.substring(0, max) + "…" : text;
+function AvatarCircle({ profile, did }: { profile?: BskyProfile; did: string }) {
+  const initials = profile?.displayName?.[0] ?? profile?.handle?.[0] ?? "?";
+  if (profile?.avatar) {
+    return (
+      <img
+        src={profile.avatar}
+        alt={profile.handle}
+        className="w-9 h-9 rounded-full flex-shrink-0 object-cover ring-1 ring-border"
+      />
+    );
+  }
+  return (
+    <div className="w-9 h-9 rounded-full flex-shrink-0 bg-primary/10 border border-primary/20 flex items-center justify-center">
+      <span className="text-xs font-bold text-primary uppercase">{initials}</span>
+    </div>
+  );
+}
+
+function PostCard({
+  post, profile, index,
+}: {
+  post: {
+    id: number; uri: string; author: string; text: string;
+    algoTags: string; indexedAt: string;
+    likes: number; reposts: number; replies: number;
+  };
+  profile?: BskyProfile;
+  index: number;
+}) {
+  const postId = post.uri.split("/").pop() ?? "";
+  const bskyUrl = `https://bsky.app/profile/${profile?.handle ?? post.author}/post/${postId}`;
+  const handle = profile?.handle ?? post.author.slice(0, 16) + "…";
+  const displayName = profile?.displayName;
+  const tags = post.algoTags ? post.algoTags.split(",").filter(Boolean) : [];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ delay: index * 0.015 }}
+      className="px-4 py-4 border-b border-border/60 last:border-0 hover:bg-muted/20 transition-colors group"
+    >
+      <div className="flex gap-3">
+        <a href={`https://bsky.app/profile/${profile?.handle ?? post.author}`} target="_blank" rel="noreferrer" className="flex-shrink-0 mt-0.5">
+          <AvatarCircle profile={profile} did={post.author} />
+        </a>
+        <div className="flex-1 min-w-0">
+          {/* Author line */}
+          <div className="flex items-baseline gap-1.5 flex-wrap mb-1">
+            {displayName && (
+              <span className="text-sm font-semibold text-foreground leading-tight">{displayName}</span>
+            )}
+            <span className={cn("text-xs text-muted-foreground", !displayName && "font-medium text-foreground")}>
+              @{handle}
+            </span>
+            <span className="text-muted-foreground/30 text-xs">·</span>
+            <span className="text-xs text-muted-foreground/60 ml-auto flex-shrink-0">
+              {formatDistanceToNow(new Date(post.indexedAt), { addSuffix: true })}
+            </span>
+          </div>
+
+          {/* Post text */}
+          <p className="text-sm text-foreground leading-relaxed whitespace-pre-line line-clamp-4 mb-2">{post.text}</p>
+
+          {/* Footer: tags + engagement + link */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {tags.map(tag => (
+                <Badge key={tag} variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-normal">
+                  {tag}
+                </Badge>
+              ))}
+            </div>
+            <div className="flex items-center gap-3 ml-auto flex-shrink-0">
+              {post.likes > 0 && (
+                <span className="flex items-center gap-1 text-xs text-muted-foreground/60">
+                  <Heart className="w-3 h-3" />{post.likes.toLocaleString()}
+                </span>
+              )}
+              {post.reposts > 0 && (
+                <span className="flex items-center gap-1 text-xs text-muted-foreground/60">
+                  <Repeat2 className="w-3 h-3" />{post.reposts.toLocaleString()}
+                </span>
+              )}
+              {post.replies > 0 && (
+                <span className="flex items-center gap-1 text-xs text-muted-foreground/60">
+                  <MessageCircle className="w-3 h-3" />{post.replies.toLocaleString()}
+                </span>
+              )}
+              <a
+                href={bskyUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-muted-foreground/40 hover:text-primary transition-colors opacity-0 group-hover:opacity-100"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
 }
 
 export default function Posts() {
@@ -23,6 +156,8 @@ export default function Posts() {
   const debouncedSearch = useDebounce(search, 400);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [profiles, setProfiles] = useState<Map<string, BskyProfile>>(new Map());
+  const resolving = useRef(false);
 
   const params: ListPostsParams = {
     limit: 50,
@@ -34,9 +169,24 @@ export default function Posts() {
     query: { queryKey: getListPostsQueryKey(params) },
   });
 
+  useEffect(() => {
+    if (!postsPage?.posts || resolving.current) return;
+    const dids = [...new Set(postsPage.posts.map(p => p.author))];
+    const unresolved = dids.filter(d => !profileCache.has(d));
+    if (unresolved.length === 0) {
+      setProfiles(new Map(dids.map(d => [d, profileCache.get(d)!]).filter(([, v]) => v)));
+      return;
+    }
+    resolving.current = true;
+    batchResolveProfiles(dids).then(resolved => {
+      setProfiles(new Map([...resolved]));
+      resolving.current = false;
+    });
+  }, [postsPage?.posts]);
+
   function nextPage() {
     if (postsPage?.cursor) {
-      setCursorStack((s) => [...s, cursor ?? ""]);
+      setCursorStack(s => [...s, cursor ?? ""]);
       setCursor(postsPage.cursor);
     }
   }
@@ -55,95 +205,73 @@ export default function Posts() {
   }
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
-      <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">All Posts</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            {(postsPage?.total ?? 0).toLocaleString()} posts indexed across all feeds
-          </p>
-        </div>
+    <div className="p-5 md:p-8 max-w-4xl mx-auto">
+      <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
+        <h1 className="text-2xl font-bold text-foreground">Indexed Posts</h1>
+        <p className="text-muted-foreground text-sm mt-0.5">
+          {(postsPage?.total ?? 0).toLocaleString()} posts across all feeds
+        </p>
       </motion.div>
 
-      <div className="relative mb-6">
+      <div className="relative mb-5">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
           type="search"
-          placeholder="Search post content..."
+          placeholder="Search post content…"
           value={search}
-          onChange={(e) => handleSearch(e.target.value)}
+          onChange={e => handleSearch(e.target.value)}
           className="pl-9"
-          data-testid="input-search"
         />
       </div>
 
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="bg-card border border-card-border rounded-xl shadow-sm overflow-hidden"
-      >
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-card border border-card-border rounded-xl shadow-sm overflow-hidden">
         {isLoading ? (
-          <div className="p-4 space-y-3">
+          <div className="divide-y divide-border/60">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="h-16 bg-muted rounded-lg animate-pulse" />
+              <div key={i} className="px-4 py-4 flex gap-3">
+                <div className="w-9 h-9 rounded-full bg-muted animate-pulse flex-shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-3 w-36 bg-muted rounded animate-pulse" />
+                  <div className="h-3 w-full bg-muted/60 rounded animate-pulse" />
+                  <div className="h-3 w-3/4 bg-muted/40 rounded animate-pulse" />
+                </div>
+              </div>
             ))}
           </div>
         ) : !postsPage || postsPage.posts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-64 text-center gap-2 px-4">
-            <Search className="w-10 h-10 text-muted-foreground/30" />
-            <p className="font-medium text-foreground">No posts found</p>
-            <p className="text-sm text-muted-foreground">
-              {search ? `No posts match "${search}"` : "No posts have been indexed yet. Make sure your feeds have keywords and the firehose is connected."}
-            </p>
+          <div className="flex flex-col items-center justify-center h-64 text-center gap-3 px-4">
+            <div className="w-14 h-14 rounded-2xl bg-muted border border-border flex items-center justify-center">
+              <User className="w-6 h-6 text-muted-foreground/30" />
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">No posts found</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                {search
+                  ? `No posts match "${search}"`
+                  : "No posts indexed yet — make sure your feeds have keywords and the firehose is running."}
+              </p>
+            </div>
           </div>
         ) : (
           <>
-            <div className="divide-y divide-border">
+            <div>
               {postsPage.posts.map((post, i) => (
-                <motion.div
+                <PostCard
                   key={post.id}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.02 }}
-                  data-testid={`post-row-${post.id}`}
-                  className="px-5 py-4 hover:bg-muted/30 transition-colors"
-                >
-                  <div className="flex items-start gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                        <span className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                          {shortenDid(post.author)}
-                        </span>
-                        {post.algoTags && post.algoTags.split(",").map((tag) => (
-                          <Badge key={tag} variant="outline" className="text-xs px-1.5 py-0 h-5">{tag}</Badge>
-                        ))}
-                        <span className="text-xs text-muted-foreground/50 ml-auto">
-                          {formatDistanceToNow(new Date(post.indexedAt), { addSuffix: true })}
-                        </span>
-                      </div>
-                      <p className="text-sm text-foreground leading-relaxed">{truncate(post.text)}</p>
-                    </div>
-                    <a
-                      href={`https://bsky.app/profile/${post.author}/post/${post.uri.split("/").pop()}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex-shrink-0 text-muted-foreground hover:text-primary transition-colors mt-0.5"
-                      data-testid={`link-post-${post.id}`}
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                    </a>
-                  </div>
-                </motion.div>
+                  post={post}
+                  profile={profiles.get(post.author)}
+                  index={i}
+                />
               ))}
             </div>
-            <div className="px-5 py-3 border-t border-border flex items-center justify-between bg-muted/20">
-              <Button variant="outline" size="sm" onClick={prevPage} disabled={cursorStack.length === 0} data-testid="button-prev-page">
+            <div className="px-4 py-3 border-t border-border flex items-center justify-between bg-muted/10">
+              <Button variant="outline" size="sm" onClick={prevPage} disabled={cursorStack.length === 0}>
                 <ChevronLeft className="w-4 h-4 mr-1" /> Previous
               </Button>
               <span className="text-xs text-muted-foreground">
-                Showing {postsPage.posts.length} of {postsPage.total.toLocaleString()} posts
+                {postsPage.posts.length.toLocaleString()} of {postsPage.total.toLocaleString()} posts
               </span>
-              <Button variant="outline" size="sm" onClick={nextPage} disabled={!postsPage.cursor} data-testid="button-next-page">
+              <Button variant="outline" size="sm" onClick={nextPage} disabled={!postsPage.cursor}>
                 Next <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             </div>

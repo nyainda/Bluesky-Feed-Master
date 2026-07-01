@@ -12,7 +12,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import {
-  Users, UserMinus, UserPlus, RefreshCw, ExternalLink,
+  Users, UserMinus, UserPlus, UserCheck, RefreshCw, ExternalLink,
   ChevronLeft, ChevronRight, Search, CheckSquare, Square,
   TrendingUp, Heart, AlertTriangle, Filter, X, ArrowUpRight, BarChart2, Camera,
   Clock, Shield, Settings2, ToggleLeft, ToggleRight, History,
@@ -2148,6 +2148,100 @@ function DiscoverTab() {
           </div>
         </motion.div>
       )}
+
+      {/* ── Follow-back Tracker ─────────────────────────────────────────── */}
+      <FollowBackTracker />
+    </div>
+  );
+}
+
+function FollowBackTracker() {
+  const { data, isLoading } = useQuery<{ ok: boolean; entries: AFLogEntry[] }>({
+    queryKey: ["discover-fb-log"],
+    queryFn: () => customFetch("/api/auto-follow/log?limit=50"),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
+  const entries = data?.entries ?? [];
+  if (isLoading || entries.length === 0) return null;
+
+  const total = entries.length;
+  const followed = entries.filter(e => e.follow_back_status === "followed").length;
+  const pending = entries.filter(e => e.follow_back_status === "pending").length;
+  const unfollowed = entries.filter(e => e.follow_back_status === "unfollowed").length;
+  const rate = total > 0 ? Math.round((followed / total) * 100) : 0;
+
+  const statusColor: Record<string, string> = {
+    followed: "text-emerald-600 dark:text-emerald-400",
+    pending: "text-amber-500",
+    unfollowed: "text-muted-foreground",
+  };
+  const statusLabel: Record<string, string> = {
+    followed: "Followed back",
+    pending: "Pending",
+    unfollowed: "Didn't follow back",
+  };
+
+  return (
+    <div className="bg-card border border-card-border rounded-xl overflow-hidden">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-border/60 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <UserCheck className="w-3.5 h-3.5 text-primary" />
+          <span className="text-sm font-semibold text-foreground">Follow-back Tracker</span>
+        </div>
+        <div className="flex items-center gap-3 text-xs">
+          <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+            <span className="text-sm font-bold">{rate}%</span> followed back
+          </span>
+          <span className="text-muted-foreground/40">·</span>
+          <span className="text-muted-foreground">{total} tracked</span>
+        </div>
+      </div>
+
+      {/* Stats row */}
+      <div className="grid grid-cols-3 divide-x divide-border/60 border-b border-border/60">
+        {[
+          { label: "Followed back", value: followed, color: "text-emerald-600 dark:text-emerald-400" },
+          { label: "Pending", value: pending, color: "text-amber-500" },
+          { label: "No follow-back", value: unfollowed, color: "text-muted-foreground" },
+        ].map(stat => (
+          <div key={stat.label} className="px-4 py-2.5 text-center">
+            <div className={cn("text-lg font-bold tabular-nums", stat.color)}>{stat.value.toLocaleString()}</div>
+            <div className="text-[10px] text-muted-foreground">{stat.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Recent entries */}
+      <div className="divide-y divide-border/40 max-h-72 overflow-y-auto">
+        {entries.slice(0, 20).map(entry => (
+          <div key={entry.did} className="flex items-center gap-3 px-4 py-2.5">
+            <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+              <span className="text-[10px] font-bold text-muted-foreground uppercase">
+                {entry.handle?.[0] ?? "?"}
+              </span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <a
+                href={`https://bsky.app/profile/${entry.handle}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs font-medium text-foreground hover:text-primary transition-colors truncate block"
+              >
+                @{entry.handle}
+              </a>
+              <span className="text-[10px] text-muted-foreground">
+                Followed {formatDistanceToNow(new Date(entry.followed_at), { addSuffix: true })}
+              </span>
+            </div>
+            <span className={cn("text-[10px] font-medium flex-shrink-0", statusColor[entry.follow_back_status] ?? "text-muted-foreground")}>
+              {statusLabel[entry.follow_back_status] ?? entry.follow_back_status}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -6,6 +6,7 @@ export const feedsTable = sqliteTable("feeds", {
   recordName: text("record_name").notNull().unique(),
   displayName: text("display_name").notNull(),
   description: text("description"),
+  avatarUrl: text("avatar_url"),
   isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
   publishedAt: text("published_at"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),

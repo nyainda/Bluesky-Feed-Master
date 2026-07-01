@@ -307,6 +307,82 @@ function LiveFeedTester({ recordName, publishedAt }: { recordName: string; publi
   );
 }
 
+// ─── Feed Avatar Editor ────────────────────────────────────────────────────────
+
+function FeedAvatarEditor({ feedId, avatarUrl, onSaved }: { feedId: number; avatarUrl?: string; onSaved: () => void }) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [url, setUrl] = useState(avatarUrl ?? "");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await customFetch(`/api/feeds/${feedId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ avatarUrl: url.trim() || null }),
+      });
+      onSaved();
+      setEditing(false);
+      toast({ title: "Feed image saved" });
+    } catch {
+      toast({ title: "Failed to save image", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-1.5 flex-shrink-0">
+        <div className="w-14 h-14 rounded-xl bg-muted border border-border overflow-hidden flex items-center justify-center">
+          {url ? (
+            <img src={url} alt="preview" className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+          ) : (
+            <Image className="w-5 h-5 text-muted-foreground/30" />
+          )}
+        </div>
+        <input
+          autoFocus
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          placeholder="Image URL…"
+          className="w-28 text-[10px] px-1.5 py-1 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
+          onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
+        />
+        <div className="flex gap-1">
+          <button onClick={save} disabled={saving} className="text-[10px] px-2 py-0.5 rounded bg-primary text-primary-foreground font-medium disabled:opacity-50">
+            {saving ? "…" : "Save"}
+          </button>
+          <button onClick={() => setEditing(false)} className="text-[10px] px-2 py-0.5 rounded border border-border text-muted-foreground">
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => { setUrl(avatarUrl ?? ""); setEditing(true); }}
+      title="Set feed image"
+      className="w-14 h-14 rounded-xl bg-muted border border-border/60 overflow-hidden flex-shrink-0 group relative hover:border-primary/40 transition-all"
+    >
+      {avatarUrl ? (
+        <img src={avatarUrl} alt="feed avatar" className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center">
+          <Image className="w-5 h-5 text-muted-foreground/30 group-hover:text-primary/50 transition-colors" />
+        </div>
+      )}
+      <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+        <span className="text-[9px] text-white font-medium">Edit</span>
+      </div>
+    </button>
+  );
+}
+
 // ─── Publish Dialog ───────────────────────────────────────────────────────────
 
 function PublishDialog({ feedId, feedName, open, onOpenChange }: {
@@ -571,41 +647,52 @@ export default function FeedDetail() {
             <ArrowLeft className="w-3 h-3" /> Back to Feeds
           </span>
         </Link>
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2.5 flex-wrap mb-1">
-              <h1 className="text-xl md:text-2xl font-bold text-foreground">{feed.displayName}</h1>
-              <span className={cn(
-                "text-xs font-medium px-2 py-0.5 rounded-full border",
-                feed.isActive
-                  ? "text-emerald-600 bg-emerald-500/8 border-emerald-500/20"
-                  : "text-muted-foreground bg-muted border-border",
-              )}>
-                {feed.isActive ? "Active" : "Inactive"}
-              </span>
-              {feed.publishedAt && (
-                <span className="text-xs font-medium px-2 py-0.5 rounded-full border text-primary bg-primary/8 border-primary/20">
-                  Published
+        <div className="flex items-start gap-4">
+          {/* Feed avatar */}
+          <FeedAvatarEditor feedId={id} avatarUrl={(feed as Record<string, unknown>).avatarUrl as string | undefined} onSaved={() => queryClient.invalidateQueries({ queryKey: getGetFeedQueryKey(id) })} />
+
+          <div className="flex-1 min-w-0 flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2.5 flex-wrap mb-1">
+                <h1 className="text-xl md:text-2xl font-bold text-foreground">{feed.displayName}</h1>
+                <span className={cn(
+                  "text-xs font-medium px-2 py-0.5 rounded-full border",
+                  feed.isActive
+                    ? "text-emerald-600 bg-emerald-500/8 border-emerald-500/20"
+                    : "text-muted-foreground bg-muted border-border",
+                )}>
+                  {feed.isActive ? "Active" : "Inactive"}
                 </span>
-              )}
+                {feed.publishedAt && (
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full border text-primary bg-primary/8 border-primary/20">
+                    Published
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2.5 text-xs text-muted-foreground flex-wrap">
+                <code className="bg-muted px-2 py-0.5 rounded font-mono">{feed.recordName}</code>
+                <span>{feed.postCount.toLocaleString()} posts indexed</span>
+                {(feed as Record<string, unknown>).lastIndexedAt && (
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    Last post {formatDistanceToNow(new Date((feed as Record<string, unknown>).lastIndexedAt as string), { addSuffix: true })}
+                  </span>
+                )}
+                {feed.publishedAt && <span>Published {formatDistanceToNow(new Date(feed.publishedAt), { addSuffix: true })}</span>}
+              </div>
+              {feed.description && <p className="text-sm text-muted-foreground mt-1.5 max-w-2xl">{feed.description}</p>}
             </div>
-            <div className="flex items-center gap-2.5 text-xs text-muted-foreground flex-wrap">
-              <code className="bg-muted px-2 py-0.5 rounded font-mono">{feed.recordName}</code>
-              <span>{feed.postCount.toLocaleString()} posts indexed</span>
-              {feed.publishedAt && <span>Published {formatDistanceToNow(new Date(feed.publishedAt), { addSuffix: true })}</span>}
-            </div>
-            {feed.description && <p className="text-sm text-muted-foreground mt-1.5 max-w-2xl">{feed.description}</p>}
+            <Button
+              onClick={() => setPublishOpen(true)}
+              variant={feed.publishedAt ? "outline" : "default"}
+              size="sm"
+              className="flex-shrink-0 gap-1.5"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{feed.publishedAt ? "Re-publish" : "Publish to Bluesky"}</span>
+              <span className="sm:hidden">{feed.publishedAt ? "Re-publish" : "Publish"}</span>
+            </Button>
           </div>
-          <Button
-            onClick={() => setPublishOpen(true)}
-            variant={feed.publishedAt ? "outline" : "default"}
-            size="sm"
-            className="flex-shrink-0 gap-1.5"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">{feed.publishedAt ? "Re-publish" : "Publish to Bluesky"}</span>
-            <span className="sm:hidden">{feed.publishedAt ? "Re-publish" : "Publish"}</span>
-          </Button>
         </div>
       </motion.div>
 

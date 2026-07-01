@@ -667,7 +667,13 @@ export default function Feeds() {
                       <span className="font-medium text-foreground tabular-nums">{feed.postCount.toLocaleString()}</span>
                       <span className="text-muted-foreground/60">posts indexed</span>
                       <span className="hidden sm:inline text-muted-foreground/40">·</span>
-                      <span className="hidden sm:inline">Created {formatDistanceToNow(new Date(feed.createdAt), { addSuffix: true })}</span>
+                      {(feed as Record<string, unknown>).lastIndexedAt ? (
+                        <span className="hidden sm:inline">
+                          Last post {formatDistanceToNow(new Date((feed as Record<string, unknown>).lastIndexedAt as string), { addSuffix: true })}
+                        </span>
+                      ) : (
+                        <span className="hidden sm:inline">Created {formatDistanceToNow(new Date(feed.createdAt), { addSuffix: true })}</span>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">

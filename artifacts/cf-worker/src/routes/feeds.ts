@@ -1,9 +1,20 @@
 import { Hono } from "hono";
-import { eq, like, desc, and, lt, count, sql } from "drizzle-orm";
+import { eq, like, desc, and, lt, count, max, sql } from "drizzle-orm";
 import { createDb, feedsTable, keywordsTable, indexedPostsTable, feedRankedPostsTable } from "../db";
 import type { Env } from "../index";
 
 const route = new Hono<{ Bindings: Env }>();
+
+// Self-healing migration: add avatar_url column if it doesn't exist yet.
+// Runs at most once per worker instance; subsequent calls are no-ops.
+let avatarColEnsured = false;
+async function ensureAvatarCol(env: Env) {
+  if (avatarColEnsured) return;
+  try {
+    await env.DB.prepare("ALTER TABLE feeds ADD COLUMN avatar_url TEXT").run();
+  } catch { /* column already exists */ }
+  avatarColEnsured = true;
+}
 
 async function getFeedWithCount(db: ReturnType<typeof createDb>, id: number) {
   const [feed] = await db.select().from(feedsTable).where(eq(feedsTable.id, id));
@@ -12,10 +23,17 @@ async function getFeedWithCount(db: ReturnType<typeof createDb>, id: number) {
     .select({ postCount: count() })
     .from(indexedPostsTable)
     .where(like(indexedPostsTable.algoTags, `%${feed.recordName}%`));
-  return { ...feed, postCount };
+  const [latestPost] = await db
+    .select({ indexedAt: indexedPostsTable.indexedAt })
+    .from(indexedPostsTable)
+    .where(like(indexedPostsTable.algoTags, `%${feed.recordName}%`))
+    .orderBy(desc(indexedPostsTable.indexedAt))
+    .limit(1);
+  return { ...feed, postCount, lastIndexedAt: latestPost?.indexedAt ?? null };
 }
 
 route.get("/feeds", async (c) => {
+  await ensureAvatarCol(c.env);
   const db = createDb(c.env.DB);
   const feeds = await db.select().from(feedsTable).orderBy(feedsTable.createdAt);
   const result = await Promise.all(
@@ -24,7 +42,13 @@ route.get("/feeds", async (c) => {
         .select({ postCount: count() })
         .from(indexedPostsTable)
         .where(like(indexedPostsTable.algoTags, `%${feed.recordName}%`));
-      return { ...feed, postCount };
+      const [latestPost] = await db
+        .select({ indexedAt: indexedPostsTable.indexedAt })
+        .from(indexedPostsTable)
+        .where(like(indexedPostsTable.algoTags, `%${feed.recordName}%`))
+        .orderBy(desc(indexedPostsTable.indexedAt))
+        .limit(1);
+      return { ...feed, postCount, lastIndexedAt: latestPost?.indexedAt ?? null };
     }),
   );
   return c.json(result);
@@ -54,6 +78,7 @@ route.post("/feeds", async (c) => {
 });
 
 route.get("/feeds/:id", async (c) => {
+  await ensureAvatarCol(c.env);
   const db = createDb(c.env.DB);
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid feed ID" }, 400);
@@ -63,6 +88,7 @@ route.get("/feeds/:id", async (c) => {
 });
 
 route.patch("/feeds/:id", async (c) => {
+  await ensureAvatarCol(c.env);
   const db = createDb(c.env.DB);
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid feed ID" }, 400);
@@ -76,6 +102,7 @@ route.patch("/feeds/:id", async (c) => {
   if (body.displayName != null) updates.displayName = String(body.displayName);
   if (body.description !== undefined) updates.description = body.description ? String(body.description) : null;
   if (body.isActive != null) updates.isActive = Boolean(body.isActive);
+  if (body.avatarUrl !== undefined) updates.avatarUrl = body.avatarUrl ? String(body.avatarUrl) : null;
   updates.updatedAt = new Date().toISOString();
   const [updated] = await db.update(feedsTable).set(updates).where(eq(feedsTable.id, id)).returning();
   if (!updated) return c.json({ error: "Feed not found" }, 404);
