@@ -527,6 +527,46 @@ route.get("/bluesky/auto-follow/stats", async (c) => {
   }
 });
 
+// ─── Follow-back Stats (daily aggregates for chart) ──────────────────────────
+route.get("/auto-follow/followback-stats", async (c) => {
+  try {
+    const days = Math.min(60, Math.max(7, parseInt(c.req.query("days") ?? "30", 10) || 30));
+
+    // Totals by status (all time)
+    const totalsRows = await c.env.DB.prepare(
+      `SELECT follow_back_status, COUNT(*) as cnt FROM auto_follow_log GROUP BY follow_back_status`
+    ).all<{ follow_back_status: string; cnt: number }>();
+    const totals: Record<string, number> = { pending: 0, followed: 0, unfollowed: 0 };
+    for (const r of totalsRows.results) totals[r.follow_back_status] = Number(r.cnt);
+
+    // Daily new follows grouped by date (last N days)
+    const dailyRows = await c.env.DB.prepare(
+      `SELECT
+         date(followed_at) as day,
+         COUNT(*) as followed,
+         SUM(CASE WHEN follow_back_status = 'followed' THEN 1 ELSE 0 END) as followed_back,
+         SUM(CASE WHEN follow_back_status = 'unfollowed' THEN 1 ELSE 0 END) as unfollowed
+       FROM auto_follow_log
+       WHERE followed_at >= date('now', '-' || ? || ' days')
+         AND followers_count != 0
+       GROUP BY date(followed_at)
+       ORDER BY day ASC`
+    ).bind(days).all<{ day: string; followed: number; followed_back: number; unfollowed: number }>();
+
+    const daily = dailyRows.results.map(r => ({
+      day: r.day,
+      followed: Number(r.followed),
+      followedBack: Number(r.followed_back),
+      unfollowed: Number(r.unfollowed),
+      rate: Number(r.followed) > 0 ? Math.round((Number(r.followed_back) / Number(r.followed)) * 100) : 0,
+    }));
+
+    return c.json({ ok: true, totals, daily });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
 // ─── Follow Queue Status ──────────────────────────────────────────────────────
 route.get("/auto-follow/queue-status", async (c) => {
   try {

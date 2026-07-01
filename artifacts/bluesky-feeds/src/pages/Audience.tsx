@@ -1525,6 +1525,11 @@ type AFLogEntry = {
   did: string; handle: string; followers_count: number;
   market: string; followed_at: string; follow_back_status: string;
 };
+type AFFollowbackStats = {
+  ok: boolean;
+  totals: { pending: number; followed: number; unfollowed: number };
+  daily: Array<{ day: string; followed: number; followedBack: number; unfollowed: number; rate: number }>;
+};
 
 function AutoFollowTab() {
   const { toast } = useToast();
@@ -1551,6 +1556,13 @@ function AutoFollowTab() {
     queryFn: () => customFetch("/api/auto-follow/queue-status"),
     refetchInterval: (q) => (q.state.data?.pending ?? 0) > 0 ? 10_000 : 30_000,
     staleTime: 5_000,
+  });
+
+  const { data: fbStats } = useQuery<AFFollowbackStats>({
+    queryKey: ["af-followback-stats"],
+    queryFn: () => customFetch("/api/auto-follow/followback-stats?days=30"),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
 
   const settings = settingsData?.settings;
@@ -1718,18 +1730,95 @@ function AutoFollowTab() {
       </div>
 
       {/* ── Stats ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        {[
-          { label: "Total Followed", value: settings.totalFollowed, color: "text-emerald-500" },
-          { label: "Follow-back Rate", value: log.length > 0 ? `${followBackRate}%` : "—", color: "text-violet-500" },
-          { label: "Log Entries", value: log.length, color: "text-primary" },
-        ].map(({ label, value, color }) => (
-          <div key={label} className="bg-card border border-card-border rounded-xl px-4 py-3">
-            <p className={cn("text-xs mb-1", color)}>{label}</p>
-            <p className="text-xl font-bold text-foreground tabular-nums">{value}</p>
+      {(() => {
+        const totals = fbStats?.totals;
+        const allTime = totals ? totals.pending + totals.followed + totals.unfollowed : 0;
+        const fbRate = allTime > 0 && totals ? Math.round((totals.followed / allTime) * 100) : null;
+        return (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { label: "Total Followed", value: settings.totalFollowed.toLocaleString(), color: "text-emerald-500" },
+              { label: "Followed Back", value: totals ? totals.followed.toLocaleString() : "—", color: "text-violet-500" },
+              { label: "Unfollowed", value: totals ? totals.unfollowed.toLocaleString() : "—", color: "text-muted-foreground" },
+              { label: "Follow-back Rate", value: fbRate !== null ? `${fbRate}%` : "—", color: fbRate !== null && fbRate >= 20 ? "text-emerald-500" : "text-amber-500" },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="bg-card border border-card-border rounded-xl px-4 py-3">
+                <p className={cn("text-xs mb-1", color)}>{label}</p>
+                <p className="text-xl font-bold text-foreground tabular-nums">{value}</p>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        );
+      })()}
+
+      {/* ── Follow-back Rate Chart ── */}
+      {(() => {
+        const daily = fbStats?.daily ?? [];
+        const hasData = daily.length >= 2;
+        return (
+          <div className="bg-card border border-card-border rounded-xl px-4 py-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Follow-back Rate — last 30 days</p>
+              {hasData && (
+                <span className="text-[10px] text-muted-foreground">
+                  {daily[daily.length - 1]?.rate ?? 0}% today
+                </span>
+              )}
+            </div>
+            {hasData ? (
+              <ResponsiveContainer width="100%" height={120}>
+                <LineChart data={daily} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis
+                    dataKey="day"
+                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                    tickFormatter={(v: string) => v.slice(5)}
+                    tickLine={false}
+                    axisLine={false}
+                    interval="preserveStartEnd"
+                  />
+                  <YAxis
+                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(v: number) => `${v}%`}
+                    domain={[0, 100]}
+                  />
+                  <Tooltip
+                    contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}
+                    formatter={(value: number, name: string) => [
+                      name === "rate" ? `${value}%` : value,
+                      name === "rate" ? "Follow-back %" : name === "followed" ? "Followed" : "Followed back",
+                    ]}
+                    labelFormatter={(l: string) => `Date: ${l}`}
+                  />
+                  <Line type="monotone" dataKey="rate" stroke="hsl(var(--violet-500, 139 92% 55%))" strokeWidth={2} dot={false} name="rate" />
+                  <Line type="monotone" dataKey="followed" stroke="hsl(var(--emerald-500, 160 84% 39%))" strokeWidth={1.5} dot={false} name="followed" strokeOpacity={0.5} />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex flex-col items-center gap-2 py-8 text-center">
+                <BarChart2 className="w-6 h-6 text-muted-foreground/30" />
+                <p className="text-xs text-muted-foreground">
+                  {daily.length === 1 ? "Record one more day of follows to see the trend." : "No follow data yet — trigger auto-follow to start tracking."}
+                </p>
+              </div>
+            )}
+            {hasData && (
+              <div className="flex gap-4 text-[10px] text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-3 h-0.5 bg-violet-500 rounded" />
+                  Follow-back %
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-3 h-0.5 bg-emerald-500/50 rounded" />
+                  Daily follows
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Queue drain progress ── */}
       {qTotal > 0 && (

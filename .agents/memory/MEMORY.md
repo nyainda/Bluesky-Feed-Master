@@ -2,3 +2,4 @@
 - [CF Worker wiring](cf-worker-wiring.md) — VITE_API_BASE_URL must be set to CF Worker URL; web app silently falls back to Express stub if missing.
 - [Feed zero-post cause](feed-zero-posts.md) — algoTags use feed recordName; new feeds only accumulate posts forward in time via cron, not backfilled.
 - [D1 free-tier write reduction](d1-write-reduction.md) — Three changes cut D1 from ~650K to ~65K writes/day; key: ranking cooldown + batch markAuthorDirty.
+- [Bluesky searchPosts author fields](searchposts-author-fields.md) — searchPosts does NOT return followersCount/postsCount on author objects; defer all quality filtering to follow-time via getProfile().
