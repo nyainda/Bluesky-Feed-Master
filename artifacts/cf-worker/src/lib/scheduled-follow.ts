@@ -103,8 +103,18 @@ export async function clearFollowQueue(env: Env): Promise<void> {
 export async function runScheduledFollow(env: Env): Promise<void> {
   if (!env.BLUESKY_HANDLE || !env.BLUESKY_APP_PASSWORD) return;
 
+  await ensureFollowQueueTable(env);
+
   let pendingRow: { cnt: number } | null = null;
   try {
+    // Retry transient failures after a short cooling-off window. This keeps
+    // mass-follow jobs moving after Bluesky/network hiccups instead of leaving
+    // the queue permanently stuck in failed state.
+    await env.DB.prepare(
+      `UPDATE ${TABLE} SET status = 'pending', processed_at = NULL, queued_at = datetime('now')
+       WHERE status = 'failed' AND datetime(processed_at, '+15 minutes') < datetime('now')`,
+    ).run();
+
     pendingRow = await env.DB.prepare(
       `SELECT COUNT(*) as cnt FROM ${TABLE} WHERE status = 'pending'`,
     ).first<{ cnt: number }>();
@@ -175,6 +185,8 @@ export async function runScheduledFollow(env: Env): Promise<void> {
  */
 export async function runFollowBackCheck(env: Env): Promise<void> {
   if (!env.BLUESKY_HANDLE || !env.BLUESKY_APP_PASSWORD) return;
+
+  await ensureFollowQueueTable(env);
 
   const followbackDaysRow = await env.DB.prepare(
     "SELECT value FROM cron_settings WHERE key = 'auto_follow_followback_days'",

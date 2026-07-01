@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "corepack enable && pnpm install --frozen-lockfile && pnpm --filter @workspace/bluesky-feeds build",
+  "outputDirectory": "artifacts/bluesky-feeds/dist/public",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

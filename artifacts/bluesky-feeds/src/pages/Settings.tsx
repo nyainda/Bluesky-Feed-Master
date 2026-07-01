@@ -9,7 +9,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useGetFirehoseStatus, customFetch } from "@workspace/api-client-react";
+import { useGetFirehoseStatus, customFetch, getBaseUrl } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 
 function useCopy(value: string) {
@@ -432,13 +432,14 @@ export default function Settings() {
   });
   const [activeOption, setActiveOption] = useState<DeployOption>("cf-full");
 
-  const workerUrl = "feedforge-api.manmysterious2020.workers.dev";
-  const hostname = window.location.hostname;
-  const serviceDid = `did:web:${hostname}`;
-  const didDocUrl = `https://${hostname}/.well-known/did.json`;
-  const describeFeedUrl = `https://${hostname}/xrpc/app.bsky.feed.describeFeedGenerator`;
+  const workerUrl = (getBaseUrl() ?? "https://your-worker.workers.dev").replace(/^https?:\/\//, "");
+  const currentHost = window.location.hostname;
+  const feedHost = activeOption === "vercel" ? workerUrl : currentHost;
+  const serviceDid = `did:web:${feedHost}`;
+  const didDocUrl = `https://${feedHost}/.well-known/did.json`;
+  const describeFeedUrl = `https://${feedHost}/xrpc/app.bsky.feed.describeFeedGenerator`;
   const publisherDid = "(set FEEDGEN_PUBLISHER_DID)";
-  const getFeedSkeletonUrl = `https://${hostname}/xrpc/app.bsky.feed.getFeedSkeleton?feed=at://${publisherDid}/app.bsky.feed.generator/YOUR_FEED`;
+  const getFeedSkeletonUrl = `https://${feedHost}/xrpc/app.bsky.feed.getFeedSkeleton?feed=at://${publisherDid}/app.bsky.feed.generator/YOUR_FEED`;
 
   const allSet = configStatus && Object.values(configStatus).every(Boolean);
   const missingCount = configStatus ? Object.values(configStatus).filter(v => !v).length : null;
@@ -725,9 +726,9 @@ export default function Settings() {
               <ol className="space-y-2 text-xs list-none">
                 {[
                   <>Push this repo to GitHub, then go to <a href="https://vercel.com/new" target="_blank" rel="noreferrer" className="text-primary underline">vercel.com/new</a> and import it</>,
-                  <>Set <strong>Root Directory</strong> to <code className="bg-muted px-1 rounded font-mono">artifacts/bluesky-feeds</code></>,
-                  <>Set <strong>Build Command</strong> to <code className="bg-muted px-1 rounded font-mono">pnpm --filter @workspace/bluesky-feeds run build</code></>,
-                  <>Set <strong>Output Directory</strong> to <code className="bg-muted px-1 rounded font-mono">dist/public</code></>,
+                  <>If importing the whole monorepo, leave <strong>Root Directory</strong> at the repo root so the root <code className="bg-muted px-1 rounded font-mono">vercel.json</code> is used. If importing only the app folder, set it to <code className="bg-muted px-1 rounded font-mono">artifacts/bluesky-feeds</code></>,
+                  <>For repo-root imports, the included <code className="bg-muted px-1 rounded font-mono">vercel.json</code> sets build and SPA rewrites. For app-folder imports, set <strong>Build Command</strong> to <code className="bg-muted px-1 rounded font-mono">pnpm run build</code></>,
+                  <>For app-folder imports, set <strong>Output Directory</strong> to <code className="bg-muted px-1 rounded font-mono">dist/public</code></>,
                   <>Add environment variable: <code className="bg-muted px-1 rounded font-mono">VITE_API_BASE_URL=https://{workerUrl}</code></>,
                   "Deploy — Vercel handles SPA routing automatically via the included vercel.json",
                 ].map((step, i) => <Step key={i} i={i}>{step}</Step>)}

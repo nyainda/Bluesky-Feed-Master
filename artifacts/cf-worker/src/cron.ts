@@ -12,7 +12,6 @@
  */
 
 import { runIndexer, runCleanup } from "./lib/indexer";
-import { runJetstreamIndexer } from "./lib/jetstream";
 import { runScheduler } from "./lib/scheduler";
 import { runAuthorScoring } from "./lib/author-scoring";
 import { precomputeFeedRankings } from "./lib/feed-ranking";
@@ -84,15 +83,6 @@ export default {
         // ── 2. Search-API backfill (staggered: 1 feed/tick round-robin) ───
         await runScheduler(env);
         await runIndexer(env);
-
-        // ── 2b. Jetstream indexer (direct cron-tick — complements the DO) ─
-        // Runs every tick as a reliable fallback when the Durable Object is
-        // evicted or has not yet established its persistent WebSocket.
-        try {
-          await runJetstreamIndexer(env);
-        } catch (err) {
-          console.error("[cron] Jetstream indexer error:", err instanceof Error ? err.message : String(err));
-        }
 
         // ── 3. Author scoring + feed ranking ─────────────────────────────
         await runAuthorScoring(env);
