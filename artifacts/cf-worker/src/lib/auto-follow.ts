@@ -120,58 +120,60 @@ export async function runAutoFollow(env: Env, options?: { force?: boolean }): Pr
   const agent = new AtpAgent({ service: "https://bsky.social" });
   await agent.login({ identifier: env.BLUESKY_HANDLE, password: env.BLUESKY_APP_PASSWORD });
 
-  // Fetch our first 3,000 following to avoid re-following (30 API calls, ~3s)
-  const alreadyFollowing = new Set<string>();
-  let followCursor: string | undefined;
-  do {
-    const result = await agent.getFollows({ actor: env.FEEDGEN_PUBLISHER_DID, limit: 100, cursor: followCursor });
-    for (const f of result.data.follows) alreadyFollowing.add(f.did);
-    followCursor = result.data.cursor;
-  } while (followCursor && alreadyFollowing.size < 3_000);
-
-  // Fetch logged/queued DIDs so we don't re-queue
+  // Skip the slow 3k-following API fetch — with 51k+ following it only covers 6% and
+  // wastes 30 API calls. Rely on the DB log instead; enqueueFollowItems uses
+  // ON CONFLICT DO NOTHING so duplicate queue entries are already guarded, and
+  // runScheduledFollow skips accounts already in auto_follow_log.
   const alreadyLogged = new Set<string>();
   try {
-    const logRows = await env.DB.prepare(
-      "SELECT did FROM auto_follow_log WHERE follow_back_status IN ('pending','followed')",
-    ).all<{ did: string }>();
+    const [logRows, qRows] = await Promise.all([
+      env.DB.prepare(
+        "SELECT did FROM auto_follow_log WHERE follow_back_status IN ('pending','followed')",
+      ).all<{ did: string }>(),
+      env.DB.prepare(
+        "SELECT did FROM auto_follow_queue WHERE status IN ('pending','processing','done')",
+      ).all<{ did: string }>(),
+    ]);
     for (const r of logRows.results) alreadyLogged.add(r.did);
-
-    const qRows = await env.DB.prepare(
-      "SELECT did FROM auto_follow_queue WHERE status = 'pending'",
-    ).all<{ did: string }>();
     for (const r of qRows.results) alreadyLogged.add(r.did);
   } catch {}
 
-  // Pick one random market + keyword per tick for discovery variety
+  // Search 3 different keywords per run (across potentially different markets) so
+  // each tick finds a more diverse set of fresh accounts even when the log is large.
   const market = settings.markets[Math.floor(Math.random() * settings.markets.length)] ?? "usa";
-  const keywords = MARKET_KEYWORDS[market] ?? ["technology"];
-  const keyword = keywords[Math.floor(Math.random() * keywords.length)];
+  const marketKeywords = MARKET_KEYWORDS[market] ?? ["technology"];
+
+  // Pick 3 distinct keywords from this market (cycle through them)
+  const shuffled = [...marketKeywords].sort(() => Math.random() - 0.5);
+  const keywordsToTry = shuffled.slice(0, Math.min(3, shuffled.length));
 
   const candidates: Array<{ did: string; handle: string; followersCount: number; market: string }> = [];
   const seenDids = new Set<string>();
 
-  try {
-    const result = await agent.app.bsky.feed.searchPosts({ q: keyword, limit: 50, sort: "latest" });
-    for (const post of result.data.posts) {
-      const author = post.author;
-      if (seenDids.has(author.did) || alreadyFollowing.has(author.did) || alreadyLogged.has(author.did)) continue;
-      if (author.did === env.FEEDGEN_PUBLISHER_DID) continue;
+  for (const keyword of keywordsToTry) {
+    if (candidates.length >= DISCOVER_PER_TICK) break;
+    try {
+      const result = await agent.app.bsky.feed.searchPosts({ q: keyword, limit: 100, sort: "latest" });
+      for (const post of result.data.posts) {
+        if (candidates.length >= DISCOVER_PER_TICK) break;
+        const author = post.author;
+        if (seenDids.has(author.did) || alreadyLogged.has(author.did)) continue;
+        if (author.did === env.FEEDGEN_PUBLISHER_DID) continue;
 
-      const followers = Number(author.followersCount ?? 0);
-      const posts    = Number(author.postsCount ?? 0);
-      if (followers < settings.minFollowers) continue;
-      if (settings.maxFollowers > 0 && followers > settings.maxFollowers) continue;
-      if (posts < settings.minPosts) continue;
+        const followers = Number(author.followersCount ?? 0);
+        const posts    = Number(author.postsCount ?? 0);
+        if (followers < settings.minFollowers) continue;
+        if (settings.maxFollowers > 0 && followers > settings.maxFollowers) continue;
+        if (posts < settings.minPosts) continue;
 
-      seenDids.add(author.did);
-      candidates.push({ did: author.did, handle: author.handle, followersCount: followers, market });
-      if (candidates.length >= DISCOVER_PER_TICK) break;
+        seenDids.add(author.did);
+        candidates.push({ did: author.did, handle: author.handle, followersCount: followers, market });
+      }
+    } catch (err) {
+      console.warn(`[auto-follow] Search failed "${keyword}":`, err instanceof Error ? err.message : String(err));
     }
-  } catch (err) {
-    console.warn(`[auto-follow] Search failed "${keyword}":`, err instanceof Error ? err.message : String(err));
   }
 
   const { enqueued } = await enqueueFollowItems(env, candidates);
-  console.log(`[auto-follow] market=${market} kw="${keyword}" → ${enqueued} queued. Total followed: ${settings.totalFollowed}, cap=${settings.cap || "∞"}`);
+  console.log(`[auto-follow] market=${market} kw=${JSON.stringify(keywordsToTry)} → found ${candidates.length}, enqueued ${enqueued}. Total followed: ${settings.totalFollowed}, cap=${settings.cap || "∞"}`);
 }

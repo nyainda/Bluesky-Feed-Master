@@ -115,19 +115,24 @@ export async function precomputeFeedRankings(env: Env): Promise<void> {
     // DELETE old rankings
     await db.delete(feedRankedPostsTable).where(eq(feedRankedPostsTable.feedId, feed.id));
 
-    // Single multi-row INSERT — one D1 statement instead of N individual awaited inserts
+    // D1 has a 100 bound-variable limit per statement.
+    // Each row binds 6 params (id is a null literal, not bound).
+    // 15 rows × 6 params = 90 vars — safely under the limit.
     if (validRows.length > 0) {
       const computedAt = new Date().toISOString();
-      await db.insert(feedRankedPostsTable).values(
-        validRows.map(row => ({
-          feedId: feed.id,
-          postUri: row.post.uri,
-          rank: row.rank,
-          finalScore: row.finalScore,
-          qualityScore: row.qualityScore,
-          computedAt,
-        }))
-      );
+      const CHUNK = 15;
+      for (let i = 0; i < validRows.length; i += CHUNK) {
+        await db.insert(feedRankedPostsTable).values(
+          validRows.slice(i, i + CHUNK).map(row => ({
+            feedId: feed.id,
+            postUri: row.post.uri,
+            rank: row.rank,
+            finalScore: row.finalScore,
+            qualityScore: row.qualityScore,
+            computedAt,
+          }))
+        );
+      }
     }
 
     console.log(`[feed-ranking] Feed "${feed.recordName}" — ${validRows.length} ranked posts written.`);
