@@ -90,6 +90,7 @@ route.patch("/feeds/:id", async (c) => {
   if (body.displayName != null) updates.displayName = String(body.displayName);
   if (body.description !== undefined) updates.description = body.description ? String(body.description) : null;
   if (body.isActive != null) updates.isActive = Boolean(body.isActive);
+  if (body.avatarUrl !== undefined) updates.avatarUrl = body.avatarUrl ? String(body.avatarUrl) : null;
   updates.updatedAt = new Date().toISOString();
   const [updated] = await db.update(feedsTable).set(updates).where(eq(feedsTable.id, id)).returning();
   if (!updated) return c.json({ error: "Feed not found" }, 404);

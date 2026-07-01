@@ -6,7 +6,7 @@ import type { Env } from "../index";
 const route = new Hono<{ Bindings: Env }>();
 
 route.get("/.well-known/did.json", (c) => {
-  const hostname = c.env.FEEDGEN_HOSTNAME || "your-worker.workers.dev";
+  const hostname = c.env.FEEDGEN_HOSTNAME || new URL(c.req.url).hostname;
   const serviceDid = `did:web:${hostname}`;
   return c.json({
     "@context": ["https://www.w3.org/ns/did/v1"],
@@ -23,7 +23,7 @@ route.get("/.well-known/did.json", (c) => {
 
 route.get("/xrpc/app.bsky.feed.describeFeedGenerator", async (c) => {
   const db = createDb(c.env.DB);
-  const hostname = c.env.FEEDGEN_HOSTNAME || "your-worker.workers.dev";
+  const hostname = c.env.FEEDGEN_HOSTNAME || new URL(c.req.url).hostname;
   const publisherDid = c.env.FEEDGEN_PUBLISHER_DID || "";
   const serviceDid = `did:web:${hostname}`;
 

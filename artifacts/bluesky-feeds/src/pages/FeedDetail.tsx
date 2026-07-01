@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useParams, Link } from "wouter";
 import {
   useGetFeed, useGetFeedKeywords, useGetFeedPosts,
@@ -309,23 +309,62 @@ function LiveFeedTester({ recordName, publishedAt }: { recordName: string; publi
 
 // ─── Feed Avatar Editor ────────────────────────────────────────────────────────
 
+const AVATAR_EMOJIS = [
+  "🚀","✨","🌟","💡","🔥","⚡","🎯","💻","📱","🤖",
+  "🧠","💎","🌈","🎨","📸","🎵","📰","🏆","🌍","🌱",
+  "💬","📊","🔍","🛠️","👾","🦋","🎪","🔮","🎭","🌙",
+];
+
+function isAvatarEmoji(val: string | undefined): boolean {
+  return Boolean(val && !val.startsWith("http") && !val.startsWith("data:"));
+}
+
+function AvatarPreview({ val, className }: { val?: string; className?: string }) {
+  if (!val) return <Image className="w-5 h-5 text-muted-foreground/30" />;
+  if (isAvatarEmoji(val)) return <span className="text-2xl leading-none select-none">{val}</span>;
+  return <img src={val} alt="avatar" className={cn("w-full h-full object-cover", className)} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />;
+}
+
+async function resizeImageFile(file: File, maxPx = 128): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new window.Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = maxPx; canvas.height = maxPx;
+        const ctx = canvas.getContext("2d")!;
+        const size = Math.min(img.width, img.height);
+        ctx.drawImage(img, (img.width - size) / 2, (img.height - size) / 2, size, size, 0, 0, maxPx, maxPx);
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      };
+      img.onerror = reject;
+      img.src = e.target!.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 function FeedAvatarEditor({ feedId, avatarUrl, onSaved }: { feedId: number; avatarUrl?: string; onSaved: () => void }) {
   const { toast } = useToast();
-  const [editing, setEditing] = useState(false);
-  const [url, setUrl] = useState(avatarUrl ?? "");
+  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<"emoji" | "url" | "upload">("emoji");
+  const [urlInput, setUrlInput] = useState(avatarUrl ?? "");
   const [saving, setSaving] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  async function save() {
+  async function save(value: string | null) {
     setSaving(true);
     try {
       await customFetch(`/api/feeds/${feedId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ avatarUrl: url.trim() || null }),
+        body: JSON.stringify({ avatarUrl: value || null }),
       });
       onSaved();
-      setEditing(false);
-      toast({ title: "Feed image saved" });
+      setOpen(false);
+      toast({ title: value ? "Feed image saved" : "Feed image removed" });
     } catch {
       toast({ title: "Failed to save image", variant: "destructive" });
     } finally {
@@ -333,53 +372,143 @@ function FeedAvatarEditor({ feedId, avatarUrl, onSaved }: { feedId: number; avat
     }
   }
 
-  if (editing) {
-    return (
-      <div className="flex flex-col gap-1.5 flex-shrink-0">
-        <div className="w-14 h-14 rounded-xl bg-muted border border-border overflow-hidden flex items-center justify-center">
-          {url ? (
-            <img src={url} alt="preview" className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
-          ) : (
-            <Image className="w-5 h-5 text-muted-foreground/30" />
-          )}
-        </div>
-        <input
-          autoFocus
-          value={url}
-          onChange={e => setUrl(e.target.value)}
-          placeholder="Image URL…"
-          className="w-28 text-[10px] px-1.5 py-1 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
-          onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
-        />
-        <div className="flex gap-1">
-          <button onClick={save} disabled={saving} className="text-[10px] px-2 py-0.5 rounded bg-primary text-primary-foreground font-medium disabled:opacity-50">
-            {saving ? "…" : "Save"}
-          </button>
-          <button onClick={() => setEditing(false)} className="text-[10px] px-2 py-0.5 rounded border border-border text-muted-foreground">
-            Cancel
-          </button>
-        </div>
-      </div>
-    );
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await resizeImageFile(file);
+      await save(dataUrl);
+    } catch {
+      toast({ title: "Failed to process image", variant: "destructive" });
+    } finally {
+      e.target.value = "";
+    }
   }
 
-  return (
+  const triggerBtn = (
     <button
-      onClick={() => { setUrl(avatarUrl ?? ""); setEditing(true); }}
+      onClick={() => { setUrlInput(avatarUrl ?? ""); setOpen(true); }}
       title="Set feed image"
       className="w-14 h-14 rounded-xl bg-muted border border-border/60 overflow-hidden flex-shrink-0 group relative hover:border-primary/40 transition-all"
     >
-      {avatarUrl ? (
-        <img src={avatarUrl} alt="feed avatar" className="w-full h-full object-cover" />
-      ) : (
-        <div className="w-full h-full flex items-center justify-center">
-          <Image className="w-5 h-5 text-muted-foreground/30 group-hover:text-primary/50 transition-colors" />
-        </div>
-      )}
-      <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+      <div className="w-full h-full flex items-center justify-center">
+        <AvatarPreview val={avatarUrl} />
+      </div>
+      <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
         <span className="text-[9px] text-white font-medium">Edit</span>
       </div>
     </button>
+  );
+
+  return (
+    <div className="flex-shrink-0 relative">
+      {triggerBtn}
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute top-[calc(100%+8px)] left-0 z-50 w-64 bg-background border border-border rounded-xl shadow-xl p-3">
+            <div className="flex items-center justify-between mb-2.5">
+              <span className="text-xs font-semibold text-foreground">Feed Image</span>
+              <button onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            {/* Tabs */}
+            <div className="flex gap-1 mb-3 bg-muted rounded-lg p-0.5">
+              {(["emoji", "url", "upload"] as const).map(t => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={cn(
+                    "flex-1 text-[10px] py-1 rounded-md capitalize font-medium transition-all",
+                    tab === t
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+
+            {tab === "emoji" && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-6 gap-1">
+                  {AVATAR_EMOJIS.map(emoji => (
+                    <button
+                      key={emoji}
+                      onClick={() => save(emoji)}
+                      disabled={saving}
+                      className={cn(
+                        "w-8 h-8 flex items-center justify-center text-lg rounded-lg transition-colors disabled:opacity-50",
+                        avatarUrl === emoji ? "bg-primary/15 ring-1 ring-primary" : "hover:bg-muted"
+                      )}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+                {avatarUrl && (
+                  <button onClick={() => save(null)} disabled={saving} className="w-full text-[10px] py-1 rounded border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 transition-colors disabled:opacity-50">
+                    Remove image
+                  </button>
+                )}
+              </div>
+            )}
+
+            {tab === "url" && (
+              <div className="space-y-2">
+                <div className="w-12 h-12 mx-auto rounded-lg bg-muted border border-border overflow-hidden flex items-center justify-center">
+                  <AvatarPreview val={urlInput || undefined} />
+                </div>
+                <input
+                  autoFocus
+                  value={urlInput}
+                  onChange={e => setUrlInput(e.target.value)}
+                  placeholder="https://example.com/image.png"
+                  className="w-full text-[10px] px-2 py-1.5 rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
+                  onKeyDown={e => { if (e.key === "Enter") save(urlInput.trim() || null); }}
+                />
+                <div className="flex gap-1.5">
+                  <button onClick={() => save(urlInput.trim() || null)} disabled={saving || !urlInput.trim()} className="flex-1 text-[10px] py-1 rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-50 transition-opacity">
+                    {saving ? "Saving…" : "Save URL"}
+                  </button>
+                  {avatarUrl && (
+                    <button onClick={() => save(null)} disabled={saving} className="text-[10px] px-2 py-1 rounded-lg border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 transition-colors disabled:opacity-50">
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {tab === "upload" && (
+              <div className="space-y-2">
+                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  disabled={saving}
+                  className="w-full flex flex-col items-center gap-1.5 py-5 rounded-lg border-2 border-dashed border-border hover:border-primary/50 hover:bg-primary/5 transition-all disabled:opacity-50"
+                >
+                  {saving ? (
+                    <Loader2 className="w-5 h-5 text-muted-foreground animate-spin" />
+                  ) : (
+                    <Upload className="w-5 h-5 text-muted-foreground" />
+                  )}
+                  <span className="text-[10px] text-muted-foreground font-medium">{saving ? "Uploading…" : "Click to choose image"}</span>
+                  <span className="text-[9px] text-muted-foreground/60">Resized to 128×128 JPEG</span>
+                </button>
+                {avatarUrl && (
+                  <button onClick={() => save(null)} disabled={saving} className="w-full text-[10px] py-1 rounded-lg border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 transition-colors disabled:opacity-50">
+                    Remove image
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -649,7 +778,7 @@ export default function FeedDetail() {
         </Link>
         <div className="flex items-start gap-4">
           {/* Feed avatar */}
-          <FeedAvatarEditor feedId={id} avatarUrl={(feed as Record<string, unknown>).avatarUrl as string | undefined} onSaved={() => queryClient.invalidateQueries({ queryKey: getGetFeedQueryKey(id) })} />
+          <FeedAvatarEditor feedId={id} avatarUrl={(feed as unknown as Record<string, unknown>).avatarUrl as string | undefined} onSaved={() => queryClient.invalidateQueries({ queryKey: getGetFeedQueryKey(id) })} />
 
           <div className="flex-1 min-w-0 flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
@@ -672,10 +801,10 @@ export default function FeedDetail() {
               <div className="flex items-center gap-2.5 text-xs text-muted-foreground flex-wrap">
                 <code className="bg-muted px-2 py-0.5 rounded font-mono">{feed.recordName}</code>
                 <span>{feed.postCount.toLocaleString()} posts indexed</span>
-                {(feed as Record<string, unknown>).lastIndexedAt && (
+                {Boolean((feed as unknown as Record<string, unknown>).lastIndexedAt) && (
                   <span className="flex items-center gap-1">
                     <Clock className="w-3 h-3" />
-                    Last post {formatDistanceToNow(new Date((feed as Record<string, unknown>).lastIndexedAt as string), { addSuffix: true })}
+                    Last post {formatDistanceToNow(new Date((feed as unknown as Record<string, unknown>).lastIndexedAt as string), { addSuffix: true })}
                   </span>
                 )}
                 {feed.publishedAt && <span>Published {formatDistanceToNow(new Date(feed.publishedAt), { addSuffix: true })}</span>}

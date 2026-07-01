@@ -174,7 +174,7 @@ export default function Posts() {
     const dids = [...new Set(postsPage.posts.map(p => p.author))];
     const unresolved = dids.filter(d => !profileCache.has(d));
     if (unresolved.length === 0) {
-      setProfiles(new Map(dids.map(d => [d, profileCache.get(d)!]).filter(([, v]) => v)));
+      setProfiles(new Map(dids.map(d => [d, profileCache.get(d)!]).filter((pair): pair is [string, BskyProfile] => Boolean(pair[1]))));
       return;
     }
     resolving.current = true;

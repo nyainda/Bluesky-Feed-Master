@@ -68,6 +68,8 @@ app.post("/api/admin/migrate", async (c) => {
     await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS feed_ranked_posts_feed_post_unique ON feed_ranked_posts (feed_id, post_uri)").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_feed_ranked_posts_feed_rank ON feed_ranked_posts (feed_id, rank)").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_feed_ranked_posts_post_uri ON feed_ranked_posts (post_uri)").run();
+    // Add avatar_url column to feeds if not present (safe re-run)
+    try { await db.prepare("ALTER TABLE feeds ADD COLUMN avatar_url TEXT").run(); } catch { /* already exists */ }
     return c.json({ ok: true, message: "Migration applied successfully" });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

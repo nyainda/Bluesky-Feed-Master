@@ -19,6 +19,29 @@ async function getAuthenticatedAgent(env: Env) {
   return agent;
 }
 
+// Bluesky getFollowers/getFollows return ProfileView which has NO followersCount/followsCount.
+// Those fields only exist on ProfileViewDetailed, returned by getProfiles. Batch-fetch to enrich.
+async function batchGetProfileDetails(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  agent: any,
+  dids: string[]
+): Promise<Map<string, { followersCount: number; followsCount: number }>> {
+  const map = new Map<string, { followersCount: number; followsCount: number }>();
+  if (dids.length === 0) return map;
+  const batches: string[][] = [];
+  for (let i = 0; i < dids.length; i += 25) batches.push(dids.slice(i, i + 25));
+  const results = await Promise.all(
+    batches.map((batch) => agent.getProfiles({ actors: batch }).catch(() => null))
+  );
+  for (const result of results) {
+    if (!result) continue;
+    for (const p of result.data.profiles) {
+      map.set(p.did, { followersCount: p.followersCount ?? 0, followsCount: p.followsCount ?? 0 });
+    }
+  }
+  return map;
+}
+
 route.get("/bluesky/followers", async (c) => {
   const publisherDid = c.env.FEEDGEN_PUBLISHER_DID;
   if (!publisherDid) return c.json({ error: "FEEDGEN_PUBLISHER_DID not configured" }, 404);
@@ -30,17 +53,22 @@ route.get("/bluesky/followers", async (c) => {
     const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 100);
 
     const result = await agent.getFollowers({ actor: publisherDid, limit, cursor });
+    // getFollowers returns ProfileView[] (no counts) — enrich with ProfileViewDetailed via getProfiles
+    const details = await batchGetProfileDetails(agent, result.data.followers.map((f) => f.did));
     return c.json({
-      users: result.data.followers.map((f) => ({
-        did: f.did,
-        handle: f.handle,
-        displayName: f.displayName ?? null,
-        avatar: f.avatar ?? null,
-        description: f.description ?? null,
-        followersCount: f.followersCount ?? 0,
-        followsCount: f.followsCount ?? 0,
-        followedAt: null,
-      })),
+      users: result.data.followers.map((f) => {
+        const d = details.get(f.did);
+        return {
+          did: f.did,
+          handle: f.handle,
+          displayName: f.displayName ?? null,
+          avatar: f.avatar ?? null,
+          description: f.description ?? null,
+          followersCount: d?.followersCount ?? 0,
+          followsCount: d?.followsCount ?? 0,
+          followedAt: null,
+        };
+      }),
       cursor: result.data.cursor,
     });
   } catch (err) {
@@ -62,18 +90,23 @@ route.get("/bluesky/following", async (c) => {
     const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 100);
 
     const result = await agent.getFollows({ actor: publisherDid, limit, cursor });
+    // getFollows returns ProfileView[] (no counts) — enrich with ProfileViewDetailed via getProfiles
+    const details = await batchGetProfileDetails(agent, result.data.follows.map((f) => f.did));
     return c.json({
-      users: result.data.follows.map((f) => ({
-        did: f.did,
-        handle: f.handle,
-        displayName: f.displayName ?? null,
-        avatar: f.avatar ?? null,
-        description: f.description ?? null,
-        followersCount: f.followersCount ?? 0,
-        followsCount: f.followsCount ?? 0,
-        followedAt: null,
-        followUri: f.viewer?.following ?? null,
-      })),
+      users: result.data.follows.map((f) => {
+        const d = details.get(f.did);
+        return {
+          did: f.did,
+          handle: f.handle,
+          displayName: f.displayName ?? null,
+          avatar: f.avatar ?? null,
+          description: f.description ?? null,
+          followersCount: d?.followersCount ?? 0,
+          followsCount: d?.followsCount ?? 0,
+          followedAt: null,
+          followUri: f.viewer?.following ?? null,
+        };
+      }),
       cursor: result.data.cursor,
     });
   } catch (err) {
@@ -283,19 +316,23 @@ route.get("/bluesky/not-following-back", async (c) => {
       cursor,
     });
 
-    const notFollowingBack = result.data.follows
-      .filter((f) => !f.viewer?.followedBy)
-      .map((u) => ({
+    const nfbUsers = result.data.follows.filter((f) => !f.viewer?.followedBy);
+    // getFollows returns ProfileView[] (no counts) — enrich with ProfileViewDetailed via getProfiles
+    const details = await batchGetProfileDetails(agent, nfbUsers.map((u) => u.did));
+    const notFollowingBack = nfbUsers.map((u) => {
+      const d = details.get(u.did);
+      return {
         did: u.did,
         handle: u.handle,
         displayName: u.displayName ?? null,
         avatar: u.avatar ?? null,
         description: u.description ?? null,
-        followersCount: u.followersCount ?? 0,
-        followsCount: u.followsCount ?? 0,
+        followersCount: d?.followersCount ?? 0,
+        followsCount: d?.followsCount ?? 0,
         followedAt: null,
         followUri: u.viewer?.following ?? null,
-      }));
+      };
+    });
 
     return c.json({
       users: notFollowingBack,

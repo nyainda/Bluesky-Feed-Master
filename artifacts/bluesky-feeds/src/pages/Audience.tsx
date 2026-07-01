@@ -18,7 +18,7 @@ import {
   Clock, Shield, Settings2, ToggleLeft, ToggleRight, History,
   ListOrdered, Pause, Play, Ban, Loader2, Download, CheckCircle, Zap, Activity, Globe,
 } from "lucide-react";
-import { format } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";

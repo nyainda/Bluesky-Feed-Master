@@ -328,10 +328,17 @@ const feedFormSchema = z.object({
 });
 type FeedFormValues = z.infer<typeof feedFormSchema>;
 
+const FEED_EMOJIS = [
+  "🚀","✨","🌟","💡","🔥","⚡","🎯","💻","📱","🤖",
+  "🧠","💎","🌈","🎨","📸","🎵","📰","🏆","🌍","🌱",
+  "💬","📊","🔍","🛠️","👾","🦋","🎪","🔮","🎭","🌙",
+];
+
 function CreateFeedDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const createFeed = useCreateFeed();
+  const [selectedEmoji, setSelectedEmoji] = useState<string | null>(null);
   const form = useForm<FeedFormValues>({
     resolver: zodResolver(feedFormSchema),
     defaultValues: { recordName: "", displayName: "", description: "" },
@@ -341,11 +348,20 @@ function CreateFeedDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
     createFeed.mutate(
       { data: { recordName: values.recordName, displayName: values.displayName, description: values.description || null } },
       {
-        onSuccess: () => {
+        onSuccess: async (created) => {
+          if (selectedEmoji && (created as unknown as { id?: number }).id) {
+            const id = (created as unknown as { id: number }).id;
+            await customFetch(`/api/feeds/${id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ avatarUrl: selectedEmoji }),
+            }).catch(() => null);
+          }
           queryClient.invalidateQueries({ queryKey: getListFeedsQueryKey() });
           toast({ title: "Feed created" });
           onOpenChange(false);
           form.reset();
+          setSelectedEmoji(null);
         },
         onError: () => toast({ title: "Failed to create feed", variant: "destructive" }),
       },
@@ -353,13 +369,33 @@ function CreateFeedDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) { form.reset(); setSelectedEmoji(null); } }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="text-base">New Feed</DialogTitle>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 pt-1">
+            <div>
+              <p className="text-xs font-medium mb-2">Icon <span className="text-muted-foreground font-normal">(optional)</span></p>
+              <div className="grid grid-cols-10 gap-1">
+                {FEED_EMOJIS.map(emoji => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    onClick={() => setSelectedEmoji(emoji === selectedEmoji ? null : emoji)}
+                    className={cn(
+                      "w-8 h-8 flex items-center justify-center text-base rounded transition-colors",
+                      selectedEmoji === emoji
+                        ? "bg-primary/15 ring-1 ring-primary"
+                        : "hover:bg-muted"
+                    )}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
             <FormField control={form.control} name="recordName" render={({ field }) => (
               <FormItem>
                 <FormLabel className="text-xs font-medium">Record Name</FormLabel>
@@ -667,9 +703,9 @@ export default function Feeds() {
                       <span className="font-medium text-foreground tabular-nums">{feed.postCount.toLocaleString()}</span>
                       <span className="text-muted-foreground/60">posts indexed</span>
                       <span className="hidden sm:inline text-muted-foreground/40">·</span>
-                      {(feed as Record<string, unknown>).lastIndexedAt ? (
+                      {(feed as unknown as Record<string, unknown>).lastIndexedAt ? (
                         <span className="hidden sm:inline">
-                          Last post {formatDistanceToNow(new Date((feed as Record<string, unknown>).lastIndexedAt as string), { addSuffix: true })}
+                          Last post {formatDistanceToNow(new Date((feed as unknown as Record<string, unknown>).lastIndexedAt as string), { addSuffix: true })}
                         </span>
                       ) : (
                         <span className="hidden sm:inline">Created {formatDistanceToNow(new Date(feed.createdAt), { addSuffix: true })}</span>
