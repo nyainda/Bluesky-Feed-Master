@@ -33,7 +33,9 @@ export async function enqueueScheduledUnfollowItems(
   for (let i = 0; i < items.length; i += CHUNK) {
     const chunk = items.slice(i, i + CHUNK);
     const stmts = chunk.map((item) =>
-      // ON CONFLICT: if DID already exists and is 'done'/'failed', re-queue it. If still 'pending', leave alone.
+      // ON CONFLICT: only reset 'failed' items to pending (retry). Leave 'done' items alone —
+      // resetting them back to 'pending' would undo completed unfollows and create an infinite cycle
+      // where the auto-unfollow scan re-queues items that the drain just finished.
       env.DB.prepare(
         `INSERT INTO ${TABLE} (did, follow_uri) VALUES (?, ?)
          ON CONFLICT(did) DO UPDATE SET
@@ -41,7 +43,7 @@ export async function enqueueScheduledUnfollowItems(
            status       = 'pending',
            queued_at    = datetime('now'),
            processed_at = NULL
-         WHERE status != 'pending'`,
+         WHERE status = 'failed'`,
       ).bind(item.did, item.followUri ?? null),
     );
     const results = await env.DB.batch(stmts);
@@ -96,15 +98,30 @@ export async function clearScheduledUnfollowQueue(env: Env): Promise<void> {
  * Rate: 100 items × 150ms delay = ~15s of delays + ~30s of network = fits comfortably in 3 min.
  * Effective unfollow rate: ~33/min — well within Bluesky's 600/min limit.
  */
+async function saveSetting(env: Env, key: string, value: string): Promise<void> {
+  await env.DB.prepare(
+    "INSERT INTO cron_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+  ).bind(key, value).run();
+}
+
 export async function runScheduledUnfollow(env: Env): Promise<void> {
-  if (!env.BLUESKY_HANDLE || !env.BLUESKY_APP_PASSWORD) return;
+  // Write a heartbeat immediately so dashboard can confirm function was called
+  const attemptedAt = new Date().toISOString();
+  try { await saveSetting(env, "last_drain_attempted_at", attemptedAt); } catch {}
+
+  if (!env.BLUESKY_HANDLE || !env.BLUESKY_APP_PASSWORD) {
+    try { await saveSetting(env, "last_drain_skip_reason", "missing-credentials"); } catch {}
+    return;
+  }
 
   let pendingRow: { cnt: number } | null = null;
   try {
     pendingRow = await env.DB.prepare(
       `SELECT COUNT(*) as cnt FROM ${TABLE} WHERE status = 'pending'`,
     ).first<{ cnt: number }>();
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    try { await saveSetting(env, "last_drain_skip_reason", `table-error: ${msg}`); } catch {}
     return; // Table not created yet — skip silently
   }
 
@@ -120,7 +137,12 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
     ).first<{ cnt: number }>();
   } catch {}
 
-  if (!pendingRow || pendingRow.cnt === 0) return;
+  if (!pendingRow || pendingRow.cnt === 0) {
+    try { await saveSetting(env, "last_drain_skip_reason", `no-pending (cnt=${pendingRow?.cnt ?? "null"})`); } catch {}
+    return;
+  }
+
+  try { await saveSetting(env, "last_drain_skip_reason", ""); } catch {} // Clear skip reason — we're proceeding
 
   console.log(
     `[scheduled-unfollow] ${pendingRow.cnt} pending — processing up to ${BATCH_PER_CRON}`,
@@ -147,6 +169,7 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
 
   let done = 0;
   let failed = 0;
+  let lastError = "";
 
   for (const row of rows.results) {
     try {
@@ -180,7 +203,9 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
         .run();
       done++;
     } catch (err) {
-      console.error(`[scheduled-unfollow] Failed did=${row.did}:`, err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[scheduled-unfollow] Failed did=${row.did}:`, msg);
+      lastError = msg;
       await env.DB.prepare(
         `UPDATE ${TABLE} SET status = 'failed', processed_at = datetime('now') WHERE id = ?`,
       )
@@ -196,4 +221,22 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
   console.log(
     `[scheduled-unfollow] Batch done — ${done} unfollowed, ${failed} failed, ${remaining} remaining`,
   );
+
+  // Save telemetry so the dashboard can show last drain results
+  try {
+    await env.DB.prepare(
+      "INSERT INTO cron_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+    ).bind("last_drain_at", new Date().toISOString()).run();
+    await env.DB.prepare(
+      "INSERT INTO cron_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+    ).bind("last_drain_done", String(done)).run();
+    await env.DB.prepare(
+      "INSERT INTO cron_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+    ).bind("last_drain_failed", String(failed)).run();
+    if (lastError) {
+      await env.DB.prepare(
+        "INSERT INTO cron_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+      ).bind("last_drain_error", lastError).run();
+    }
+  } catch {}
 }

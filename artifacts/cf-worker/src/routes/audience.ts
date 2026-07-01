@@ -387,7 +387,7 @@ route.delete("/bluesky/queue-all-following", async (c) => {
   }
 });
 
-/** Combined status for the mass-unfollow campaign: scan progress + queue drain status. */
+/** Combined status for the mass-unfollow campaign: scan progress + queue drain status + last drain telemetry. */
 route.get("/bluesky/unfollow-campaign/status", async (c) => {
   try {
     const { getQueueAllStatus } = await import("../lib/queue-all-scan");
@@ -396,7 +396,30 @@ route.get("/bluesky/unfollow-campaign/status", async (c) => {
       getQueueAllStatus(c.env),
       getScheduledUnfollowStatus(c.env),
     ]);
-    return c.json({ ok: true, scan, queue });
+
+    // Drain telemetry written by runScheduledUnfollow each tick
+    const telRows = await c.env.DB.prepare(
+      `SELECT key, value FROM cron_settings
+       WHERE key IN (
+         'last_drain_at','last_drain_done','last_drain_failed','last_drain_error',
+         'last_drain_attempted_at','last_drain_skip_reason','last_cron_tick'
+       )`,
+    ).all<{ key: string; value: string }>().catch(() => ({ results: [] as { key: string; value: string }[] }));
+
+    const tel: Record<string, string> = {};
+    for (const r of telRows.results) tel[r.key] = r.value;
+
+    const lastDrain = {
+      at:          tel["last_drain_at"]           ?? null,
+      done:        parseInt(tel["last_drain_done"]   ?? "0", 10) || 0,
+      failed:      parseInt(tel["last_drain_failed"] ?? "0", 10) || 0,
+      error:       tel["last_drain_error"]         ?? null,
+      attemptedAt: tel["last_drain_attempted_at"]  ?? null,
+      skipReason:  tel["last_drain_skip_reason"]   ?? null,
+    };
+    const lastCronTick = tel["last_cron_tick"] ?? null;
+
+    return c.json({ ok: true, scan, queue, lastDrain, lastCronTick });
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
   }
