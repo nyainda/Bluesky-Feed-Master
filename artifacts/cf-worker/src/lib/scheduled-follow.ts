@@ -138,10 +138,52 @@ export async function runScheduledFollow(env: Env): Promise<void> {
      WHERE status = 'pending' ORDER BY queued_at ASC LIMIT ${BATCH_PER_CRON}`,
   ).all<{ id: number; did: string; handle: string; followers_count: number; market: string }>();
 
-  let done = 0; let failed = 0;
+  // Load follow settings for follower-count gate (applied here since searchPosts
+  // doesn't return reliable followersCount inline — discovery stores -1 as sentinel)
+  const minFollowersRow = await env.DB.prepare(
+    "SELECT value FROM cron_settings WHERE key = 'auto_follow_min_followers'"
+  ).first<{ value: string }>();
+  const maxFollowersRow = await env.DB.prepare(
+    "SELECT value FROM cron_settings WHERE key = 'auto_follow_max_followers'"
+  ).first<{ value: string }>();
+  const minPostsRow = await env.DB.prepare(
+    "SELECT value FROM cron_settings WHERE key = 'auto_follow_min_posts'"
+  ).first<{ value: string }>();
+  const minFollowers = Math.max(0, parseInt(minFollowersRow?.value ?? "100", 10) || 100);
+  const maxFollowers = Math.max(0, parseInt(maxFollowersRow?.value ?? "50000", 10) || 50000);
+  const minPosts = Math.max(0, parseInt(minPostsRow?.value ?? "5", 10) || 5);
+
+  let done = 0; let failed = 0; let skipped = 0;
 
   for (const row of rows.results) {
     try {
+      // followersCount === -1 means discovery couldn't get counts from searchPosts.
+      // Look up the real profile to apply minFollowers, maxFollowers, minPosts filters.
+      if (row.followers_count === -1) {
+        try {
+          const profile = await agent.getProfile({ actor: row.did });
+          const actualFollowers = profile.data.followersCount ?? 0;
+          const actualPosts = profile.data.postsCount ?? 0;
+          const failsFollowers = actualFollowers < minFollowers || (maxFollowers > 0 && actualFollowers > maxFollowers);
+          const failsPosts = actualPosts < minPosts;
+          if (failsFollowers || failsPosts) {
+            // Not a quality candidate — mark done so we don't retry
+            await env.DB.prepare(
+              `UPDATE ${TABLE} SET status = 'done', processed_at = datetime('now') WHERE id = ?`
+            ).bind(row.id).run();
+            skipped++;
+            continue;
+          }
+          // Update the stored count so the follow log is accurate
+          await env.DB.prepare(
+            `UPDATE ${TABLE} SET followers_count = ? WHERE id = ?`
+          ).bind(actualFollowers, row.id).run();
+        } catch {
+          // Profile lookup failed — leave pending, retry next cron tick
+          continue;
+        }
+      }
+
       await agent.follow(row.did);
 
       await env.DB.prepare(

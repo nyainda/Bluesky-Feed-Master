@@ -2,18 +2,20 @@ import type { Env } from "../index";
 import { enqueueFollowItems, ensureFollowQueueTable } from "./scheduled-follow";
 
 // Market → search terms for finding quality accounts in that region
+// Wide variety ensures we keep finding fresh accounts even with a large log
 const MARKET_KEYWORDS: Record<string, string[]> = {
-  usa:       ["news", "tech startup", "marketing", "entrepreneur", "business"],
-  europe:    ["startup europe", "tech berlin", "london business", "paris tech", "amsterdam"],
-  uk:        ["London", "UK business", "British", "Manchester", "Edinburgh"],
-  canada:    ["Canada", "Toronto", "Vancouver", "Ottawa", "Canadian startup"],
-  australia: ["Australia", "Sydney", "Melbourne", "Brisbane", "Aussie"],
-  latam:     ["Brasil", "Mexico", "Argentina", "Colombia", "Latin America"],
-  asia:      ["Singapore", "Tokyo", "Seoul", "Mumbai", "Asia tech"],
+  usa:       ["news", "tech startup", "marketing", "entrepreneur", "business", "software", "AI", "product manager", "venture capital", "SaaS", "developer", "engineer", "design", "podcast", "creator"],
+  europe:    ["startup europe", "tech berlin", "london business", "paris tech", "amsterdam", "fintech", "deeptech", "european tech", "berlin startup", "stockholm tech"],
+  uk:        ["London", "UK business", "British", "Manchester", "Edinburgh", "fintech UK", "NHS", "UK tech", "Bristol", "Leeds"],
+  canada:    ["Canada", "Toronto", "Vancouver", "Ottawa", "Canadian startup", "Montreal", "Calgary", "Waterloo", "Canadian tech", "BC tech"],
+  australia: ["Australia", "Sydney", "Melbourne", "Brisbane", "Aussie", "Adelaide", "Perth", "NZ tech", "Auckland", "Australian startup"],
+  latam:     ["Brasil", "Mexico", "Argentina", "Colombia", "Latin America", "Chile tech", "Peru", "São Paulo", "Buenos Aires", "Bogotá"],
+  asia:      ["Singapore", "Tokyo", "Seoul", "Mumbai", "Asia tech", "Hong Kong", "Bangalore", "Jakarta", "Taipei", "India startup"],
+  global:    ["programming", "javascript", "python", "react", "devops", "cloud", "machine learning", "blockchain", "cybersecurity", "open source", "indie hacker", "buildinpublic", "nocode", "lowcode", "founder"],
 };
 
-// Candidates to discover per cron tick — keeps the queue fed without bursting
-const DISCOVER_PER_TICK = 25;
+// Candidates to discover per cron tick
+const DISCOVER_PER_TICK = 40;
 
 async function getSetting(env: Env, key: string, fallback: string): Promise<string> {
   const row = await env.DB.prepare("SELECT value FROM cron_settings WHERE key = ?")
@@ -138,19 +140,25 @@ export async function runAutoFollow(env: Env, options?: { force?: boolean }): Pr
     for (const r of qRows.results) alreadyLogged.add(r.did);
   } catch {}
 
-  // Search 3 different keywords per run (across potentially different markets) so
-  // each tick finds a more diverse set of fresh accounts even when the log is large.
-  const market = settings.markets[Math.floor(Math.random() * settings.markets.length)] ?? "usa";
-  const marketKeywords = MARKET_KEYWORDS[market] ?? ["technology"];
-
-  // Pick 3 distinct keywords from this market (cycle through them)
-  const shuffled = [...marketKeywords].sort(() => Math.random() - 0.5);
-  const keywordsToTry = shuffled.slice(0, Math.min(3, shuffled.length));
+  // Build a flat pool of all keywords across all markets, shuffle it, and try
+  // up to 8 different keywords per run. With a large log (~6k+ entries) a single
+  // 100-post search is almost entirely filtered out — more diverse queries are
+  // the only way to keep finding fresh accounts.
+  const allMarkets = Object.keys(MARKET_KEYWORDS);
+  const allKeywordsFlat: Array<{ keyword: string; market: string }> = [];
+  for (const m of allMarkets) {
+    for (const kw of MARKET_KEYWORDS[m] ?? []) {
+      allKeywordsFlat.push({ keyword: kw, market: m });
+    }
+  }
+  // Shuffle and take up to 8 unique keywords to search
+  const shuffled = [...allKeywordsFlat].sort(() => Math.random() - 0.5);
+  const keywordsToTry = shuffled.slice(0, 8);
 
   const candidates: Array<{ did: string; handle: string; followersCount: number; market: string }> = [];
   const seenDids = new Set<string>();
 
-  for (const keyword of keywordsToTry) {
+  for (const { keyword, market } of keywordsToTry) {
     if (candidates.length >= DISCOVER_PER_TICK) break;
     try {
       const result = await agent.app.bsky.feed.searchPosts({ q: keyword, limit: 100, sort: "latest" });
@@ -160,14 +168,11 @@ export async function runAutoFollow(env: Env, options?: { force?: boolean }): Pr
         if (seenDids.has(author.did) || alreadyLogged.has(author.did)) continue;
         if (author.did === env.FEEDGEN_PUBLISHER_DID) continue;
 
-        const followers = Number(author.followersCount ?? 0);
-        const posts    = Number(author.postsCount ?? 0);
-        if (followers < settings.minFollowers) continue;
-        if (settings.maxFollowers > 0 && followers > settings.maxFollowers) continue;
-        if (posts < settings.minPosts) continue;
-
+        // searchPosts does NOT return followersCount or postsCount reliably.
+        // All quality filtering (minFollowers, maxFollowers, minPosts) is deferred
+        // to follow-time in runScheduledFollow via a getProfile() lookup.
         seenDids.add(author.did);
-        candidates.push({ did: author.did, handle: author.handle, followersCount: followers, market });
+        candidates.push({ did: author.did, handle: author.handle, followersCount: -1, market });
       }
     } catch (err) {
       console.warn(`[auto-follow] Search failed "${keyword}":`, err instanceof Error ? err.message : String(err));
@@ -175,5 +180,5 @@ export async function runAutoFollow(env: Env, options?: { force?: boolean }): Pr
   }
 
   const { enqueued } = await enqueueFollowItems(env, candidates);
-  console.log(`[auto-follow] market=${market} kw=${JSON.stringify(keywordsToTry)} → found ${candidates.length}, enqueued ${enqueued}. Total followed: ${settings.totalFollowed}, cap=${settings.cap || "∞"}`);
+  console.log(`[auto-follow] searched ${keywordsToTry.length} keywords → found ${candidates.length} new, enqueued ${enqueued}. Total followed: ${settings.totalFollowed}, cap=${settings.cap || "∞"}`);
 }

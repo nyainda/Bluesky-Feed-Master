@@ -190,6 +190,49 @@ app.post("/api/admin/dedup-tags", async (c) => {
   }
 });
 
+// Debug — inspect what auto-follow discovery would find without actually queuing
+app.get("/api/admin/debug-auto-follow", async (c) => {
+  const keyword = c.req.query("keyword") ?? "python";
+  try {
+    const { AtpAgent } = await import("@atproto/api");
+    const agent = new AtpAgent({ service: "https://bsky.social" });
+    await agent.login({ identifier: c.env.BLUESKY_HANDLE, password: c.env.BLUESKY_APP_PASSWORD });
+
+    const logRows = await c.env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM auto_follow_log WHERE follow_back_status IN ('pending','followed')"
+    ).first<{ cnt: number }>();
+    const qRows = await c.env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM auto_follow_queue WHERE status IN ('pending','processing','done')"
+    ).first<{ cnt: number }>();
+    const logCount = Number(logRows?.cnt ?? 0);
+    const queueCount = Number(qRows?.cnt ?? 0);
+
+    const result = await agent.app.bsky.feed.searchPosts({ q: keyword, limit: 100, sort: "latest" });
+
+    const alreadyLogged = new Set<string>();
+    const logDids = await c.env.DB.prepare(
+      "SELECT did FROM auto_follow_log WHERE follow_back_status IN ('pending','followed')"
+    ).all<{ did: string }>();
+    for (const r of logDids.results) alreadyLogged.add(r.did);
+
+    let total = 0, filtered_log = 0, passed = 0;
+    const passedSamples: Array<{ handle: string; did: string }> = [];
+    const rawSamples: Array<{ handle: string; followersCount: number | undefined; postsCount: number | undefined }> = [];
+    for (const post of result.data.posts) {
+      total++;
+      const author = post.author;
+      if (rawSamples.length < 10) rawSamples.push({ handle: author.handle, followersCount: author.followersCount, postsCount: author.postsCount });
+      if (alreadyLogged.has(author.did)) { filtered_log++; continue; }
+      passed++;
+      if (passedSamples.length < 5) passedSamples.push({ handle: author.handle, did: author.did });
+    }
+
+    return c.json({ keyword, logCount, queueCount, total, filtered_log, passed, passedSamples, rawSamples, note: "All quality filters (followers/posts) applied at follow-time via getProfile()" });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
 // Manual trigger — runs feed ranking immediately (separate from indexer to avoid cron timeout)
 app.post("/api/admin/trigger-rank", async (c) => {
   const start = Date.now();
