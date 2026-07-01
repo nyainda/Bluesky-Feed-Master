@@ -244,6 +244,20 @@ export async function runFollowBackCheck(env: Env): Promise<void> {
   }
 
   if (toUnfollow.length > 0) {
+    // Ensure the table exists before inserting (defensive — runScheduledUnfollow normally creates it first)
+    try {
+      await env.DB.prepare(
+        `CREATE TABLE IF NOT EXISTS unfollow_scheduled_queue (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          did          TEXT NOT NULL UNIQUE,
+          follow_uri   TEXT,
+          status       TEXT NOT NULL DEFAULT 'pending',
+          queued_at    TEXT NOT NULL DEFAULT (datetime('now')),
+          processed_at TEXT
+        )`,
+      ).run();
+    } catch { /* already exists */ }
+
     const stmts = toUnfollow.map((u) =>
       env.DB.prepare(
         `INSERT INTO unfollow_scheduled_queue (did) VALUES (?) ON CONFLICT(did) DO NOTHING`,

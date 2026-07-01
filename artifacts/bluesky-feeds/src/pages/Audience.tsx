@@ -329,7 +329,7 @@ function SearchFollowTab({ defaultUsers = [], defaultLoading = false }: { defaul
 
   function handleFollow() {
     bulkFollow.mutate({ data: { dids: Array.from(selected) } }, {
-      onSuccess: (r) => { toast({ title: `Followed ${r.succeeded} accounts` }); clearSelection(); },
+      onSuccess: (r) => { toast({ title: `${r.succeeded} queued for follow`, description: "CF Worker drains ~40 per 3-min cron tick." }); clearSelection(); },
       onError: () => toast({ title: "Follow failed", variant: "destructive" }),
     });
   }
@@ -2619,7 +2619,7 @@ export default function Audience() {
 
   function handleBulkFollow() {
     bulkFollow.mutate({ data: { dids: Array.from(selected) } }, {
-      onSuccess: (r) => { toast({ title: `Followed ${r.succeeded} accounts` }); clearSelection(); queryClient.invalidateQueries(); },
+      onSuccess: (r) => { toast({ title: `${r.succeeded} queued for follow`, description: "CF Worker drains ~40 per 3-min cron tick." }); clearSelection(); queryClient.invalidateQueries(); },
       onError: () => toast({ title: "Bulk follow failed", variant: "destructive" }),
     });
   }
@@ -2629,7 +2629,7 @@ export default function Audience() {
     const followUris = selectedDids.map(did => followUriMap.get(did)).filter((uri): uri is string => !!uri);
     const fallbackDids = selectedDids.filter(did => !followUriMap.has(did));
     bulkUnfollow.mutate({ data: { dids: fallbackDids, followUris } }, {
-      onSuccess: (r) => { toast({ title: `Unfollowed ${r.succeeded} accounts` }); clearSelection(); queryClient.invalidateQueries(); },
+      onSuccess: (r) => { toast({ title: `${r.succeeded} queued for unfollow`, description: "CF Worker drains ~100 per 3-min cron tick." }); clearSelection(); queryClient.invalidateQueries(); },
       onError: () => toast({ title: "Bulk unfollow failed", variant: "destructive" }),
     });
   }
@@ -2926,7 +2926,7 @@ export default function Audience() {
                             bulkUnfollow.mutate(
                               { data: { dids: followUri ? [] : [targetDid], followUris: followUri ? [followUri] : undefined } },
                               {
-                                onSuccess: (r) => { toast({ title: `Unfollowed ${r.succeeded} account${r.succeeded !== 1 ? "s" : ""}` }); queryClient.invalidateQueries(); },
+                                onSuccess: (r) => { toast({ title: `${r.succeeded} queued for unfollow`, description: "CF Worker drains ~100 per 3-min cron tick." }); queryClient.invalidateQueries(); },
                                 onError: () => toast({ title: "Unfollow failed", variant: "destructive" }),
                               },
                             );
