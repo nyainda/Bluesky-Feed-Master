@@ -837,8 +837,22 @@ function AutoUnfollowCard() {
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [withinDays, setWithinDays] = useState(90);
-  const [queuingAll, setQueuingAll] = useState(false);
+  const [campaignStarting, setCampaignStarting] = useState(false);
   const cleanupNonFollowers = useUnfollowNonFollowers();
+
+  const { data: campaign, refetch: refetchCampaign } = useQuery<{
+    ok: boolean;
+    scan: { scanning: boolean; pagesScanned: number; totalEnqueued: number; startedAt: string | null; completedAt: string | null };
+    queue: { pending: number; done: number; failed: number; total: number; estimatedMinutesLeft: number };
+  }>({
+    queryKey: ["unfollow-campaign"],
+    queryFn: () => customFetch("/api/bluesky/unfollow-campaign/status"),
+    refetchInterval: 4_000,
+    staleTime: 3_000,
+  });
+
+  const campaignActive = (campaign?.scan?.scanning ?? false) || (campaign?.queue?.pending ?? 0) > 0;
+  const campaignComplete = !campaign?.scan?.scanning && (campaign?.queue?.done ?? 0) > 0 && (campaign?.queue?.pending ?? 0) === 0 && campaign?.scan?.completedAt;
 
   const displayEnabled = enabled ?? settings?.enabled ?? false;
   const displayInterval = intervalDays ?? settings?.intervalDays ?? 7;
@@ -1263,43 +1277,205 @@ function AutoUnfollowCard() {
               </p>
             </div>
 
-            {/* Row 6: Queue ALL following for unfollow */}
-            <div className="pt-1 border-t border-border/30">
-              <Button
-                size="sm"
-                variant="outline"
-                className="w-full h-8 text-xs gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/5 hover:text-destructive"
-                disabled={queuingAll}
-                onClick={async () => {
-                  setQueuingAll(true);
-                  try {
-                    const r = await customFetch<{ ok: boolean; message?: string }>("/api/bluesky/queue-all-following", { method: "POST" });
-                    toast({ title: "Mass unfollow queued", description: r.message ?? "All following accounts are being added to the unfollow queue." });
-                    setTimeout(() => refetchQueue(), 5_000);
-                  } catch {
-                    toast({ title: "Failed to queue", variant: "destructive" });
-                  } finally {
-                    setQueuingAll(false);
-                  }
-                }}
-              >
-                {queuingAll
-                  ? <><RefreshCw className="w-3 h-3 animate-spin" />Scanning following list…</>
-                  : <><UserMinus className="w-3 h-3" />Queue ALL following for unfollow (50k+ safe)</>
-                }
-              </Button>
-              <p className="text-[10px] text-muted-foreground/50 mt-1 text-center">
-                Scans your entire following list server-side and queues everyone — drains ~2k/hr via cron
-              </p>
-            </div>
           </>
         )}
       </div>
+
+      {/* ── Mass Unfollow Campaign ── */}
+      <MassUnfollowPanel
+        campaign={campaign}
+        campaignActive={campaignActive}
+        campaignComplete={!!campaignComplete}
+        campaignStarting={campaignStarting}
+        onStart={async () => {
+          setCampaignStarting(true);
+          try {
+            await customFetch("/api/bluesky/queue-all-following", { method: "POST" });
+            await refetchCampaign();
+          } catch {
+            toast({ title: "Failed to start campaign", variant: "destructive" });
+          } finally {
+            setCampaignStarting(false);
+          }
+        }}
+        onCancel={async () => {
+          try {
+            await customFetch("/api/bluesky/queue-all-following", { method: "DELETE" });
+            await refetchCampaign();
+            toast({ title: "Campaign cancelled" });
+          } catch {
+            toast({ title: "Failed to cancel", variant: "destructive" });
+          }
+        }}
+      />
 
       <UnfollowLogPanel />
     </motion.div>
   );
 }
+
+// ── Mass Unfollow Campaign Panel ─────────────────────────────────────────────
+
+type CampaignData = {
+  ok: boolean;
+  scan: { scanning: boolean; pagesScanned: number; totalEnqueued: number; startedAt: string | null; completedAt: string | null };
+  queue: { pending: number; done: number; failed: number; total: number; estimatedMinutesLeft: number };
+} | undefined;
+
+function StatBox({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div className="flex-1 rounded-xl border border-border/60 bg-card/60 flex flex-col items-center justify-center py-3 px-2 gap-0.5">
+      <span className={cn("text-2xl font-bold tabular-nums", color)}>
+        {value.toLocaleString()}
+      </span>
+      <span className="text-[10px] text-muted-foreground/70 uppercase tracking-wider font-medium">{label}</span>
+    </div>
+  );
+}
+
+function MassUnfollowPanel({
+  campaign, campaignActive, campaignComplete, campaignStarting, onStart, onCancel,
+}: {
+  campaign: CampaignData;
+  campaignActive: boolean;
+  campaignComplete: boolean;
+  campaignStarting: boolean;
+  onStart: () => void;
+  onCancel: () => void;
+}) {
+  const scan  = campaign?.scan;
+  const queue = campaign?.queue;
+  const isScanning = scan?.scanning ?? false;
+  const pagesScanned = scan?.pagesScanned ?? 0;
+  const totalEnqueued = scan?.totalEnqueued ?? 0;
+  const qDone    = queue?.done ?? 0;
+  const qPending = queue?.pending ?? 0;
+  const qFailed  = queue?.failed ?? 0;
+  const qTotal   = queue?.total ?? 0;
+  const drainPct = qTotal > 0 ? Math.round((qDone / qTotal) * 100) : 0;
+  const etaHours = queue ? (queue.estimatedMinutesLeft / 60).toFixed(1) : "0";
+  const rate = 2000; // accounts/hr
+
+  return (
+    <div className="bg-card border border-card-border rounded-xl overflow-hidden">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-border/50 flex items-center justify-between">
+        <div>
+          <p className="text-xs font-semibold text-foreground">Mass Unfollow Campaign</p>
+          <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+            {campaignComplete
+              ? `Complete — ${qDone.toLocaleString()} unfollowed`
+              : campaignActive
+                ? isScanning
+                  ? `Scanning following list… ${pagesScanned * 100} accounts scanned`
+                  : `Draining queue — ~${Number(etaHours).toFixed(1)}h remaining`
+                : "Queue your entire following list for unfollow"}
+          </p>
+        </div>
+        {campaignActive && (
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-destructive animate-pulse" />
+            <span className="text-[10px] font-medium text-destructive uppercase tracking-wider">Live</span>
+          </div>
+        )}
+      </div>
+
+      <div className="p-4 space-y-4">
+        {/* Scanning progress bar */}
+        {isScanning && (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-muted-foreground">Scanning pages</span>
+              <span className="text-[10px] font-medium text-foreground tabular-nums">{pagesScanned} pages · {(pagesScanned * 100).toLocaleString()} accounts</span>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full rounded-full bg-amber-500 transition-all duration-700"
+                style={{ width: `${Math.min(100, (pagesScanned / 520) * 100)}%` }}
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground/50">
+              Cron processes 2,000 accounts every 3 min — resumes automatically if CF kills the worker
+            </p>
+          </div>
+        )}
+
+        {/* Live stat boxes (show when there's any data) */}
+        {(campaignActive || campaignComplete || totalEnqueued > 0 || qDone > 0) && (
+          <div className="flex gap-2">
+            <StatBox label="Queued" value={totalEnqueued || qTotal} color="text-amber-500" />
+            <StatBox label="Removed" value={qDone}    color="text-emerald-500" />
+            <StatBox label="Pending" value={qPending} color="text-foreground" />
+          </div>
+        )}
+
+        {/* Drain progress bar */}
+        {qTotal > 0 && (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-muted-foreground">Unfollow progress</span>
+              <span className="text-[10px] font-medium text-foreground tabular-nums">{drainPct}%</span>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full rounded-full bg-emerald-500 transition-all duration-700"
+                style={{ width: `${drainPct}%` }}
+              />
+            </div>
+            {qPending > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-muted-foreground/60">~{rate.toLocaleString()}/hr drain rate</span>
+                <span className="text-[10px] text-muted-foreground/60">ETA ~{etaHours}h</span>
+              </div>
+            )}
+            {qFailed > 0 && (
+              <p className="text-[10px] text-destructive/70">{qFailed} failed (auto-retried after 15 min)</p>
+            )}
+          </div>
+        )}
+
+        {/* Action buttons */}
+        {campaignActive ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full h-8 text-xs gap-1.5 text-muted-foreground border-border/60 hover:text-destructive hover:border-destructive/40"
+            onClick={onCancel}
+          >
+            <RefreshCw className="w-3 h-3" />Stop scanning (queue keeps draining)
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full h-8 text-xs gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/5 hover:text-destructive"
+            disabled={campaignStarting}
+            onClick={onStart}
+          >
+            {campaignStarting
+              ? <><RefreshCw className="w-3 h-3 animate-spin" />Starting…</>
+              : <><UserMinus className="w-3 h-3" />Queue ALL following for unfollow (50k+ safe)</>
+            }
+          </Button>
+        )}
+
+        {!campaignActive && !campaignComplete && (
+          <p className="text-[10px] text-muted-foreground/50 text-center -mt-2">
+            Cron-driven · kill-proof · {(51_000 / rate).toFixed(0)}h for 51k · starts on next 3-min tick
+          </p>
+        )}
+
+        {campaignComplete && (
+          <p className="text-[10px] text-emerald-500/80 text-center font-medium">
+            ✓ All accounts unfollowed. Start a new campaign to re-queue.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 type UnfollowLogEntry = {
   id: number;

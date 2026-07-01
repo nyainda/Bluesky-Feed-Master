@@ -19,6 +19,7 @@ import { runAutoUnfollow } from "./lib/auto-unfollow";
 import { runAmplifier } from "./lib/amplifier";
 import { runAutoAmplify } from "./lib/auto-amplify";
 import { runScheduledUnfollow } from "./lib/scheduled-unfollow";
+import { runQueueAllScan } from "./lib/queue-all-scan";
 import { runAutoFollow } from "./lib/auto-follow";
 import { runScheduledFollow, runFollowBackCheck } from "./lib/scheduled-follow";
 import { JetstreamConsumerDO } from "./lib/jetstream-do";
@@ -76,7 +77,8 @@ export default {
           );
         }
 
-        // ── 1. Drain follow/unfollow queues first (guaranteed every tick) ──
+        // ── 1. Drain follow/unfollow queues + advance queue-all scan ─────
+        await runQueueAllScan(env);   // cursor-based: 20 pages/tick, resumes on CF kill
         await runScheduledUnfollow(env);
         await runScheduledFollow(env);
 

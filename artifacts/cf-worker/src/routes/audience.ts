@@ -359,67 +359,47 @@ route.post("/bluesky/unfollow-non-followers", async (c) => {
 });
 
 /**
- * Enqueues the user's ENTIRE following list for unfollow.
- * Paginates server-side (100/page) via waitUntil — pure I/O so not counted
- * against CF CPU limits. Safe for 50k+ following lists.
- * The actual unfollows drain via the existing cron (100/tick ~2k/hr).
+ * Starts a cursor-based "queue all following" scan.
+ * Sets a flag + empty cursor in D1 and returns immediately.
+ * The feedforge-cron worker picks this up every 3 minutes and processes
+ * 20 pages (2 000 accounts) per tick, saving the cursor after every 5 pages.
+ * If CF kills the cron mid-tick, the next tick resumes at the last saved cursor.
+ * 51k following ÷ 2k/tick = ~26 ticks = ~78 min total, zero data loss.
  */
 route.post("/bluesky/queue-all-following", async (c) => {
-  if (!c.env.BLUESKY_HANDLE || !c.env.BLUESKY_APP_PASSWORD) {
-    return c.json({ error: "BLUESKY_HANDLE and BLUESKY_APP_PASSWORD required" }, 400);
+  try {
+    const { startQueueAllScan } = await import("../lib/queue-all-scan");
+    await startQueueAllScan(c.env);
+    return c.json({ ok: true, message: "Scan started — the cron will process 2,000 accounts every 3 minutes until all are queued." });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
   }
+});
 
-  const { ensureScheduledUnfollowTable, enqueueScheduledUnfollowItems } = await import("../lib/scheduled-unfollow");
-  await ensureScheduledUnfollowTable(c.env);
-
-  async function paginateAndEnqueue(env: typeof c.env): Promise<void> {
-    const { AtpAgent } = await import("@atproto/api");
-    const agent = new AtpAgent({ service: "https://bsky.social" });
-    try {
-      await agent.login({ identifier: env.BLUESKY_HANDLE!, password: env.BLUESKY_APP_PASSWORD! });
-    } catch (err) {
-      console.error("[queue-all-following] Login failed:", err);
-      return;
-    }
-
-    let cursor: string | undefined;
-    let totalEnqueued = 0;
-    let totalSkipped  = 0;
-    let pages = 0;
-
-    do {
-      try {
-        const result = await agent.getFollows({ actor: env.BLUESKY_HANDLE!, limit: 100, cursor });
-        const items = result.data.follows.map(f => ({
-          did: f.did,
-          followUri: (f.viewer as { following?: string })?.following ?? null,
-        }));
-        if (items.length > 0) {
-          const { enqueued, skipped } = await enqueueScheduledUnfollowItems(env, items);
-          totalEnqueued += enqueued;
-          totalSkipped  += skipped;
-        }
-        cursor = result.data.cursor;
-        pages++;
-        // Yield briefly every 10 pages to avoid overwhelming D1
-        if (pages % 10 === 0) {
-          await new Promise(r => setTimeout(r, 50));
-        }
-      } catch (err) {
-        console.error(`[queue-all-following] Page ${pages} failed:`, err);
-        break;
-      }
-    } while (cursor);
-
-    console.log(`[queue-all-following] Done — ${totalEnqueued} enqueued, ${totalSkipped} already tracked, ${pages} pages scanned`);
+/** Cancels an in-progress queue-all scan. */
+route.delete("/bluesky/queue-all-following", async (c) => {
+  try {
+    const { cancelQueueAllScan } = await import("../lib/queue-all-scan");
+    await cancelQueueAllScan(c.env);
+    return c.json({ ok: true, message: "Scan cancelled." });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
   }
+});
 
-  c.executionCtx.waitUntil(paginateAndEnqueue(c.env));
-
-  return c.json({
-    ok: true,
-    message: "Scanning your full following list in the background. All accounts will be queued for unfollow — check the unfollow queue to track progress.",
-  });
+/** Combined status for the mass-unfollow campaign: scan progress + queue drain status. */
+route.get("/bluesky/unfollow-campaign/status", async (c) => {
+  try {
+    const { getQueueAllStatus } = await import("../lib/queue-all-scan");
+    const { getScheduledUnfollowStatus } = await import("../lib/scheduled-unfollow");
+    const [scan, queue] = await Promise.all([
+      getQueueAllStatus(c.env),
+      getScheduledUnfollowStatus(c.env),
+    ]);
+    return c.json({ ok: true, scan, queue });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
 });
 
 route.post("/bluesky/sync-engagement", async (c) => {
