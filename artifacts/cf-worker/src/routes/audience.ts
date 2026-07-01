@@ -760,7 +760,30 @@ route.get("/auto-follow/followback-stats", async (c) => {
       rate: Number(r.followed) > 0 ? Math.round((Number(r.followed_back) / Number(r.followed)) * 100) : 0,
     }));
 
-    return c.json({ ok: true, totals, daily });
+    // Per-market breakdown (all time, exclude bulk import entries)
+    const marketRows = await c.env.DB.prepare(
+      `SELECT
+         market,
+         COUNT(*) as followed,
+         SUM(CASE WHEN follow_back_status = 'followed' THEN 1 ELSE 0 END) as followed_back,
+         SUM(CASE WHEN follow_back_status = 'unfollowed' THEN 1 ELSE 0 END) as unfollowed,
+         SUM(CASE WHEN follow_back_status = 'pending' THEN 1 ELSE 0 END) as pending
+       FROM auto_follow_log
+       WHERE market != '' AND market != 'bulk' AND followers_count != 0
+       GROUP BY market
+       ORDER BY followed DESC`
+    ).all<{ market: string; followed: number; followed_back: number; unfollowed: number; pending: number }>();
+
+    const byMarket = marketRows.results.map(r => ({
+      market: r.market,
+      followed: Number(r.followed),
+      followedBack: Number(r.followed_back),
+      unfollowed: Number(r.unfollowed),
+      pending: Number(r.pending),
+      rate: Number(r.followed) > 0 ? Math.round((Number(r.followed_back) / Number(r.followed)) * 100) : null,
+    }));
+
+    return c.json({ ok: true, totals, daily, byMarket });
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
   }
