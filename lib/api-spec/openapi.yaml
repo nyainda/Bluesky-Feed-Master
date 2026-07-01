@@ -625,6 +625,30 @@ paths:
               schema:
                 $ref: "#/components/schemas/BulkActionResult"
 
+  /bluesky/unfollow-non-followers:
+    post:
+      operationId: unfollowNonFollowers
+      tags: [stats]
+      summary: Unfollow accounts followed within N days that never followed back
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                withinDays:
+                  type: integer
+                  default: 90
+                  description: Only consider accounts followed within this many days (default 90 = 3 months)
+      responses:
+        "200":
+          description: Unfollow result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkActionResult"
+
   /bluesky/my-posts:
     get:
       operationId: getMyPosts

@@ -423,6 +423,11 @@ cursor?: string | null;
 limit?: number;
 };
 
+export type UnfollowNonFollowersBody = {
+  /** Only consider accounts followed within this many days (default 90 = 3 months) */
+  withinDays?: number;
+};
+
 export type GetMyPostsParams = {
 /**
  * @nullable

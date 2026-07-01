@@ -60,6 +60,7 @@ import type {
   SyncEngagementBody,
   SyncResult,
   TopPost,
+  UnfollowNonFollowersBody,
   UpdateFeedBody
 } from './api.schemas';
 
@@ -2388,6 +2389,76 @@ export const useBulkUnfollow = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getBulkUnfollowMutationOptions(options));
+    }
+
+export const getUnfollowNonFollowersUrl = () => {
+
+
+
+
+  return `/api/bluesky/unfollow-non-followers`
+}
+
+/**
+ * @summary Unfollow accounts followed within N days that never followed back
+ */
+export const unfollowNonFollowers = async (unfollowNonFollowersBody?: UnfollowNonFollowersBody, options?: RequestInit): Promise<BulkActionResult> => {
+
+  return customFetch<BulkActionResult>(getUnfollowNonFollowersUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(unfollowNonFollowersBody)
+  }
+);}
+
+
+
+
+export const getUnfollowNonFollowersMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unfollowNonFollowers>>, TError,{data?: BodyType<UnfollowNonFollowersBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof unfollowNonFollowers>>, TError,{data?: BodyType<UnfollowNonFollowersBody>}, TContext> => {
+
+const mutationKey = ['unfollowNonFollowers'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof unfollowNonFollowers>>, {data?: BodyType<UnfollowNonFollowersBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  unfollowNonFollowers(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UnfollowNonFollowersMutationResult = NonNullable<Awaited<ReturnType<typeof unfollowNonFollowers>>>
+    export type UnfollowNonFollowersMutationBody = BodyType<UnfollowNonFollowersBody> | undefined
+    export type UnfollowNonFollowersMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Unfollow accounts followed within N days that never followed back
+ */
+export const useUnfollowNonFollowers = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unfollowNonFollowers>>, TError,{data?: BodyType<UnfollowNonFollowersBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof unfollowNonFollowers>>,
+        TError,
+        {data?: BodyType<UnfollowNonFollowersBody>},
+        TContext
+      > => {
+      return useMutation(getUnfollowNonFollowersMutationOptions(options));
     }
 
 export const getGetMyPostsUrl = (params?: GetMyPostsParams,) => {

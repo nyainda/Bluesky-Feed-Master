@@ -555,6 +555,22 @@ export const BulkUnfollowResponse = zod.object({
 
 
 /**
+ * @summary Unfollow accounts followed within N days that never followed back
+ */
+export const unfollowNonFollowersBodyWithinDaysDefault = 90;
+
+export const UnfollowNonFollowersBody = zod.object({
+  "withinDays": zod.number().default(unfollowNonFollowersBodyWithinDaysDefault).describe('Only consider accounts followed within this many days (default 90 = 3 months)')
+})
+
+export const UnfollowNonFollowersResponse = zod.object({
+  "succeeded": zod.number(),
+  "failed": zod.number(),
+  "errors": zod.array(zod.string())
+})
+
+
+/**
  * @summary Get the authenticated user's own Bluesky posts with engagement stats
  */
 export const getMyPostsQueryLimitDefault = 30;

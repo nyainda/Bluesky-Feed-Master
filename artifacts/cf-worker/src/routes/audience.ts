@@ -226,29 +226,136 @@ route.post("/bluesky/bulk-unfollow", async (c) => {
     return c.json({ error: "dids or followUris must be a non-empty array" }, 400);
   }
 
-  // Queue into the drain system (handles any size, 100/tick = ~2,000/hour)
-  const { enqueueScheduledUnfollowItems, ensureScheduledUnfollowTable, runScheduledUnfollow } = await import("../lib/scheduled-unfollow");
-  await ensureScheduledUnfollowTable(c.env);
-
-  // Build items — prefer followUris for fast-path (no profile lookup needed during drain)
-  const unfollowItems: Array<{ did: string; followUri?: string | null }> = [];
+  // Build a unified list of { did, followUri } pairs
+  const allItems: Array<{ did: string; followUri: string | null }> = [];
   if (Array.isArray(followUris) && followUris.length > 0) {
-    // followUris provided: pair them with dids if available
     const didArr = Array.isArray(dids) ? dids.map(String) : [];
     followUris.forEach((uri, i) => {
-      unfollowItems.push({ did: didArr[i] ?? `bulk-${i}`, followUri: String(uri) });
+      allItems.push({ did: didArr[i] ?? `bulk-${i}`, followUri: String(uri) });
     });
   } else if (Array.isArray(dids)) {
-    dids.forEach((did) => unfollowItems.push({ did: String(did), followUri: null }));
+    dids.forEach((did) => allItems.push({ did: String(did), followUri: null }));
   }
 
-  const { enqueued, skipped } = await enqueueScheduledUnfollowItems(c.env, unfollowItems);
+  // For small batches (≤ 30 with URIs, ≤ 15 without): unfollow directly — same fast path as
+  // manual unfollow. For larger batches: unfollow first chunk instantly, queue the rest.
+  const hasUris    = allItems.some(i => i.followUri);
+  const DIRECT_LIMIT = hasUris ? 30 : 15;
+  const directItems = allItems.slice(0, DIRECT_LIMIT);
+  const queueItems  = allItems.slice(DIRECT_LIMIT);
 
-  // Kick off an immediate partial drain so the first 100 unfollow right away
-  c.executionCtx.waitUntil(runScheduledUnfollow(c.env));
+  const agent = await getAuthenticatedAgent(c.env);
+  let succeeded = 0;
+  let failed    = 0;
 
-  return c.json({ succeeded: enqueued, failed: 0, enqueued, skipped,
-    message: `${enqueued} queued for unfollow (${skipped} already tracked). First batch draining now.` });
+  for (const item of directItems) {
+    try {
+      let uri = item.followUri;
+      if (!uri) {
+        const profile = await agent.getProfile({ actor: item.did });
+        uri = profile.data.viewer?.following ?? null;
+      }
+      if (uri) await agent.deleteFollow(uri);
+      succeeded++;
+    } catch (err) {
+      console.error(`[bulk-unfollow] direct unfollow failed did=${item.did}:`, err);
+      failed++;
+    }
+  }
+
+  let enqueued = 0;
+  let skipped  = 0;
+  if (queueItems.length > 0) {
+    const { enqueueScheduledUnfollowItems, ensureScheduledUnfollowTable } = await import("../lib/scheduled-unfollow");
+    await ensureScheduledUnfollowTable(c.env);
+    const result = await enqueueScheduledUnfollowItems(c.env, queueItems);
+    enqueued = result.enqueued;
+    skipped  = result.skipped;
+  }
+
+  const msg = queueItems.length > 0
+    ? `${succeeded} unfollowed instantly, ${failed} failed. ${enqueued} more queued for cron drain (${skipped} already tracked).`
+    : `${succeeded} unfollowed instantly, ${failed} failed.`;
+
+  return c.json({ succeeded, failed, enqueued, skipped, message: msg });
+});
+
+route.post("/bluesky/unfollow-non-followers", async (c) => {
+  if (!c.env.BLUESKY_HANDLE || !c.env.BLUESKY_APP_PASSWORD) {
+    return c.json({ error: "BLUESKY_HANDLE and BLUESKY_APP_PASSWORD required" }, 400);
+  }
+
+  let withinDays = 90;
+  try {
+    const body = await c.req.json() as Record<string, unknown>;
+    if (typeof body.withinDays === "number" && body.withinDays > 0) withinDays = body.withinDays;
+  } catch { /* no body — use default */ }
+
+  // Query auto_follow_log for accounts followed within the window that never followed back
+  const { ensureFollowQueueTable } = await import("../lib/scheduled-follow");
+  await ensureFollowQueueTable(c.env);
+
+  let rows: { results: Array<{ did: string; handle: string }> };
+  try {
+    rows = await c.env.DB.prepare(
+      `SELECT did, handle FROM auto_follow_log
+       WHERE follow_back_status != 'followed'
+         AND datetime(followed_at, '+' || ? || ' days') > datetime('now', '-' || ? || ' days')
+       ORDER BY followed_at ASC`
+    ).bind(withinDays, withinDays).all<{ did: string; handle: string }>();
+  } catch {
+    return c.json({ error: "Failed to query follow log" }, 500);
+  }
+
+  if (rows.results.length === 0) {
+    return c.json({ succeeded: 0, failed: 0, errors: [], message: `No non-followers found in the last ${withinDays} days.` });
+  }
+
+  // Unfollow directly up to 25, queue the rest
+  const DIRECT_LIMIT = 25;
+  const directRows = rows.results.slice(0, DIRECT_LIMIT);
+  const queueRows  = rows.results.slice(DIRECT_LIMIT);
+
+  const agent = await getAuthenticatedAgent(c.env);
+  let succeeded = 0;
+  let failed    = 0;
+
+  for (const row of directRows) {
+    try {
+      const profile = await agent.getProfile({ actor: row.did });
+      const uri = profile.data.viewer?.following ?? null;
+      if (uri) {
+        await agent.deleteFollow(uri);
+        succeeded++;
+      } else {
+        // Not following anymore — count as done
+        succeeded++;
+      }
+    } catch (err) {
+      console.error(`[unfollow-non-followers] failed did=${row.did}:`, err);
+      failed++;
+    }
+  }
+
+  let enqueued = 0;
+  let skipped  = 0;
+  if (queueRows.length > 0) {
+    const { enqueueScheduledUnfollowItems, ensureScheduledUnfollowTable } = await import("../lib/scheduled-unfollow");
+    await ensureScheduledUnfollowTable(c.env);
+    const result = await enqueueScheduledUnfollowItems(
+      c.env,
+      queueRows.map(r => ({ did: r.did, followUri: null }))
+    );
+    enqueued = result.enqueued;
+    skipped  = result.skipped;
+  }
+
+  const total = rows.results.length;
+  const msg = queueRows.length > 0
+    ? `${succeeded} unfollowed instantly from ${total} non-followers (last ${withinDays}d). ${enqueued} more queued for cron.`
+    : `${succeeded} non-followers unfollowed instantly (last ${withinDays}d), ${failed} failed.`;
+
+  return c.json({ succeeded, failed, errors: [], enqueued, skipped, message: msg });
 });
 
 route.post("/bluesky/sync-engagement", async (c) => {

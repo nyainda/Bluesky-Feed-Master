@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  useSyncEngagement, useBulkFollow, useBulkUnfollow,
+  useSyncEngagement, useBulkFollow, useBulkUnfollow, useUnfollowNonFollowers,
   useGetBlueskyProfile, useListFeeds, useGetFeedTopAuthors,
   useGetFollowers, useGetFollowing, useGetFollowerGrowth, useSnapshotFollowers,
   customFetch,
@@ -836,6 +836,7 @@ function AutoUnfollowCard() {
   const [minFollowersToKeep, setMinFollowersToKeep] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
+  const cleanupNonFollowers = useUnfollowNonFollowers();
 
   const displayEnabled = enabled ?? settings?.enabled ?? false;
   const displayInterval = intervalDays ?? settings?.intervalDays ?? 7;
@@ -1216,6 +1217,33 @@ function AutoUnfollowCard() {
                 className={cn("h-8 text-xs gap-1.5", isDirty && "ring-1 ring-primary/40")}>
                 {saving ? <><RefreshCw className="w-3 h-3 animate-spin" />Saving…</> : <><Settings2 className="w-3 h-3" />Save Settings</>}
               </Button>
+            </div>
+
+            {/* Row 5: Manual 3-month cleanup */}
+            <div className="pt-1 border-t border-border/30">
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full h-8 text-xs gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/5 hover:text-destructive"
+                disabled={cleanupNonFollowers.isPending}
+                onClick={() => {
+                  cleanupNonFollowers.mutate({ data: { withinDays: 90 } }, {
+                    onSuccess: (r) => {
+                      toast({ title: `${r.succeeded} non-followers unfollowed`, description: r.message ?? "Accounts followed in the last 3 months that never followed back." });
+                      refetchQueue();
+                    },
+                    onError: () => toast({ title: "Cleanup failed", variant: "destructive" }),
+                  });
+                }}
+              >
+                {cleanupNonFollowers.isPending
+                  ? <><RefreshCw className="w-3 h-3 animate-spin" />Cleaning up…</>
+                  : <><UserMinus className="w-3 h-3" />Unfollow non-followers from last 3 months</>
+                }
+              </Button>
+              <p className="text-[10px] text-muted-foreground/50 mt-1 text-center">
+                Unfollows everyone you followed in the last 90 days who hasn't followed back
+              </p>
             </div>
           </>
         )}
