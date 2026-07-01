@@ -836,6 +836,8 @@ function AutoUnfollowCard() {
   const [minFollowersToKeep, setMinFollowersToKeep] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
+  const [withinDays, setWithinDays] = useState(90);
+  const [queuingAll, setQueuingAll] = useState(false);
   const cleanupNonFollowers = useUnfollowNonFollowers();
 
   const displayEnabled = enabled ?? settings?.enabled ?? false;
@@ -1219,17 +1221,32 @@ function AutoUnfollowCard() {
               </Button>
             </div>
 
-            {/* Row 5: Manual 3-month cleanup */}
-            <div className="pt-1 border-t border-border/30">
+            {/* Row 5: Manual cleanup of non-followers */}
+            <div className="pt-1 border-t border-border/30 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground whitespace-nowrap">Within last</span>
+                <select
+                  value={withinDays}
+                  onChange={e => setWithinDays(Number(e.target.value))}
+                  className="flex-1 text-xs bg-background border border-input rounded-lg px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value={30}>30 days (1 month)</option>
+                  <option value={60}>60 days (2 months)</option>
+                  <option value={90}>90 days (3 months)</option>
+                  <option value={180}>180 days (6 months)</option>
+                  <option value={365}>365 days (1 year)</option>
+                </select>
+              </div>
               <Button
                 size="sm"
                 variant="outline"
                 className="w-full h-8 text-xs gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/5 hover:text-destructive"
                 disabled={cleanupNonFollowers.isPending}
                 onClick={() => {
-                  cleanupNonFollowers.mutate({ data: { withinDays: 90 } }, {
+                  cleanupNonFollowers.mutate({ data: { withinDays } }, {
                     onSuccess: (r) => {
-                      toast({ title: `${r.succeeded} non-followers unfollowed`, description: r.message ?? "Accounts followed in the last 3 months that never followed back." });
+                      const msg = (r as typeof r & { message?: string }).message;
+                      toast({ title: `${r.succeeded} non-followers unfollowed`, description: msg ?? `Accounts followed in the last ${withinDays} days that never followed back.` });
                       refetchQueue();
                     },
                     onError: () => toast({ title: "Cleanup failed", variant: "destructive" }),
@@ -1238,11 +1255,41 @@ function AutoUnfollowCard() {
               >
                 {cleanupNonFollowers.isPending
                   ? <><RefreshCw className="w-3 h-3 animate-spin" />Cleaning up…</>
-                  : <><UserMinus className="w-3 h-3" />Unfollow non-followers from last 3 months</>
+                  : <><UserMinus className="w-3 h-3" />Unfollow non-followers from last {withinDays} days</>
+                }
+              </Button>
+              <p className="text-[10px] text-muted-foreground/50 text-center">
+                Unfollows everyone you followed in the selected window who hasn't followed back
+              </p>
+            </div>
+
+            {/* Row 6: Queue ALL following for unfollow */}
+            <div className="pt-1 border-t border-border/30">
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full h-8 text-xs gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/5 hover:text-destructive"
+                disabled={queuingAll}
+                onClick={async () => {
+                  setQueuingAll(true);
+                  try {
+                    const r = await customFetch<{ ok: boolean; message?: string }>("/api/bluesky/queue-all-following", { method: "POST" });
+                    toast({ title: "Mass unfollow queued", description: r.message ?? "All following accounts are being added to the unfollow queue." });
+                    setTimeout(() => refetchQueue(), 5_000);
+                  } catch {
+                    toast({ title: "Failed to queue", variant: "destructive" });
+                  } finally {
+                    setQueuingAll(false);
+                  }
+                }}
+              >
+                {queuingAll
+                  ? <><RefreshCw className="w-3 h-3 animate-spin" />Scanning following list…</>
+                  : <><UserMinus className="w-3 h-3" />Queue ALL following for unfollow (50k+ safe)</>
                 }
               </Button>
               <p className="text-[10px] text-muted-foreground/50 mt-1 text-center">
-                Unfollows everyone you followed in the last 90 days who hasn't followed back
+                Scans your entire following list server-side and queues everyone — drains ~2k/hr via cron
               </p>
             </div>
           </>
@@ -1548,6 +1595,7 @@ type AFSettings = {
   minPosts: number;
   followbackDays: number;
   totalFollowed: number;
+  targetFollowCount: number;
 };
 type AFLogEntry = {
   did: string; handle: string; followers_count: number;
@@ -1618,6 +1666,7 @@ function AutoFollowTab() {
         minPosts: settings.minPosts,
         followbackDays: settings.followbackDays,
         markets: settings.markets,
+        targetFollowCount: settings.targetFollowCount,
       });
     }
   }, [settings]);
@@ -1939,6 +1988,19 @@ function AutoFollowTab() {
               onChange={e => setForm(f => ({ ...f, cap: parseInt(e.target.value) || 0 }))}
               className="w-full text-sm bg-background border border-input rounded-lg px-3 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             />
+          </label>
+          <label className="space-y-1 col-span-2">
+            <span className="text-xs text-muted-foreground">Target following count (0 = no target)</span>
+            <input
+              type="number" min={0}
+              value={form.targetFollowCount ?? ""}
+              onChange={e => setForm(f => ({ ...f, targetFollowCount: parseInt(e.target.value) || 0 }))}
+              placeholder="e.g. 1000000 for 1M"
+              className="w-full text-sm bg-background border border-input rounded-lg px-3 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            <p className="text-[10px] text-muted-foreground/60">
+              Cron auto-pauses once your Bluesky following count hits this number. Set 1,000,000 for 1M target — takes ~190 days at Bluesky's 5k/day limit.
+            </p>
           </label>
         </div>
 

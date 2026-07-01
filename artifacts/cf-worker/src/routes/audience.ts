@@ -358,6 +358,70 @@ route.post("/bluesky/unfollow-non-followers", async (c) => {
   return c.json({ succeeded, failed, errors: [], enqueued, skipped, message: msg });
 });
 
+/**
+ * Enqueues the user's ENTIRE following list for unfollow.
+ * Paginates server-side (100/page) via waitUntil — pure I/O so not counted
+ * against CF CPU limits. Safe for 50k+ following lists.
+ * The actual unfollows drain via the existing cron (100/tick ~2k/hr).
+ */
+route.post("/bluesky/queue-all-following", async (c) => {
+  if (!c.env.BLUESKY_HANDLE || !c.env.BLUESKY_APP_PASSWORD) {
+    return c.json({ error: "BLUESKY_HANDLE and BLUESKY_APP_PASSWORD required" }, 400);
+  }
+
+  const { ensureScheduledUnfollowTable, enqueueScheduledUnfollowItems } = await import("../lib/scheduled-unfollow");
+  await ensureScheduledUnfollowTable(c.env);
+
+  async function paginateAndEnqueue(env: typeof c.env): Promise<void> {
+    const { AtpAgent } = await import("@atproto/api");
+    const agent = new AtpAgent({ service: "https://bsky.social" });
+    try {
+      await agent.login({ identifier: env.BLUESKY_HANDLE!, password: env.BLUESKY_APP_PASSWORD! });
+    } catch (err) {
+      console.error("[queue-all-following] Login failed:", err);
+      return;
+    }
+
+    let cursor: string | undefined;
+    let totalEnqueued = 0;
+    let totalSkipped  = 0;
+    let pages = 0;
+
+    do {
+      try {
+        const result = await agent.getFollows({ actor: env.BLUESKY_HANDLE!, limit: 100, cursor });
+        const items = result.data.follows.map(f => ({
+          did: f.did,
+          followUri: (f.viewer as { following?: string })?.following ?? null,
+        }));
+        if (items.length > 0) {
+          const { enqueued, skipped } = await enqueueScheduledUnfollowItems(env, items);
+          totalEnqueued += enqueued;
+          totalSkipped  += skipped;
+        }
+        cursor = result.data.cursor;
+        pages++;
+        // Yield briefly every 10 pages to avoid overwhelming D1
+        if (pages % 10 === 0) {
+          await new Promise(r => setTimeout(r, 50));
+        }
+      } catch (err) {
+        console.error(`[queue-all-following] Page ${pages} failed:`, err);
+        break;
+      }
+    } while (cursor);
+
+    console.log(`[queue-all-following] Done — ${totalEnqueued} enqueued, ${totalSkipped} already tracked, ${pages} pages scanned`);
+  }
+
+  c.executionCtx.waitUntil(paginateAndEnqueue(c.env));
+
+  return c.json({
+    ok: true,
+    message: "Scanning your full following list in the background. All accounts will be queued for unfollow — check the unfollow queue to track progress.",
+  });
+});
+
 route.post("/bluesky/sync-engagement", async (c) => {
   const publisherDid = c.env.FEEDGEN_PUBLISHER_DID;
   if (!publisherDid) return c.json({ error: "FEEDGEN_PUBLISHER_DID not configured" }, 404);

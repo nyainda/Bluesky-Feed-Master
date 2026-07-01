@@ -38,8 +38,9 @@ export async function getAutoFollowSettings(env: Env): Promise<{
   minPosts: number;
   followbackDays: number;
   totalFollowed: number;
+  targetFollowCount: number;
 }> {
-  const [enabled, cap, markets, minFollowers, maxFollowers, minPosts, followbackDays] =
+  const [enabled, cap, markets, minFollowers, maxFollowers, minPosts, followbackDays, targetFollowCount] =
     await Promise.all([
       getSetting(env, "auto_follow_enabled", "0"),
       getSetting(env, "auto_follow_cap", "0"),        // 0 = unlimited (run forever)
@@ -48,6 +49,7 @@ export async function getAutoFollowSettings(env: Env): Promise<{
       getSetting(env, "auto_follow_max_followers", "50000"),
       getSetting(env, "auto_follow_min_posts", "5"),
       getSetting(env, "auto_follow_followback_days", "7"),
+      getSetting(env, "auto_follow_target_count", "0"), // 0 = no target
     ]);
 
   let parsedMarkets: string[] = ["usa", "europe", "uk"];
@@ -68,6 +70,7 @@ export async function getAutoFollowSettings(env: Env): Promise<{
     minPosts: Math.max(0, parseInt(minPosts, 10) || 5),
     followbackDays: Math.max(1, parseInt(followbackDays, 10) || 7),
     totalFollowed,
+    targetFollowCount: Math.max(0, parseInt(targetFollowCount, 10) || 0),
   };
 }
 
@@ -79,15 +82,17 @@ export async function saveAutoFollowSettings(env: Env, settings: {
   maxFollowers?: number;
   minPosts?: number;
   followbackDays?: number;
+  targetFollowCount?: number;
 }): Promise<void> {
   const writes: Promise<void>[] = [];
-  if (settings.enabled !== undefined)        writes.push(setSetting(env, "auto_follow_enabled", settings.enabled ? "1" : "0"));
-  if (settings.cap !== undefined)            writes.push(setSetting(env, "auto_follow_cap", String(settings.cap)));
-  if (settings.markets !== undefined)        writes.push(setSetting(env, "auto_follow_markets", JSON.stringify(settings.markets)));
-  if (settings.minFollowers !== undefined)   writes.push(setSetting(env, "auto_follow_min_followers", String(settings.minFollowers)));
-  if (settings.maxFollowers !== undefined)   writes.push(setSetting(env, "auto_follow_max_followers", String(settings.maxFollowers)));
-  if (settings.minPosts !== undefined)       writes.push(setSetting(env, "auto_follow_min_posts", String(settings.minPosts)));
-  if (settings.followbackDays !== undefined) writes.push(setSetting(env, "auto_follow_followback_days", String(settings.followbackDays)));
+  if (settings.enabled !== undefined)             writes.push(setSetting(env, "auto_follow_enabled", settings.enabled ? "1" : "0"));
+  if (settings.cap !== undefined)                 writes.push(setSetting(env, "auto_follow_cap", String(settings.cap)));
+  if (settings.markets !== undefined)             writes.push(setSetting(env, "auto_follow_markets", JSON.stringify(settings.markets)));
+  if (settings.minFollowers !== undefined)        writes.push(setSetting(env, "auto_follow_min_followers", String(settings.minFollowers)));
+  if (settings.maxFollowers !== undefined)        writes.push(setSetting(env, "auto_follow_max_followers", String(settings.maxFollowers)));
+  if (settings.minPosts !== undefined)            writes.push(setSetting(env, "auto_follow_min_posts", String(settings.minPosts)));
+  if (settings.followbackDays !== undefined)      writes.push(setSetting(env, "auto_follow_followback_days", String(settings.followbackDays)));
+  if (settings.targetFollowCount !== undefined)   writes.push(setSetting(env, "auto_follow_target_count", String(settings.targetFollowCount)));
   await Promise.all(writes);
 }
 
@@ -114,6 +119,24 @@ export async function runAutoFollow(env: Env, options?: { force?: boolean }): Pr
   if (settings.cap > 0 && settings.totalFollowed >= settings.cap) {
     console.log(`[auto-follow] Cap reached (${settings.totalFollowed}/${settings.cap}) — paused`);
     return;
+  }
+
+  // Stop discovery if target following count is reached (0 = no target)
+  if (settings.targetFollowCount > 0) {
+    try {
+      const { AtpAgent: AtpAgentCheck } = await import("@atproto/api");
+      const checkAgent = new AtpAgentCheck({ service: "https://bsky.social" });
+      await checkAgent.login({ identifier: env.BLUESKY_HANDLE, password: env.BLUESKY_APP_PASSWORD });
+      const profileRes = await checkAgent.getProfile({ actor: env.BLUESKY_HANDLE });
+      const currentFollowing = profileRes.data.followsCount ?? 0;
+      if (currentFollowing >= settings.targetFollowCount) {
+        console.log(`[auto-follow] Target reached (${currentFollowing.toLocaleString()}/${settings.targetFollowCount.toLocaleString()} following) — paused`);
+        return;
+      }
+      console.log(`[auto-follow] Progress: ${currentFollowing.toLocaleString()} / ${settings.targetFollowCount.toLocaleString()} target`);
+    } catch (err) {
+      console.warn("[auto-follow] Could not check target count:", err instanceof Error ? err.message : String(err));
+    }
   }
 
   await ensureFollowQueueTable(env);

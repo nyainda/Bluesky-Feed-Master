@@ -25,6 +25,7 @@ app.post("/follow-settings", async (c) => {
       maxFollowers?: number;
       minPosts?: number;
       followbackDays?: number;
+      targetFollowCount?: number;
     }>();
     await saveAutoFollowSettings(c.env, body);
     const settings = await getAutoFollowSettings(c.env);
