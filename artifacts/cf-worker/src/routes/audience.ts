@@ -174,17 +174,42 @@ route.post("/bluesky/bulk-follow", async (c) => {
     return c.json({ error: "dids must be a non-empty array" }, 400);
   }
 
-  // Queue into the drain system (handles any size, 40/tick = ~4,800/day)
-  const { enqueueFollowItems, ensureFollowQueueTable, runScheduledFollow } = await import("../lib/scheduled-follow");
-  await ensureFollowQueueTable(c.env);
-  const items = dids.map((did) => ({ did: String(did), handle: "", followersCount: 0, market: "bulk" }));
-  const { enqueued, skipped } = await enqueueFollowItems(c.env, items);
+  // For small batches (≤ 25): follow directly — same fast path as manual follow.
+  // For larger batches: follow the first 25 immediately, queue the rest for cron drain.
+  const DIRECT_LIMIT = 25;
+  const directDids = dids.slice(0, DIRECT_LIMIT).map(String);
+  const queueDids  = dids.slice(DIRECT_LIMIT).map(String);
 
-  // Kick off an immediate partial drain so the first 40 follow right away
-  c.executionCtx.waitUntil(runScheduledFollow(c.env));
+  const agent = await getAuthenticatedAgent(c.env);
+  let succeeded = 0;
+  let failed = 0;
 
-  return c.json({ succeeded: enqueued, failed: 0, enqueued, skipped,
-    message: `${enqueued} queued for follow (${skipped} already tracked). First batch draining now.` });
+  for (const did of directDids) {
+    try {
+      await agent.follow(did);
+      succeeded++;
+    } catch (err) {
+      console.error(`[bulk-follow] direct follow failed did=${did}:`, err);
+      failed++;
+    }
+  }
+
+  let enqueued = 0;
+  let skipped  = 0;
+  if (queueDids.length > 0) {
+    const { enqueueFollowItems, ensureFollowQueueTable } = await import("../lib/scheduled-follow");
+    await ensureFollowQueueTable(c.env);
+    const items = queueDids.map((did) => ({ did, handle: "", followersCount: 0, market: "bulk" }));
+    const result = await enqueueFollowItems(c.env, items);
+    enqueued = result.enqueued;
+    skipped  = result.skipped;
+  }
+
+  const msg = queueDids.length > 0
+    ? `${succeeded} followed instantly, ${failed} failed. ${enqueued} more queued for cron drain (${skipped} already tracked).`
+    : `${succeeded} followed instantly, ${failed} failed.`;
+
+  return c.json({ succeeded, failed, enqueued, skipped, message: msg });
 });
 
 route.post("/bluesky/bulk-unfollow", async (c) => {
