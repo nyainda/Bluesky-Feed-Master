@@ -5,7 +5,7 @@ import {
   Webhook, ChevronDown, ChevronUp, AlertTriangle, Zap, Activity,
   Clock, ExternalLink,
 } from "lucide-react";
-import { useListFeeds, useGetFirehoseStatus, useGetStatsOverview } from "@workspace/api-client-react";
+import { useListFeeds, useGetFirehoseStatus, useGetTopFeeds } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -320,11 +320,11 @@ export default function WebhookNotifications() {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
 
-  const { data: feedsData } = useListFeeds({ query: { staleTime: 60_000 } });
-  const { data: firehose } = useGetFirehoseStatus({ query: { refetchInterval: 30_000 } });
-  const { data: stats } = useGetStatsOverview({ query: { refetchInterval: 60_000 } });
+  const { data: feedsData } = useListFeeds({ query: { staleTime: 60_000, queryKey: ["webhook-feeds"] } });
+  const { data: firehose } = useGetFirehoseStatus({ query: { refetchInterval: 30_000, queryKey: ["webhook-firehose"] } });
+  const { data: topFeeds } = useGetTopFeeds({ query: { refetchInterval: 60_000, queryKey: ["webhook-top-feeds"] } });
 
-  const feeds = (feedsData?.feeds ?? []).map(f => ({ id: f.id, name: f.name }));
+  const feeds = (feedsData ?? []).map(f => ({ id: String(f.id), name: f.displayName }));
 
   const firehoseOfflineRef = useRef(false);
   const firedRulesRef = useRef<Set<string>>(new Set());
@@ -379,13 +379,11 @@ export default function WebhookNotifications() {
 
   useEffect(() => {
     const enabledWebhooks = webhooks.filter(w => w.enabled && w.url);
-    if (enabledWebhooks.length === 0 || !stats) return;
+    if (enabledWebhooks.length === 0 || !topFeeds) return;
 
     const feedPostCounts: Record<string, number> = {};
-    if (Array.isArray((stats as { feeds?: { id: string; postCount: number }[] }).feeds)) {
-      for (const f of (stats as { feeds: { id: string; postCount: number }[] }).feeds) {
-        feedPostCounts[f.id] = f.postCount;
-      }
+    for (const f of topFeeds) {
+      feedPostCounts[String(f.feedId)] = f.postCount;
     }
 
     for (const wh of enabledWebhooks) {
@@ -409,7 +407,7 @@ export default function WebhookNotifications() {
         }
       }
     }
-  }, [stats, webhooks, fireWebhook, addHistory]);
+  }, [topFeeds, webhooks, fireWebhook, addHistory]);
 
   function addWebhook() {
     const newWh: WebhookConfig = {

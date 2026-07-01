@@ -30,6 +30,13 @@ export function setBaseUrl(url: string | null): void {
 }
 
 /**
+ * Return the configured API base URL, or null when relative requests are used.
+ */
+export function getBaseUrl(): string | null {
+  return _baseUrl;
+}
+
+/**
  * Register a getter that supplies a bearer auth token.  Before every fetch
  * the getter is invoked; when it returns a non-null string, an
  * `Authorization: Bearer <token>` header is attached to the request.

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { customFetch, useListFeeds } from "@workspace/api-client-react";
+import { customFetch, getBaseUrl, useListFeeds } from "@workspace/api-client-react";
 import { format, formatDistanceToNow } from "date-fns";
 import {
   Globe, Radio, Rss, Zap, Plus, Trash2, ToggleLeft, ToggleRight,
@@ -223,7 +223,7 @@ function PlatformCard({ platform, onDelete, onToggle }: { platform: Platform; on
 function RssSection() {
   const { data: feedsData } = useListFeeds();
   const feeds = feedsData ?? [];
-  const workerUrl = "https://feedforge-api.manmysterious2020.workers.dev";
+  const workerUrl = getBaseUrl() ?? window.location.origin;
 
   if (feeds.length === 0) return (
     <div className="flex flex-col items-center justify-center h-32 gap-2">
