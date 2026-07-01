@@ -250,6 +250,41 @@ app.post("/api/admin/retry-failed-unfollows", async (c) => {
   }
 });
 
+// Follow queue status — counts by status so the UI can show drain progress
+app.get("/api/auto-follow/queue-status", async (c) => {
+  try {
+    const rows = await c.env.DB.prepare(
+      `SELECT status, count(*) as n FROM auto_follow_queue GROUP BY status`,
+    ).all();
+    const counts: Record<string, number> = {};
+    for (const row of (rows.results as Array<{ status: string; n: number }>)) {
+      counts[row.status] = Number(row.n);
+    }
+    const pending = counts["pending"] ?? 0;
+    const processing = counts["processing"] ?? 0;
+    const done = counts["done"] ?? 0;
+    const failed = counts["failed"] ?? 0;
+    const total = pending + processing + done + failed;
+    const estimatedMinutesLeft = Math.ceil((pending + processing) / 40) * 3;
+    return c.json({ ok: true, pending: pending + processing, done, failed, total, estimatedMinutesLeft });
+  } catch (err) {
+    return c.json({ ok: false, pending: 0, done: 0, failed: 0, total: 0, estimatedMinutesLeft: 0, error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// Clear completed follow queue entries (done / failed) to reset the progress bar
+app.post("/api/auto-follow/queue-clear", async (c) => {
+  try {
+    const result = await c.env.DB.prepare(
+      `DELETE FROM auto_follow_queue WHERE status IN ('done', 'failed')`,
+    ).run();
+    const deleted = (result.meta as { changes?: number })?.changes ?? 0;
+    return c.json({ ok: true, deleted });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
 // Manual trigger — indexes ALL feeds (bypasses stagger) + runs Jetstream pass
 app.post("/api/admin/trigger-index", async (c) => {
   c.executionCtx.waitUntil(

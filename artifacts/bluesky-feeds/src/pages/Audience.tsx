@@ -1544,8 +1544,23 @@ function AutoFollowTab() {
       refetchInterval: 30_000,
     });
 
+  const { data: queueStatus, refetch: refetchQueue } = useQuery<{
+    ok: boolean; pending: number; done: number; failed: number; total: number; estimatedMinutesLeft: number;
+  }>({
+    queryKey: ["af-queue-status"],
+    queryFn: () => customFetch("/api/auto-follow/queue-status"),
+    refetchInterval: (q) => (q.state.data?.pending ?? 0) > 0 ? 10_000 : 30_000,
+    staleTime: 5_000,
+  });
+
   const settings = settingsData?.settings;
   const log = logData?.entries ?? [];
+
+  const qTotal = queueStatus?.total ?? 0;
+  const qDone = queueStatus?.done ?? 0;
+  const qPending = queueStatus?.pending ?? 0;
+  const qFailed = queueStatus?.failed ?? 0;
+  const qPct = qTotal > 0 ? Math.round((qDone / qTotal) * 100) : 0;
 
   // Local editable copy
   const [form, setForm] = useState<Partial<AFSettings>>({});
@@ -1640,6 +1655,8 @@ function AutoFollowTab() {
       toast({ title: "Auto-follow triggered", description: "Discovery + first batch of follows starting now." });
       setTimeout(() => qc.invalidateQueries({ queryKey: ["af-settings"] }), 5_000);
       setTimeout(() => qc.invalidateQueries({ queryKey: ["af-log"] }), 10_000);
+      setTimeout(() => refetchQueue(), 2_000);
+      setTimeout(() => refetchQueue(), 8_000);
     } catch {
       toast({ title: "Failed to trigger", variant: "destructive" });
     } finally {
@@ -1713,6 +1730,48 @@ function AutoFollowTab() {
           </div>
         ))}
       </div>
+
+      {/* ── Queue drain progress ── */}
+      {qTotal > 0 && (
+        <div className="bg-card border border-card-border rounded-xl px-4 py-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              {qPending > 0
+                ? <Loader2 className="w-3.5 h-3.5 text-primary animate-spin flex-shrink-0" />
+                : <CheckCircle className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />}
+              <span className="text-xs font-semibold text-foreground truncate">
+                {qPending > 0 ? `${qPending.toLocaleString()} follow${qPending !== 1 ? "s" : ""} queued` : "All follows complete"}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 flex-shrink-0">
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {qDone.toLocaleString()} / {qTotal.toLocaleString()}
+                {qFailed > 0 && <span className="text-destructive ml-1">({qFailed} failed)</span>}
+                {qPending > 0 && (queueStatus?.estimatedMinutesLeft ?? 0) > 0 ? ` · ~${queueStatus!.estimatedMinutesLeft}m left` : ""}
+              </span>
+              {qPending === 0 && (
+                <button
+                  onClick={() => customFetch("/api/auto-follow/queue-clear", { method: "POST" }).then(() => refetchQueue())}
+                  className="text-[10px] text-muted-foreground hover:text-destructive transition-colors"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+            <motion.div
+              className={cn("h-full rounded-full", qPending > 0 ? "bg-primary" : "bg-emerald-500")}
+              initial={false}
+              animate={{ width: `${qPct}%` }}
+              transition={{ duration: 0.6, ease: "easeOut" }}
+            />
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Drains at ~40 follows per 3-min cron tick · ≈4,800/day max
+          </p>
+        </div>
+      )}
 
       {/* ── Editable settings ── */}
       <div className="bg-card border border-card-border rounded-xl px-4 py-4 space-y-3">
