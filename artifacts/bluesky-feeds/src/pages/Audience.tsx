@@ -17,6 +17,7 @@ import {
   TrendingUp, Heart, AlertTriangle, Filter, X, ArrowUpRight, BarChart2, Camera,
   Clock, Shield, Settings2, ToggleLeft, ToggleRight, History,
   ListOrdered, Pause, Play, Ban, Loader2, Download, CheckCircle, Zap, Activity, Globe,
+  Timer,
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -2287,6 +2288,8 @@ type FollowQueueStatus = {
   estimatedMinutesLeft: number;
 };
 
+
+
 function DiscoverTab() {
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
@@ -2700,6 +2703,235 @@ const QUEUE_BATCH_DELAY_MS = 8_000;      // 8s between successful batches
 const RATE_LIMIT_BACKOFF_MS = 65_000;    // 65s backoff when we detect rate limiting (just over the 60s window reset)
 const RETRY_DELAY_MS = 12_000;           // 12s before retrying a failed batch
 const MAX_BATCH_RETRIES = 3;             // retry each batch up to 3 times before skipping
+
+// ─── Cron Operations Progress Panel ─────────────────────────────────────────
+
+type UnfollowCampaignStatus = {
+  ok: boolean;
+  scan: { scanning: boolean; pagesScanned: number; totalEnqueued: number; startedAt: string | null; completedAt: string | null };
+  queue: { pending: number; done: number; failed: number; total: number; estimatedMinutesLeft: number };
+  lastDrain: { at: string | null; done: number; failed: number; error: string | null; skipReason: string | null };
+  lastCronTick: string | null;
+};
+
+function useCronTickAge(lastCronTick: string | null) {
+  const [age, setAge] = useState<string>("—");
+  useEffect(() => {
+    if (!lastCronTick) { setAge("—"); return; }
+    function update() {
+      const d = new Date(lastCronTick!);
+      if (isNaN(d.getTime())) { setAge("—"); return; }
+      const secs = Math.floor((Date.now() - d.getTime()) / 1000);
+      if (secs < 60) setAge(`${secs}s ago`);
+      else if (secs < 3600) setAge(`${Math.floor(secs / 60)}m ago`);
+      else setAge(`${Math.floor(secs / 3600)}h ago`);
+    }
+    update();
+    const id = setInterval(update, 5000);
+    return () => clearInterval(id);
+  }, [lastCronTick]);
+  return age;
+}
+
+function ProgressRow({
+  label,
+  icon: Icon,
+  iconClass,
+  done,
+  total,
+  pending,
+  failed,
+  estimatedMins,
+  active,
+  error,
+}: {
+  label: string;
+  icon: React.ElementType;
+  iconClass: string;
+  done: number;
+  total: number;
+  pending: number;
+  failed: number;
+  estimatedMins: number;
+  active: boolean;
+  error?: string | null;
+}) {
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  return (
+    <div className="flex-1 min-w-0 space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Icon className={cn("w-3.5 h-3.5 flex-shrink-0", iconClass, active && "animate-pulse")} />
+          <span className="text-xs font-semibold text-foreground truncate">{label}</span>
+          {active && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/12 text-emerald-500 font-medium flex-shrink-0">
+              LIVE
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0 text-[11px] text-muted-foreground tabular-nums">
+          <span><strong className="text-foreground">{done.toLocaleString()}</strong>/{total.toLocaleString()}</span>
+          {pending > 0 && (
+            <span className="text-amber-500 font-medium">{pending.toLocaleString()} left</span>
+          )}
+          {failed > 0 && (
+            <span className="text-destructive">{failed} failed</span>
+          )}
+        </div>
+      </div>
+      <div className="relative h-1.5 w-full rounded-full bg-muted overflow-hidden">
+        <motion.div
+          className={cn("absolute inset-y-0 left-0 rounded-full", active ? "bg-primary" : "bg-muted-foreground/40")}
+          initial={{ width: 0 }}
+          animate={{ width: `${pct}%` }}
+          transition={{ duration: 0.6, ease: "easeOut" }}
+        />
+      </div>
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+        <span>{pct}% complete</span>
+        <span className="flex items-center gap-1">
+          {pending > 0 && estimatedMins > 0 && (
+            <><Timer className="w-3 h-3" /> ~{estimatedMins >= 60 ? `${Math.ceil(estimatedMins / 60)}h` : `${estimatedMins}m`} left</>
+          )}
+          {pending === 0 && done > 0 && <><CheckCircle className="w-3 h-3 text-emerald-500" /> Done</>}
+        </span>
+      </div>
+      {error && (
+        <p className="text-[10px] text-amber-500/80 truncate">⚠ Last drain error: {error}</p>
+      )}
+    </div>
+  );
+}
+
+function CronOperationsPanel() {
+  const followIsActive = useRef(false);
+  const unfollowIsActive = useRef(false);
+
+  const { data: followQ, dataUpdatedAt: followUpdatedAt } = useQuery<FollowQueueStatus>({
+    queryKey: ["cron-follow-queue"],
+    queryFn: () => customFetch("/api/auto-follow/queue-status"),
+    refetchInterval: (query) => (query.state.data?.pending ?? 0) > 0 ? 4_000 : 20_000,
+    staleTime: 3_000,
+  });
+
+  const { data: unfollowC, dataUpdatedAt: unfollowUpdatedAt } = useQuery<UnfollowCampaignStatus>({
+    queryKey: ["cron-unfollow-campaign"],
+    queryFn: () => customFetch("/api/bluesky/unfollow-campaign/status"),
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      const active = (d?.queue?.pending ?? 0) > 0 || (d?.scan?.scanning ?? false);
+      return active ? 4_000 : 20_000;
+    },
+    staleTime: 3_000,
+  });
+
+  const lastCronTick = unfollowC?.lastCronTick ?? null;
+  const cronAge = useCronTickAge(lastCronTick);
+
+  const followPending = followQ?.pending ?? 0;
+  const followDone = followQ?.done ?? 0;
+  const followTotal = followQ?.total ?? 0;
+  const followFailed = followQ?.failed ?? 0;
+  const followEstMins = followQ?.estimatedMinutesLeft ?? 0;
+  const followActive = followPending > 0;
+
+  const unfollowPending = unfollowC?.queue?.pending ?? 0;
+  const unfollowDone = unfollowC?.queue?.done ?? 0;
+  const unfollowTotal = unfollowC?.queue?.total ?? 0;
+  const unfollowFailed = unfollowC?.queue?.failed ?? 0;
+  const unfollowEstMins = unfollowC?.queue?.estimatedMinutesLeft ?? 0;
+  const scanActive = unfollowC?.scan?.scanning ?? false;
+  const unfollowActive = unfollowPending > 0 || scanActive;
+  const drainError = unfollowC?.lastDrain?.error ?? null;
+
+  followIsActive.current = followActive;
+  unfollowIsActive.current = unfollowActive;
+
+  const hasAnyActivity = followTotal > 0 || unfollowTotal > 0;
+  if (!hasAnyActivity) return null;
+
+  const lastFetchAge = Math.max(followUpdatedAt, unfollowUpdatedAt);
+  const secondsSinceUpdate = Math.floor((Date.now() - lastFetchAge) / 1000);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -6 }}
+      transition={{ duration: 0.2 }}
+      className="mb-5 bg-card border border-card-border rounded-xl overflow-hidden"
+    >
+      {/* Header */}
+      <div className="px-4 py-2.5 border-b border-border/50 bg-muted/10 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Activity className="w-3.5 h-3.5 text-primary" />
+          <span className="text-xs font-semibold text-foreground">Cron Queue Status</span>
+          {(followActive || unfollowActive) && (
+            <span className="flex h-2 w-2 relative ml-0.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+          {lastCronTick && (
+            <span className="flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              Cron: {cronAge}
+            </span>
+          )}
+          <span className="flex items-center gap-1 opacity-60">
+            <RefreshCw className={cn("w-3 h-3", secondsSinceUpdate < 5 && "animate-spin")} />
+            {secondsSinceUpdate < 5 ? "Updating…" : `${secondsSinceUpdate}s`}
+          </span>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className={cn(
+        "px-4 py-3.5 gap-5",
+        followTotal > 0 && unfollowTotal > 0 ? "flex flex-col md:flex-row md:divide-x md:divide-border/50" : "flex",
+      )}>
+        {followTotal > 0 && (
+          <ProgressRow
+            label="Follow Queue"
+            icon={UserPlus}
+            iconClass="text-primary"
+            done={followDone}
+            total={followTotal}
+            pending={followPending}
+            failed={followFailed}
+            estimatedMins={followEstMins}
+            active={followActive}
+          />
+        )}
+        {unfollowTotal > 0 && (
+          <div className={cn("flex-1 min-w-0", followTotal > 0 && "md:pl-5 pt-3.5 md:pt-0 border-t md:border-t-0 border-border/50")}>
+            <ProgressRow
+              label={scanActive ? "Unfollow Scan + Drain" : "Unfollow Queue"}
+              icon={UserMinus}
+              iconClass="text-destructive"
+              done={unfollowDone}
+              total={unfollowTotal}
+              pending={unfollowPending}
+              failed={unfollowFailed}
+              estimatedMins={unfollowEstMins}
+              active={unfollowActive}
+              error={drainError}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Footer: cron cadence note */}
+      <div className="px-4 py-2 border-t border-border/30 bg-muted/5">
+        <p className="text-[10px] text-muted-foreground/60">
+          CF Worker cron runs every 3 min · drains ~40 follows and ~34 unfollows per tick
+        </p>
+      </div>
+    </motion.div>
+  );
+}
 
 export default function Audience() {
   const [tab, setTab] = useState<Tab>("followers");
@@ -3131,6 +3363,11 @@ export default function Audience() {
           <StatBadge label="Not Following Back" value={nfbUsers.length > 0 ? nfbUsers.length : "—"} />
         </motion.div>
       )}
+
+      {/* Real-time Cron Operations Panel */}
+      <AnimatePresence>
+        <CronOperationsPanel />
+      </AnimatePresence>
 
       {/* Auto-Unfollow Card */}
       <AutoUnfollowCard />
