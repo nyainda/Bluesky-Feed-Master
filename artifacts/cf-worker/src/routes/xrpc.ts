@@ -70,51 +70,95 @@ route.get("/xrpc/app.bsky.feed.getFeedSkeleton", async (c) => {
   }
 
   try {
-    // ── Ranked feed path ─────────────────────────────────────────────────────
-    // Use precomputed feed_ranked_posts (author score 40% + engagement velocity
-    // 30% + quality 20% + recency 10%). Falls back to raw indexedAt order only
-    // if the ranking table is empty for this feed (e.g. first run after deploy).
-    // Cursor format for ranked: "r::<rankOffset>" (e.g. "r::30" = page 2)
-    // Cursor format for fallback: "<indexedAt>::<cid>"
+    // ── Feed skeleton strategy ────────────────────────────────────────────────
+    // Cursor format for ranked pages:  "r::<rankOffset>" (e.g. "r::30")
+    // Cursor format for recency pages: "<indexedAt>::<cid>"
+    //
+    // FIRST PAGE (no cursor): always start with the N most-recently-indexed
+    // posts so fresh content appears immediately in the Bluesky app, then
+    // backfill remaining slots with precomputed ranked posts (excluding dupes).
+    // This guarantees that posts indexed minutes ago surface at the top even
+    // if the ranking cron hasn't scored them yet.
+    //
+    // SUBSEQUENT PAGES (with cursor): ranked offset pagination as before,
+    // falling back to indexedAt recency when ranked table is empty.
 
     const isRankedCursor = cursor?.startsWith("r::");
     const rankOffset = isRankedCursor ? parseInt(cursor!.slice(3), 10) || 0 : 0;
-
-    // Fetch ranked posts — use offset pagination via rank number
-    const rankedCount = await db
-      .select({ postUri: feedRankedPostsTable.postUri })
-      .from(feedRankedPostsTable)
-      .where(
-        and(
-          eq(feedRankedPostsTable.feedId, feed.id),
-          gt(feedRankedPostsTable.rank, rankOffset),
-        )
-      )
-      .orderBy(asc(feedRankedPostsTable.rank))
-      .limit(limit);
+    const feedTagCondition = sql`instr(',' || ${indexedPostsTable.algoTags} || ',', ',' || ${feed.recordName} || ',') > 0`;
 
     let skeleton: { post: string }[];
     let nextCursor: string | undefined;
 
-    if (rankedCount.length > 0) {
-      // Use ranked results
-      skeleton = rankedCount.map((r) => ({ post: r.postUri }));
-      if (rankedCount.length >= limit) {
+    if (!cursor) {
+      // ── First page: recent-first hybrid ──────────────────────────────────
+      // Fetch the most recently indexed posts for this feed (guaranteed fresh).
+      const RECENT_SLOTS = Math.min(10, limit);
+      const recentRows = await db
+        .select({ uri: indexedPostsTable.uri })
+        .from(indexedPostsTable)
+        .where(feedTagCondition)
+        .orderBy(desc(indexedPostsTable.indexedAt))
+        .limit(RECENT_SLOTS);
+
+      const recentUriSet = new Set(recentRows.map((r) => r.uri));
+
+      // Fill remaining slots with top-ranked posts not already in recent set.
+      const remainingSlots = limit - recentRows.length;
+      let rankedFiller: { post: string }[] = [];
+      if (remainingSlots > 0) {
+        const ranked = await db
+          .select({ postUri: feedRankedPostsTable.postUri })
+          .from(feedRankedPostsTable)
+          .where(eq(feedRankedPostsTable.feedId, feed.id))
+          .orderBy(asc(feedRankedPostsTable.rank))
+          .limit(remainingSlots + RECENT_SLOTS); // fetch extra to cover dupes
+        rankedFiller = ranked
+          .filter((r) => !recentUriSet.has(r.postUri))
+          .slice(0, remainingSlots)
+          .map((r) => ({ post: r.postUri }));
+      }
+
+      skeleton = [
+        ...recentRows.map((r) => ({ post: r.uri })),
+        ...rankedFiller,
+      ];
+
+      // Next cursor: ranked offset starting after the filler we consumed.
+      if (rankedFiller.length >= remainingSlots) {
+        nextCursor = `r::${rankedFiller.length + RECENT_SLOTS}`;
+      }
+    } else if (isRankedCursor || rankOffset > 0) {
+      // ── Subsequent ranked pages ───────────────────────────────────────────
+      const ranked = await db
+        .select({ postUri: feedRankedPostsTable.postUri })
+        .from(feedRankedPostsTable)
+        .where(
+          and(
+            eq(feedRankedPostsTable.feedId, feed.id),
+            gt(feedRankedPostsTable.rank, rankOffset),
+          )
+        )
+        .orderBy(asc(feedRankedPostsTable.rank))
+        .limit(limit);
+
+      skeleton = ranked.map((r) => ({ post: r.postUri }));
+      if (ranked.length >= limit) {
         nextCursor = `r::${rankOffset + limit}`;
       }
     } else {
-      // Fallback: plain recency order (first run or no ranked data yet)
-      const conditions = [sql`instr(',' || ${indexedPostsTable.algoTags} || ',', ',' || ${feed.recordName} || ',') > 0`];
-      if (cursor && !isRankedCursor) {
-        const [ts] = cursor.split("::");
-        conditions.push(lt(indexedPostsTable.indexedAt, ts));
-      }
+      // ── Recency cursor page (fallback when no ranked data) ────────────────
+      const conditions = [feedTagCondition];
+      const [ts] = cursor.split("::");
+      if (ts) conditions.push(lt(indexedPostsTable.indexedAt, ts));
+
       const posts = await db
         .select()
         .from(indexedPostsTable)
         .where(and(...conditions))
         .orderBy(desc(indexedPostsTable.indexedAt))
         .limit(limit);
+
       skeleton = posts.map((p) => ({ post: p.uri }));
       if (posts.length >= limit) {
         const last = posts[posts.length - 1];
