@@ -147,6 +147,45 @@ route.get("/stats/top-posts", async (c) => {
   }
 });
 
+route.get("/stats/feeds-freshness", async (c) => {
+  const db = createDb(c.env.DB);
+  const feeds = await db.select().from(feedsTable);
+  const since1h = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  const results = await Promise.all(
+    feeds.map(async (feed) => {
+      const tag = `%${feed.recordName}%`;
+      const [stats] = await db.all<{
+        postCount: number;
+        postsLast1h: number;
+        postsLast24h: number;
+        lastIndexedAt: string | null;
+      }>(sql`
+        SELECT
+          COUNT(*) as postCount,
+          COUNT(CASE WHEN indexed_at >= ${since1h} THEN 1 END) as postsLast1h,
+          COUNT(CASE WHEN indexed_at >= ${since24h} THEN 1 END) as postsLast24h,
+          MAX(indexed_at) as lastIndexedAt
+        FROM indexed_posts
+        WHERE algo_tags LIKE ${tag}
+      `);
+      return {
+        feedId: feed.id,
+        recordName: feed.recordName,
+        displayName: feed.displayName,
+        isActive: feed.isActive,
+        postCount: Number(stats?.postCount ?? 0),
+        postsLast1h: Number(stats?.postsLast1h ?? 0),
+        postsLast24h: Number(stats?.postsLast24h ?? 0),
+        lastIndexedAt: stats?.lastIndexedAt ?? null,
+      };
+    }),
+  );
+
+  return c.json(results);
+});
+
 route.get("/stats/engagement-overview", async (c) => {
   const db = createDb(c.env.DB);
   const feedId = c.req.query("feedId") ? parseInt(c.req.query("feedId")!, 10) : null;

@@ -1,11 +1,12 @@
 import { useState, useMemo } from "react";
 import { useListFeeds, useCreateFeed, useUpdateFeed, useDeleteFeed, getListFeedsQueryKey, customFetch } from "@workspace/api-client-react";
 import type { Feed } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus, Trash2, ChevronRight, CheckCircle, XCircle, Rss,
   Sparkles, Tag, Check, Search, Edit2, X, RotateCcw, RefreshCw, AlertTriangle,
+  Globe, Zap, TrendingUp, Clock,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -536,6 +537,39 @@ export default function Feeds() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  const { data: geoData } = useQuery<{
+    country: string; continent: string; colo: string;
+    city: string; region: string; timezone: string;
+  }>({
+    queryKey: ["geo"],
+    queryFn: async () => {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL ?? ""}/api/geo`);
+      return res.json();
+    },
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+
+  type FeedFreshness = {
+    feedId: number; recordName: string; displayName: string; isActive: boolean;
+    postCount: number; postsLast1h: number; postsLast24h: number; lastIndexedAt: string | null;
+  };
+  const { data: freshnessData } = useQuery<FeedFreshness[]>({
+    queryKey: ["feeds-freshness"],
+    queryFn: async () => {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL ?? ""}/api/stats/feeds-freshness`);
+      return res.json();
+    },
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+
+  const freshnessMap = useMemo(() => {
+    const map: Record<number, FeedFreshness> = {};
+    if (freshnessData) freshnessData.forEach((f) => { map[f.feedId] = f; });
+    return map;
+  }, [freshnessData]);
+
   async function triggerIndex() {
     setIndexing(true);
     setIndexResults(null);
@@ -602,6 +636,57 @@ export default function Feeds() {
             <span className="hidden sm:inline">New Feed</span>
             <span className="sm:hidden">New</span>
           </Button>
+        </div>
+      </motion.div>
+
+      {/* PoP + Freshness info bar */}
+      <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="mb-4 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+        {/* Serving PoP */}
+        <div className="flex items-center gap-3 bg-card border border-card-border rounded-xl px-4 py-3">
+          <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
+            <Globe className="w-4 h-4 text-blue-500" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide leading-none mb-0.5">Serving From</p>
+            {geoData ? (
+              <p className="text-sm font-semibold text-foreground truncate">
+                <span className="font-mono text-blue-500">{geoData.colo}</span>
+                <span className="text-muted-foreground font-normal"> · {geoData.city}, {geoData.country}</span>
+              </p>
+            ) : (
+              <div className="h-4 w-36 bg-muted rounded animate-pulse" />
+            )}
+          </div>
+          {geoData && (
+            <span className="ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-600 dark:text-green-400 flex-shrink-0">
+              Edge · {geoData.continent}
+            </span>
+          )}
+        </div>
+
+        {/* Global freshness summary */}
+        <div className="flex items-center gap-3 bg-card border border-card-border rounded-xl px-4 py-3">
+          <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center flex-shrink-0">
+            <Zap className="w-4 h-4 text-violet-500" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide leading-none mb-0.5">Posts Indexed</p>
+            {freshnessData ? (
+              <p className="text-sm font-semibold text-foreground">
+                <span className="text-violet-500">{freshnessData.reduce((s, f) => s + f.postsLast1h, 0).toLocaleString()}</span>
+                <span className="text-muted-foreground font-normal"> /hr · </span>
+                <span className="text-foreground">{freshnessData.reduce((s, f) => s + f.postsLast24h, 0).toLocaleString()}</span>
+                <span className="text-muted-foreground font-normal"> /24h</span>
+              </p>
+            ) : (
+              <div className="h-4 w-40 bg-muted rounded animate-pulse" />
+            )}
+          </div>
+          {freshnessData && (
+            <span className="ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-600 dark:text-violet-400 flex-shrink-0">
+              {freshnessData.length} feeds
+            </span>
+          )}
         </div>
       </motion.div>
 
@@ -699,16 +784,39 @@ export default function Feeds() {
                     {feed.description && (
                       <p className="text-xs text-muted-foreground truncate">{feed.description}</p>
                     )}
-                    <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground flex-wrap">
                       <span className="font-medium text-foreground tabular-nums">{feed.postCount.toLocaleString()}</span>
                       <span className="text-muted-foreground/60">posts indexed</span>
-                      <span className="hidden sm:inline text-muted-foreground/40">·</span>
-                      {(feed as unknown as Record<string, unknown>).lastIndexedAt ? (
-                        <span className="hidden sm:inline">
-                          Last post {formatDistanceToNow(new Date((feed as unknown as Record<string, unknown>).lastIndexedAt as string), { addSuffix: true })}
-                        </span>
-                      ) : (
-                        <span className="hidden sm:inline">Created {formatDistanceToNow(new Date(feed.createdAt), { addSuffix: true })}</span>
+                      {freshnessMap[feed.id] && (
+                        <>
+                          <span className="text-muted-foreground/40">·</span>
+                          <span className="flex items-center gap-1">
+                            <TrendingUp className="w-3 h-3 text-violet-500" />
+                            <span className="font-medium text-foreground tabular-nums">{freshnessMap[feed.id].postsLast1h.toLocaleString()}</span>
+                            <span className="text-muted-foreground/60">/hr</span>
+                          </span>
+                          {freshnessMap[feed.id].lastIndexedAt && (
+                            <>
+                              <span className="hidden sm:inline text-muted-foreground/40">·</span>
+                              <span className="hidden sm:flex items-center gap-1">
+                                <Clock className="w-3 h-3 text-muted-foreground/60" />
+                                {formatDistanceToNow(new Date(freshnessMap[feed.id].lastIndexedAt!), { addSuffix: true })}
+                              </span>
+                            </>
+                          )}
+                        </>
+                      )}
+                      {!freshnessMap[feed.id] && (
+                        <>
+                          <span className="hidden sm:inline text-muted-foreground/40">·</span>
+                          {(feed as unknown as Record<string, unknown>).lastIndexedAt ? (
+                            <span className="hidden sm:inline">
+                              Last post {formatDistanceToNow(new Date((feed as unknown as Record<string, unknown>).lastIndexedAt as string), { addSuffix: true })}
+                            </span>
+                          ) : (
+                            <span className="hidden sm:inline">Created {formatDistanceToNow(new Date(feed.createdAt), { addSuffix: true })}</span>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
