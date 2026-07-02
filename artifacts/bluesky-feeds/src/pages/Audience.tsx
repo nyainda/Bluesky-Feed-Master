@@ -1107,11 +1107,20 @@ function AutoUnfollowCard() {
                   {campaign.lastDrain.failed > 0 && (
                     <span className="text-[10px] text-destructive/70">{campaign.lastDrain.failed} failed</span>
                   )}
-                  {campaign.lastDrain.skipReason && (
-                    <span className="text-[10px] text-amber-600 bg-amber-500/8 border border-amber-500/20 px-1.5 py-0.5 rounded-full">
-                      skipped: {campaign.lastDrain.skipReason}
-                    </span>
-                  )}
+                  {campaign.lastDrain.skipReason && (() => {
+                    const r = campaign.lastDrain.skipReason!;
+                    const label =
+                      r.startsWith("no-pending") ? "queue empty — cron idle" :
+                      r === "missing-credentials" ? "cron missing credentials" :
+                      r.startsWith("table-error") ? "DB error" :
+                      `skipped: ${r}`;
+                    const isOk = r.startsWith("no-pending");
+                    return (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isOk ? "text-muted-foreground/50 bg-muted/40" : "text-amber-600 bg-amber-500/8 border border-amber-500/20"}`}>
+                        {label}
+                      </span>
+                    );
+                  })()}
                   {campaign.lastCronTick && (
                     <span className="text-[10px] text-muted-foreground/40 ml-auto">
                       cron: {formatDistanceToNow(new Date(campaign.lastCronTick), { addSuffix: true })}
