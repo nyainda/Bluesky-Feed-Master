@@ -150,7 +150,7 @@ route.post("/bluesky/compose", async (c) => {
     return c.json({ error: "BLUESKY_HANDLE and BLUESKY_APP_PASSWORD required" }, 400);
   }
 
-  let body: { text?: string; threadPosts?: string[] } = {};
+  let body: { text?: string; threadPosts?: string[]; replyTo?: { uri: string; cid: string } } = {};
   try { body = await c.req.json(); } catch {
     return c.json({ error: "Invalid JSON body" }, 400);
   }
@@ -168,6 +168,11 @@ route.post("/bluesky/compose", async (c) => {
 
     let replyRef: { root: { uri: string; cid: string }; parent: { uri: string; cid: string } } | undefined;
     let rootRef: { uri: string; cid: string } | undefined;
+
+    // If replying to an existing post, seed the reply chain from it
+    if (body.replyTo) {
+      replyRef = { root: body.replyTo, parent: body.replyTo };
+    }
 
     for (const text of posts) {
       const rt = new RichText({ text });

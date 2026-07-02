@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useParams, Link } from "wouter";
 import {
   useGetFeed, useGetFeedKeywords, useGetFeedPosts,
@@ -16,12 +16,13 @@ import {
   Upload, CheckCircle, AlertTriangle, BarChart3, FileText, Hash,
   Users, Heart, TrendingUp, Play, RefreshCw, Rss, ArrowUpRight,
   Repeat2, MessageCircle, Image, Zap, Trophy, Clock,
-  Sparkles, ToggleLeft, ToggleRight, Loader2,
+  Sparkles, ToggleLeft, ToggleRight, Loader2, Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow, format } from "date-fns";
 import {
@@ -43,6 +44,50 @@ const COLORS = [
 function shortenDid(did: string) {
   if (did.length <= 20) return did;
   return did.substring(0, 14) + "…" + did.substring(did.length - 6);
+}
+
+type BskyProfile = { handle: string; displayName?: string; avatar?: string };
+const bskyProfileCache = new Map<string, BskyProfile>();
+
+async function resolveProfiles(dids: string[]): Promise<Map<string, BskyProfile>> {
+  const unresolved = dids.filter(d => !bskyProfileCache.has(d));
+  for (let i = 0; i < unresolved.length; i += 25) {
+    const chunk = unresolved.slice(i, i + 25);
+    const qs = chunk.map(d => `actors=${encodeURIComponent(d)}`).join("&");
+    try {
+      const res = await fetch(`https://public.api.bsky.app/xrpc/app.bsky.actor.getProfiles?${qs}`);
+      if (res.ok) {
+        const data = await res.json() as { profiles: Array<{ did: string; handle: string; displayName?: string; avatar?: string }> };
+        for (const p of data.profiles ?? []) {
+          bskyProfileCache.set(p.did, { handle: p.handle, displayName: p.displayName, avatar: p.avatar });
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  const result = new Map<string, BskyProfile>();
+  for (const did of dids) {
+    const cached = bskyProfileCache.get(did);
+    if (cached) result.set(did, cached);
+  }
+  return result;
+}
+
+function PostAuthorAvatar({ profile, did }: { profile?: BskyProfile; did: string }) {
+  const initials = (profile?.displayName ?? profile?.handle ?? did)?.[0]?.toUpperCase() ?? "?";
+  if (profile?.avatar) {
+    return (
+      <img
+        src={profile.avatar}
+        alt={profile.handle}
+        className="w-8 h-8 rounded-full flex-shrink-0 ring-1 ring-border object-cover"
+      />
+    );
+  }
+  return (
+    <div className="w-8 h-8 rounded-full bg-primary/10 border border-primary/15 flex items-center justify-center flex-shrink-0">
+      <span className="text-xs font-bold text-primary">{initials}</span>
+    </div>
+  );
 }
 function formatHour(iso: string) {
   try { return format(new Date(iso), "HH:mm"); } catch { return iso; }
@@ -628,6 +673,10 @@ export default function FeedDetail() {
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
   const [repostedPosts, setRepostedPosts] = useState<Set<string>>(new Set());
   const [engagingPost, setEngagingPost] = useState<string | null>(null);
+  const [feedProfiles, setFeedProfiles] = useState<Map<string, BskyProfile>>(new Map());
+  const [replyTarget, setReplyTarget] = useState<{ uri: string; cid: string; text: string; author: string } | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [sendingReply, setSendingReply] = useState(false);
   const [suggestions, setSuggestions] = useState<{ word: string; count: number; avgEngagement: number }[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -719,6 +768,32 @@ export default function FeedDetail() {
       toast({ title: "Failed to get suggestions", variant: "destructive" });
     } finally {
       setLoadingSuggestions(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!postsPage?.posts?.length) return;
+    const dids = [...new Set(postsPage.posts.map(p => p.author))];
+    resolveProfiles(dids).then(resolved => {
+      setFeedProfiles(prev => new Map([...prev, ...resolved]));
+    });
+  }, [postsPage?.posts]);
+
+  async function handleReply() {
+    if (!replyText.trim() || !replyTarget || sendingReply) return;
+    setSendingReply(true);
+    try {
+      await customFetch("/api/bluesky/compose", {
+        method: "POST",
+        body: JSON.stringify({ text: replyText.trim(), replyTo: { uri: replyTarget.uri, cid: replyTarget.cid } }),
+      });
+      toast({ title: "Reply sent!" });
+      setReplyTarget(null);
+      setReplyText("");
+    } catch {
+      toast({ title: "Couldn't send reply", description: "Make sure Bluesky credentials are configured.", variant: "destructive" });
+    } finally {
+      setSendingReply(false);
     }
   }
 
@@ -1011,22 +1086,39 @@ export default function FeedDetail() {
                               </div>
                             )}
                             <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                <a href={`https://bsky.app/profile/${post.author}`} target="_blank" rel="noreferrer" className="text-xs font-mono text-muted-foreground hover:text-primary transition-colors">{shortenDid(post.author)}</a>
-                                <span className="text-muted-foreground/30 text-xs">·</span>
-                                <span className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(post.indexedAt), { addSuffix: true })}</span>
-                                {post.likes > 0 && (
-                                  <span className="flex items-center gap-0.5 text-[11px] text-rose-500">
-                                    <Heart className="w-2.5 h-2.5" />{post.likes}
-                                  </span>
-                                )}
-                                {post.reposts > 0 && (
-                                  <span className="flex items-center gap-0.5 text-[11px] text-emerald-600">
-                                    <Repeat2 className="w-2.5 h-2.5" />{post.reposts}
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-sm text-foreground leading-relaxed line-clamp-2 mb-1.5">{post.text}</p>
+                              {(() => {
+                                const profile = feedProfiles.get(post.author);
+                                const handle = profile?.handle ?? shortenDid(post.author);
+                                const displayName = profile?.displayName;
+                                return (
+                                  <div className="flex items-start gap-2.5 mb-1.5">
+                                    <a href={`https://bsky.app/profile/${handle}`} target="_blank" rel="noreferrer" className="flex-shrink-0 mt-0.5">
+                                      <PostAuthorAvatar profile={profile} did={post.author} />
+                                    </a>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-baseline gap-1.5 flex-wrap mb-0.5">
+                                        {displayName && (
+                                          <a href={`https://bsky.app/profile/${handle}`} target="_blank" rel="noreferrer" className="text-sm font-semibold text-foreground hover:text-primary transition-colors leading-tight">{displayName}</a>
+                                        )}
+                                        <span className={cn("text-xs text-muted-foreground", !displayName && "font-medium text-foreground")}>@{handle}</span>
+                                        <span className="text-muted-foreground/30 text-xs">·</span>
+                                        <span className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(post.indexedAt), { addSuffix: true })}</span>
+                                        {post.likes > 0 && (
+                                          <span className="flex items-center gap-0.5 text-[11px] text-rose-500 ml-1">
+                                            <Heart className="w-2.5 h-2.5" />{post.likes}
+                                          </span>
+                                        )}
+                                        {post.reposts > 0 && (
+                                          <span className="flex items-center gap-0.5 text-[11px] text-emerald-600">
+                                            <Repeat2 className="w-2.5 h-2.5" />{post.reposts}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-sm text-foreground leading-relaxed line-clamp-3">{post.text}</p>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
                               {/* Ranking scores row */}
                               {isRanked && (
                                 <div className="flex items-center gap-2 flex-wrap">
@@ -1075,6 +1167,13 @@ export default function FeedDetail() {
                                 )}
                               >
                                 <Repeat2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => { setReplyTarget({ uri: post.uri, cid: post.cid, text: post.text, author: post.author }); setReplyText(""); }}
+                                title="Reply on Bluesky"
+                                className="p-1.5 rounded-lg text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10 transition-colors"
+                              >
+                                <MessageCircle className="w-3.5 h-3.5" />
                               </button>
                               <a
                                 href={`https://bsky.app/profile/${post.author}/post/${postIdFromUri(post.uri)}`}
@@ -1427,6 +1526,63 @@ export default function FeedDetail() {
       </AnimatePresence>
 
       <PublishDialog feedId={id} feedName={feed.displayName} open={publishOpen} onOpenChange={setPublishOpen} />
+
+      {/* Reply Dialog */}
+      <Dialog open={!!replyTarget} onOpenChange={open => { if (!open) { setReplyTarget(null); setReplyText(""); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Reply to post</DialogTitle>
+          </DialogHeader>
+          {replyTarget && (
+            <div className="space-y-4">
+              {/* Original post preview */}
+              <div className="rounded-xl border border-border bg-muted/30 p-3 text-sm text-muted-foreground leading-relaxed line-clamp-4">
+                {(() => {
+                  const profile = feedProfiles.get(replyTarget.author);
+                  const handle = profile?.handle ?? shortenDid(replyTarget.author);
+                  return (
+                    <div className="flex items-start gap-2">
+                      <PostAuthorAvatar profile={profile} did={replyTarget.author} />
+                      <div>
+                        <span className="font-medium text-foreground text-xs">
+                          {profile?.displayName ?? `@${handle}`}
+                        </span>
+                        <p className="mt-0.5 text-xs">{replyTarget.text}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+              <Textarea
+                placeholder="Write your reply…"
+                value={replyText}
+                onChange={e => setReplyText(e.target.value)}
+                rows={4}
+                className="resize-none"
+                autoFocus
+                onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleReply(); }}
+              />
+              <div className="flex items-center justify-between">
+                <span className={cn("text-xs tabular-nums", replyText.length > 280 ? "text-destructive font-semibold" : "text-muted-foreground")}>
+                  {replyText.length}/300
+                </span>
+                <span className="text-[10px] text-muted-foreground">⌘↵ to send</span>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setReplyTarget(null); setReplyText(""); }}>Cancel</Button>
+            <Button
+              onClick={handleReply}
+              disabled={!replyText.trim() || replyText.length > 300 || sendingReply}
+              className="gap-2"
+            >
+              {sendingReply ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              Send Reply
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
