@@ -21,19 +21,25 @@ crons = ["*/3 * * * *", "0 2 * * *"]
 mode = "smart"
 
 # ─── Durable Objects — DISABLED (free-tier quota exhaustion) ──────────────────
-# JetstreamConsumerDO was reverted because Cloudflare bills incoming DO WebSocket
-# messages at 20:1 against the DO free-tier request quota (100K/day). At Bluesky's
-# firehose volume, this exhausts the quota in hours.
-# The cron-based jetstream.ts approach (open→collect 20s→close) has no per-message
-# billing and is completely free. Re-enable on a paid Cloudflare plan if needed.
+# JetstreamConsumerDO was reverted: Cloudflare bills incoming DO WebSocket
+# messages at 20:1 against the DO free-tier request quota (100K/day). At
+# Bluesky's firehose volume this exhausts quota in hours. Cron approach is free.
+# Re-enable binding + v1 migration on a paid plan — see jetstream-do.ts.
 #
 # [[durable_objects.bindings]]
 # name = "JETSTREAM_DO"
 # class_name = "JetstreamConsumerDO"
-#
-# [[migrations]]
-# tag = "v1"
-# new_sqlite_classes = ["JetstreamConsumerDO"]
+
+# Migration history — Cloudflare requires the full chain in order.
+# v1: originally created JetstreamConsumerDO (already applied on Cloudflare)
+# v2: deletes it — required so Cloudflare allows removing the class export
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["JetstreamConsumerDO"]
+
+[[migrations]]
+tag = "v2"
+deleted_classes = ["JetstreamConsumerDO"]
 
 # ─── Secrets (set via `wrangler secret put --config wrangler.cron.toml`) ───────
 # FEEDGEN_PUBLISHER_DID
