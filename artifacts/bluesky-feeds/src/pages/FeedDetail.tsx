@@ -409,7 +409,7 @@ function FeedAvatarEditor({ feedId, avatarUrl, onSaved }: { feedId: number; avat
       });
       onSaved();
       setOpen(false);
-      toast({ title: value ? "Feed image saved" : "Feed image removed" });
+      toast({ title: value ? "Feed image saved — click Re-publish to update Bluesky" : "Feed image removed" });
     } catch {
       toast({ title: "Failed to save image", variant: "destructive" });
     } finally {
@@ -677,6 +677,7 @@ export default function FeedDetail() {
   const [replyTarget, setReplyTarget] = useState<{ uri: string; cid: string; text: string; author: string } | null>(null);
   const [replyText, setReplyText] = useState("");
   const [sendingReply, setSendingReply] = useState(false);
+  const [replySentUri, setReplySentUri] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<{ word: string; count: number; avgEngagement: number }[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -783,18 +784,24 @@ export default function FeedDetail() {
     if (!replyText.trim() || !replyTarget || sendingReply) return;
     setSendingReply(true);
     try {
-      await customFetch("/api/bluesky/compose", {
+      const result = await customFetch<{ success: boolean; uri?: string }>("/api/bluesky/compose", {
         method: "POST",
         body: JSON.stringify({ text: replyText.trim(), replyTo: { uri: replyTarget.uri, cid: replyTarget.cid } }),
       });
-      toast({ title: "Reply sent!" });
-      setReplyTarget(null);
+      setReplySentUri(result.uri ?? null);
       setReplyText("");
     } catch {
       toast({ title: "Couldn't send reply", description: "Make sure Bluesky credentials are configured.", variant: "destructive" });
     } finally {
       setSendingReply(false);
     }
+  }
+
+  function atUriToBskyUrl(uri: string): string {
+    const parts = uri.split("/");
+    const did = parts[2] ?? "";
+    const rkey = parts[4] ?? "";
+    return `https://bsky.app/profile/${did}/post/${rkey}`;
   }
 
   async function handleSaveAutoAmplify(settings: typeof autoAmplify) {
@@ -1528,15 +1535,36 @@ export default function FeedDetail() {
       <PublishDialog feedId={id} feedName={feed.displayName} open={publishOpen} onOpenChange={setPublishOpen} />
 
       {/* Reply Dialog */}
-      <Dialog open={!!replyTarget} onOpenChange={open => { if (!open) { setReplyTarget(null); setReplyText(""); } }}>
+      <Dialog open={!!replyTarget || !!replySentUri} onOpenChange={open => { if (!open) { setReplyTarget(null); setReplyText(""); setReplySentUri(null); } }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Reply to post</DialogTitle>
+            <DialogTitle>{replySentUri ? "Reply sent!" : "Reply to post"}</DialogTitle>
           </DialogHeader>
-          {replyTarget && (
+
+          {/* Success state */}
+          {replySentUri ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 p-4 bg-emerald-500/8 border border-emerald-500/20 rounded-xl">
+                <CheckCircle className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Your reply was posted to Bluesky</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">It was sent from your publisher account. It may take a few seconds to appear.</p>
+                </div>
+              </div>
+              <a
+                href={atUriToBskyUrl(replySentUri)}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 text-sm text-primary hover:underline"
+              >
+                <ArrowUpRight className="w-4 h-4" />
+                View your reply on Bluesky
+              </a>
+            </div>
+          ) : replyTarget ? (
             <div className="space-y-4">
               {/* Original post preview */}
-              <div className="rounded-xl border border-border bg-muted/30 p-3 text-sm text-muted-foreground leading-relaxed line-clamp-4">
+              <div className="rounded-xl border border-border bg-muted/30 p-3 text-sm text-muted-foreground leading-relaxed">
                 {(() => {
                   const profile = feedProfiles.get(replyTarget.author);
                   const handle = profile?.handle ?? shortenDid(replyTarget.author);
@@ -1547,7 +1575,7 @@ export default function FeedDetail() {
                         <span className="font-medium text-foreground text-xs">
                           {profile?.displayName ?? `@${handle}`}
                         </span>
-                        <p className="mt-0.5 text-xs">{replyTarget.text}</p>
+                        <p className="mt-0.5 text-xs line-clamp-3">{replyTarget.text}</p>
                       </div>
                     </div>
                   );
@@ -1569,17 +1597,24 @@ export default function FeedDetail() {
                 <span className="text-[10px] text-muted-foreground">⌘↵ to send</span>
               </div>
             </div>
-          )}
+          ) : null}
+
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setReplyTarget(null); setReplyText(""); }}>Cancel</Button>
-            <Button
-              onClick={handleReply}
-              disabled={!replyText.trim() || replyText.length > 300 || sendingReply}
-              className="gap-2"
-            >
-              {sendingReply ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              Send Reply
-            </Button>
+            {replySentUri ? (
+              <Button onClick={() => { setReplySentUri(null); setReplyTarget(null); }}>Done</Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => { setReplyTarget(null); setReplyText(""); }}>Cancel</Button>
+                <Button
+                  onClick={handleReply}
+                  disabled={!replyText.trim() || replyText.length > 300 || sendingReply}
+                  className="gap-2"
+                >
+                  {sendingReply ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  Send Reply
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

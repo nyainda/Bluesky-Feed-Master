@@ -47,7 +47,3 @@ VITE_API_BASE_URL = "https://feedforge-api.manmysterious2020.workers.dev"
 
 [nix]
 channel = "stable-25_05"
-
-[[ports]]
-localPort = 5000
-externalPort = 80

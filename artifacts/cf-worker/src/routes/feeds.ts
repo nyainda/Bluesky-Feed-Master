@@ -260,12 +260,52 @@ route.post("/feeds/:id/publish", async (c) => {
     const agent = new AtpAgent({ service: "https://bsky.social" });
     await agent.login({ identifier: handle, password: appPassword });
 
-    const record = {
+    // Build record — upload avatar blob if set
+    const record: Record<string, unknown> = {
       did: `did:web:${hostname}`,
       displayName: feed.displayName,
       description: feed.description ?? undefined,
       createdAt: feed.publishedAt ?? new Date().toISOString(),
     };
+
+    const feedAvatarUrl = (feed as unknown as Record<string, unknown>).avatarUrl as string | null | undefined;
+    if (feedAvatarUrl && (feedAvatarUrl.startsWith("data:") || feedAvatarUrl.startsWith("http"))) {
+      try {
+        let bytes: Uint8Array;
+        let mimeType: string;
+
+        if (feedAvatarUrl.startsWith("data:")) {
+          const [header, b64] = feedAvatarUrl.split(",");
+          mimeType = header.match(/data:([^;]+)/)?.[1] ?? "image/jpeg";
+          const bin = atob(b64);
+          bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        } else {
+          const res = await fetch(feedAvatarUrl);
+          mimeType = res.headers.get("content-type")?.split(";")[0]?.trim() ?? "image/jpeg";
+          bytes = new Uint8Array(await res.arrayBuffer());
+        }
+
+        if (bytes.length > 0 && agent.session?.accessJwt) {
+          const uploadRes = await fetch("https://bsky.social/xrpc/com.atproto.repo.uploadBlob", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${agent.session.accessJwt}`,
+              "Content-Type": mimeType,
+            },
+            body: bytes,
+          });
+          if (uploadRes.ok) {
+            const blobData = await uploadRes.json() as { blob: unknown };
+            if (blobData.blob) record.avatar = blobData.blob;
+          } else {
+            console.warn("[publish] Blob upload HTTP error:", uploadRes.status, await uploadRes.text());
+          }
+        }
+      } catch (err) {
+        console.warn("[publish] Avatar upload skipped:", err instanceof Error ? err.message : String(err));
+      }
+    }
 
     const result = await agent.api.com.atproto.repo.putRecord({
       repo: publisherDid,
