@@ -743,6 +743,81 @@ function FollowerGrowthTab() {
   );
 }
 
+// ─── Follow Loop Card ────────────────────────────────────────────────────────
+
+function FollowLoopCard() {
+  const apiBase = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+
+  const { data: statsData } = useQuery<{
+    ok: boolean;
+    totals: { pending: number; followed: number; unfollowed: number };
+    daily: Array<{ day: string; followed: number; followedBack: number; unfollowed: number; rate: number }>;
+  }>({
+    queryKey: ["follow-loop-stats"],
+    queryFn: () => customFetch(`${apiBase}/api/bluesky/auto-follow/followback-stats?days=30`),
+    refetchInterval: 30_000,
+    staleTime: 20_000,
+  });
+
+  const { data: qData } = useQuery<{
+    ok: boolean; pending: number; done: number; failed: number; total: number; estimatedMinutesLeft: number;
+  }>({
+    queryKey: ["follow-queue-status"],
+    queryFn: () => customFetch(`${apiBase}/api/bluesky/auto-follow/queue-status`),
+    refetchInterval: 15_000,
+    staleTime: 10_000,
+  });
+
+  const totals = statsData?.totals ?? { pending: 0, followed: 0, unfollowed: 0 };
+  const totalTracked = totals.pending + totals.followed + totals.unfollowed;
+  const checkedCount = totals.followed + totals.unfollowed;
+  const followBackRate = checkedCount > 0 ? Math.round((totals.followed / checkedCount) * 100) : null;
+
+  if (totalTracked === 0 && !qData?.total) return null;
+
+  return (
+    <div className="bg-card border border-card-border rounded-xl p-4 mb-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Activity className="w-4 h-4 text-primary" />
+        <span className="text-sm font-semibold text-foreground">Follow Loop</span>
+        <span className="text-xs text-muted-foreground ml-auto">auto-follow → 7d → check → unfollow</span>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+        <div className="bg-muted/40 rounded-lg p-3 text-center">
+          <div className="text-lg font-bold text-foreground tabular-nums">{totalTracked.toLocaleString()}</div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">Total Followed</div>
+        </div>
+        <div className="bg-muted/40 rounded-lg p-3 text-center">
+          <div className="text-lg font-bold text-emerald-500 tabular-nums">
+            {followBackRate !== null ? `${followBackRate}%` : "—"}
+          </div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">Follow-back Rate</div>
+        </div>
+        <div className="bg-muted/40 rounded-lg p-3 text-center">
+          <div className="text-lg font-bold text-amber-500 tabular-nums">{totals.pending.toLocaleString()}</div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">Pending Check</div>
+        </div>
+        <div className="bg-muted/40 rounded-lg p-3 text-center">
+          <div className="text-lg font-bold text-muted-foreground tabular-nums">{totals.unfollowed.toLocaleString()}</div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">Auto-unfollowed</div>
+        </div>
+      </div>
+
+      {qData && qData.total > 0 && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/30 rounded-lg px-3 py-2">
+          <Loader2 className="w-3 h-3 animate-spin text-primary flex-shrink-0" />
+          <span>
+            Follow queue: <span className="font-medium text-foreground">{qData.pending.toLocaleString()}</span> pending,{" "}
+            <span className="font-medium text-foreground">{qData.done.toLocaleString()}</span> done
+            {qData.pending > 0 && ` · ~${qData.estimatedMinutesLeft}min left`}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Auto-Unfollow Card ──────────────────────────────────────────────────────
 
 type AutoUnfollowSettings = {
@@ -3368,6 +3443,9 @@ export default function Audience() {
       <AnimatePresence>
         <CronOperationsPanel />
       </AnimatePresence>
+
+      {/* Follow Loop Stats */}
+      <FollowLoopCard />
 
       {/* Auto-Unfollow Card */}
       <AutoUnfollowCard />

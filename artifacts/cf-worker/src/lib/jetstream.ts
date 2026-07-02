@@ -39,8 +39,8 @@ function mergeAlgoTags(existing: string | null, newTags: Set<string>): string {
 }
 
 const JETSTREAM_URL = "wss://jetstream2.us-east.bsky.network/subscribe";
-const COLLECT_MS = 20_000;  // collect for 20 seconds per cron tick
-const MAX_EVENTS = 5_000;   // hard cap to prevent memory blowup on firehose bursts
+const COLLECT_MS = 20_000;   // collect for 20 seconds per cron tick
+const MAX_EVENTS = 20_000;   // raised from 5k — handles burst catch-up without memory issues
 
 type JetstreamEvent = {
   did: string;
@@ -260,13 +260,16 @@ export async function runJetstreamIndexer(
     const writeStmts = matchedPosts.map((post) => {
       const mergedTags = mergeAlgoTags(existingTagsByUri.get(post.uri) ?? null, post.algoTags);
       dirtyAuthorDids.push(post.author);
+      // Use the post's actual Bluesky createdAt so "39min ago" reflects the real post age,
+      // not when FeedForge happened to index it.
+      const postCreatedAt = post.createdAt ?? now;
       return env.DB.prepare(
         `INSERT INTO indexed_posts (uri, cid, author, text, algo_tags, indexed_at, likes, reposts, replies, quotes)
          VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0)
          ON CONFLICT(uri) DO UPDATE SET
            algo_tags = ?,
            engagement_synced_at = ?`,
-      ).bind(post.uri, post.cid, post.author, post.text, mergedTags, now, mergedTags, now);
+      ).bind(post.uri, post.cid, post.author, post.text, mergedTags, postCreatedAt, mergedTags, now);
     });
 
     try {

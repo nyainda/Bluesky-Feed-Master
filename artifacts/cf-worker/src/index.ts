@@ -330,6 +330,19 @@ app.post("/api/auto-follow/queue-clear", async (c) => {
   }
 });
 
+// Reset Jetstream cursor — clears the stored cursor so the next cron tick
+// reconnects from "now" instead of the stalled backlog position.
+app.post("/api/admin/reset-jetstream", async (c) => {
+  try {
+    await c.env.DB.prepare(
+      "DELETE FROM cron_settings WHERE key IN ('jetstream_cursor','jetstream_last_run')"
+    ).run();
+    return c.json({ ok: true, message: "Jetstream cursor cleared — next cron tick will reconnect from live feed" });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
 // Manual trigger — indexes ALL feeds (bypasses stagger) + runs Jetstream pass
 app.post("/api/admin/trigger-index", async (c) => {
   c.executionCtx.waitUntil(

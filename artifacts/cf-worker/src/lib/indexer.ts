@@ -133,6 +133,10 @@ export async function runIndexer(env: Env, options?: { maxFeeds?: number }): Pro
             for (const post of uniquePosts) {
               const postText = (post.record as { text?: string }).text ?? "";
               try {
+                // Use the post's actual Bluesky createdAt so timestamps reflect when the
+                // post was published, not when FeedForge's cron happened to find it.
+                const postCreatedAt = (post.record as { text?: string; createdAt?: string }).createdAt
+                  ?? new Date().toISOString();
                 await db
                   .insert(indexedPostsTable)
                   .values({
@@ -141,7 +145,7 @@ export async function runIndexer(env: Env, options?: { maxFeeds?: number }): Pro
                     author: post.author.did,
                     text: postText,
                     algoTags: algoTag,
-                    indexedAt: new Date().toISOString(),
+                    indexedAt: postCreatedAt,
                     likes: post.likeCount ?? 0,
                     reposts: post.repostCount ?? 0,
                     replies: post.replyCount ?? 0,
