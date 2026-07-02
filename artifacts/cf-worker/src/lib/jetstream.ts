@@ -5,6 +5,9 @@
  *   1. Opens WebSocket to Jetstream, collects for COLLECT_MS
  *   2. Filters app.bsky.feed.post events against feed keywords → upserts to D1
  *   3. Filters app.bsky.graph.follow events targeting our DID → queues for follow-back
+ *   4. Queues matched post authors for auto-follow (if auto-follow is enabled)
+ *      — highest-quality signal: these accounts actively post content matching
+ *        your feeds, so they're ideal follow targets. No search-API call needed.
  *
  * A cursor (Unix microseconds) in cron_settings ensures each tick resumes exactly
  * where the last one left off — no gaps, no re-processing.
@@ -18,6 +21,9 @@ import { createDb, feedsTable, keywordsTable, indexedPostsTable } from "../db";
 import { eq } from "drizzle-orm";
 import { batchMarkAuthorsDirty } from "./author-scoring";
 import { enqueueFollowItems, ensureFollowQueueTable } from "./scheduled-follow";
+
+// Max authors to queue per tick — keeps queue growth predictable (~25 × 480 ticks/day = 12K/day candidates)
+const MAX_AUTHORS_PER_TICK = 25;
 
 /**
  * Merge new algo tags into an existing comma-separated tag string.
@@ -59,7 +65,7 @@ type JetstreamEvent = {
 
 export async function runJetstreamIndexer(
   env: Env,
-): Promise<{ indexed: number; matched: number; events: number; newFollowers: number }> {
+): Promise<{ indexed: number; matched: number; events: number; newFollowers: number; authorsQueued: number }> {
   const db = createDb(env.DB);
 
   // ── Phase 1: Load feed + keyword config from D1 ───────────────────────────────
@@ -85,7 +91,7 @@ export async function runJetstreamIndexer(
   // Skip entirely only if no keywords AND no publisher DID (nothing useful to do)
   if (!hasKeywords && !publisherDid) {
     console.log("[jetstream] No keywords and no publisher DID — skipping.");
-    return { indexed: 0, matched: 0, events: 0, newFollowers: 0 };
+    return { indexed: 0, matched: 0, events: 0, newFollowers: 0, authorsQueued: 0 };
   }
 
   // ── Phase 2: Load stored cursor ───────────────────────────────────────────────
@@ -143,7 +149,7 @@ export async function runJetstreamIndexer(
     await env.DB.prepare(
       "INSERT INTO cron_settings (key, value) VALUES ('jetstream_last_run', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')"
     ).bind(new Date().toISOString()).run().catch(() => {});
-    return { indexed: 0, matched: 0, events: 0, newFollowers: 0 };
+    return { indexed: 0, matched: 0, events: 0, newFollowers: 0, authorsQueued: 0 };
   }
 
   // ── Phase 4a: Filter post events against keyword index ────────────────────────
@@ -312,6 +318,61 @@ export async function runJetstreamIndexer(
     }
   }
 
+  // ── Phase 5c: Queue matched post authors for auto-follow ─────────────────────
+  // Best-quality signal: these accounts actively publish content matching your
+  // feed keywords — far better than random searchPosts discovery.
+  // Only runs when auto-follow is enabled; respects existing queue/log dedup.
+  let authorsQueued = 0;
+  if (matchedPosts.length > 0) {
+    try {
+      const autoFollowRow = await env.DB
+        .prepare("SELECT value FROM cron_settings WHERE key = 'auto_follow_enabled'")
+        .first<{ value: string }>();
+      const autoFollowEnabled = autoFollowRow?.value === "1";
+
+      if (autoFollowEnabled) {
+        // Unique author DIDs from this tick's matched posts, excluding ourselves
+        const candidateDids = [...new Set(matchedPosts.map(p => p.author))]
+          .filter(did => did !== publisherDid)
+          .slice(0, MAX_AUTHORS_PER_TICK);
+
+        if (candidateDids.length > 0) {
+          await ensureFollowQueueTable(env);
+
+          // Single-query dedup against both queue and follow log
+          const placeholders = candidateDids.map(() => "?").join(",");
+          const existingRows = await env.DB
+            .prepare(
+              `SELECT did FROM auto_follow_queue WHERE did IN (${placeholders})
+               UNION
+               SELECT did FROM auto_follow_log WHERE did IN (${placeholders})`
+            )
+            .bind(...candidateDids, ...candidateDids)
+            .all<{ did: string }>();
+
+          const alreadyTracked = new Set(existingRows.results.map(r => r.did));
+          const toQueue = candidateDids.filter(did => !alreadyTracked.has(did));
+
+          if (toQueue.length > 0) {
+            const items = toQueue.map(did => ({
+              did,
+              handle: "",
+              followersCount: -1,   // quality check deferred to follow-time via getProfile()
+              market: "jetstream",  // distinct market tag so you can track this source
+            }));
+            const result = await enqueueFollowItems(env, items);
+            authorsQueued = result.enqueued;
+            if (authorsQueued > 0) {
+              console.log(`[jetstream] Queued ${authorsQueued} post authors for auto-follow`);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[jetstream] Failed to queue post authors for follow:", err);
+    }
+  }
+
   // ── Phase 6: Save cursor + stats so cron-health can surface them ─────────────
   const saveStmts = [
     env.DB.prepare(
@@ -323,6 +384,9 @@ export async function runJetstreamIndexer(
     env.DB.prepare(
       "INSERT INTO cron_settings (key, value) VALUES ('jetstream_last_followers', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')"
     ).bind(String(newFollowers)),
+    env.DB.prepare(
+      "INSERT INTO cron_settings (key, value) VALUES ('jetstream_last_authors_queued', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')"
+    ).bind(String(authorsQueued)),
     env.DB.prepare(
       "INSERT INTO cron_settings (key, value) VALUES ('jetstream_last_run', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')"
     ).bind(new Date().toISOString()),
@@ -336,6 +400,6 @@ export async function runJetstreamIndexer(
   }
   await env.DB.batch(saveStmts).catch(() => { /* non-fatal */ });
 
-  console.log(`[jetstream] Done — ${indexed} indexed, ${matched} matched, ${events.length} events, ${newFollowers} new followers queued`);
-  return { indexed, matched, events: events.length, newFollowers };
+  console.log(`[jetstream] Done — ${indexed} indexed, ${matched} matched, ${events.length} events, ${newFollowers} followers, ${authorsQueued} authors queued`);
+  return { indexed, matched, events: events.length, newFollowers, authorsQueued };
 }
