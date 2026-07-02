@@ -16,7 +16,7 @@ import {
   Upload, CheckCircle, AlertTriangle, BarChart3, FileText, Hash,
   Users, Heart, TrendingUp, Play, RefreshCw, Rss, ArrowUpRight,
   Repeat2, MessageCircle, Image, Zap, Trophy, Clock,
-  Sparkles, ToggleLeft, ToggleRight, Loader2, Send,
+  Sparkles, ToggleLeft, ToggleRight, Loader2, Send, Share2, Copy, Link2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -683,6 +683,10 @@ export default function FeedDetail() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [autoAmplify, setAutoAmplify] = useState({ enabled: false, minScore: 0.3, maxPerDay: 3, delayMinutes: 60 });
   const [savingAmplify, setSavingAmplify] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareText, setShareText] = useState("");
+  const [sendingShare, setSendingShare] = useState(false);
+  const [shareSentUri, setShareSentUri] = useState<string | null>(null);
 
   const { data: feed, isLoading: loadingFeed } = useGetFeed(id);
   const { data: keywords } = useGetFeedKeywords(id);
@@ -779,6 +783,41 @@ export default function FeedDetail() {
       setFeedProfiles(prev => new Map([...prev, ...resolved]));
     });
   }, [postsPage?.posts]);
+
+  const publisherDid = "did:plc:oobxeg4vljlqpp62k7fd6flp";
+
+  function openShareDialog() {
+    if (!feed) return;
+    const feedUrl = `https://bsky.app/profile/${publisherDid}/feed/${feed.recordName}`;
+    const defaultText = `📡 Check out my custom Bluesky feed: "${feed.displayName}"${feed.description ? ` — ${feed.description}` : ""}\n\n${feedUrl}`;
+    setShareText(defaultText);
+    setShareSentUri(null);
+    setShareOpen(true);
+  }
+
+  function copyFeedLink() {
+    if (!feed) return;
+    const feedUrl = `https://bsky.app/profile/${publisherDid}/feed/${feed.recordName}`;
+    navigator.clipboard.writeText(feedUrl).then(() => {
+      toast({ title: "Feed link copied!", description: "Share it anywhere to grow your audience." });
+    });
+  }
+
+  async function handleShareFeed() {
+    if (!shareText.trim() || sendingShare) return;
+    setSendingShare(true);
+    try {
+      const result = await customFetch<{ success: boolean; uri?: string }>("/api/bluesky/compose", {
+        method: "POST",
+        body: JSON.stringify({ text: shareText.trim() }),
+      });
+      setShareSentUri(result.uri ?? null);
+    } catch {
+      toast({ title: "Couldn't post", description: "Make sure Bluesky credentials are configured.", variant: "destructive" });
+    } finally {
+      setSendingShare(false);
+    }
+  }
 
   async function handleReply() {
     if (!replyText.trim() || !replyTarget || sendingReply) return;
@@ -914,24 +953,47 @@ export default function FeedDetail() {
           animate={{ opacity: 1, scale: 1 }}
           className="mb-5 bg-gradient-to-r from-primary/6 via-primary/3 to-transparent border border-primary/20 rounded-xl p-4"
         >
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap">
             <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/15 flex items-center justify-center flex-shrink-0">
               <Heart className="w-4 h-4 text-primary" />
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-sm font-semibold text-foreground">
-                {bskyInfo.likeCount.toLocaleString()} people saved this feed
+                {bskyInfo.likeCount.toLocaleString()} {bskyInfo.likeCount === 1 ? "person" : "people"} saved this feed
               </div>
-              {bskyInfo.description && <div className="text-xs text-muted-foreground truncate mt-0.5">{bskyInfo.description}</div>}
+              <div className="text-xs text-muted-foreground mt-0.5">
+                {bskyInfo.likeCount === 0
+                  ? "Share your feed to get your first followers"
+                  : "Share to grow your audience"}
+              </div>
             </div>
-            <a
-              href={`https://bsky.app/profile/did:plc:oobxeg4vljlqpp62k7fd6flp/feed/${feed.recordName}`}
-              target="_blank"
-              rel="noreferrer"
-              className="p-2 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/8 transition-colors flex-shrink-0"
-            >
-              <ExternalLink className="w-4 h-4" />
-            </a>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <button
+                onClick={copyFeedLink}
+                title="Copy feed link"
+                className="p-2 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/8 transition-colors"
+              >
+                <Link2 className="w-4 h-4" />
+              </button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={openShareDialog}
+                className="gap-1.5 text-xs h-7 px-2.5 border-primary/30 text-primary hover:bg-primary/8"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                Post about this
+              </Button>
+              <a
+                href={`https://bsky.app/profile/${publisherDid}/feed/${feed.recordName}`}
+                target="_blank"
+                rel="noreferrer"
+                title="View on Bluesky"
+                className="p-2 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/8 transition-colors"
+              >
+                <ExternalLink className="w-4 h-4" />
+              </a>
+            </div>
           </div>
         </motion.div>
       )}
@@ -1612,6 +1674,79 @@ export default function FeedDetail() {
                 >
                   {sendingReply ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
                   Send Reply
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Share Feed Dialog */}
+      <Dialog open={shareOpen} onOpenChange={open => { if (!open) { setShareOpen(false); setShareSentUri(null); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{shareSentUri ? "Posted to Bluesky!" : "Promote this feed"}</DialogTitle>
+          </DialogHeader>
+
+          {shareSentUri ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 p-4 bg-emerald-500/8 border border-emerald-500/20 rounded-xl">
+                <CheckCircle className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Your post is live on Bluesky</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">People who see it can click through and save your feed.</p>
+                </div>
+              </div>
+              <a
+                href={atUriToBskyUrl(shareSentUri)}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 text-sm text-primary hover:underline"
+              >
+                <ArrowUpRight className="w-4 h-4" />
+                View your post on Bluesky
+              </a>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-xs text-muted-foreground">
+                This will post to Bluesky from your publisher account. Anyone who sees it can tap the link to open your feed and save it. Edit the text below before sending.
+              </p>
+              <Textarea
+                value={shareText}
+                onChange={e => setShareText(e.target.value)}
+                rows={6}
+                className="resize-none text-sm"
+                autoFocus
+                onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleShareFeed(); }}
+              />
+              <div className="flex items-center justify-between">
+                <span className={cn("text-xs tabular-nums", shareText.length > 300 ? "text-destructive font-semibold" : "text-muted-foreground")}>
+                  {shareText.length}/300
+                </span>
+                <button
+                  onClick={copyFeedLink}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors"
+                >
+                  <Copy className="w-3 h-3" /> Copy feed link only
+                </button>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            {shareSentUri ? (
+              <Button onClick={() => { setShareOpen(false); setShareSentUri(null); }}>Done</Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => setShareOpen(false)}>Cancel</Button>
+                <Button
+                  onClick={handleShareFeed}
+                  disabled={!shareText.trim() || shareText.length > 300 || sendingShare}
+                  className="gap-2"
+                >
+                  {sendingShare ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Share2 className="w-3.5 h-3.5" />}
+                  Post to Bluesky
                 </Button>
               </>
             )}

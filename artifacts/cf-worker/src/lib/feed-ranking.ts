@@ -4,11 +4,21 @@ import type { Env } from "../index";
 import { computeQualityScore, computeRecencyDecay } from "./quality-layer";
 
 const RANK_WEIGHTS = {
-  author: 0.4,
-  engagementVelocity: 0.3,
-  quality: 0.2,
-  recency: 0.1,
+  // Recency boosted to 35% — fresh posts must surface above stale high-scorers.
+  // Author reduced to 25% — popular authors shouldn't dominate over new content.
+  // Quality reduced to 10% — velocity already captures engagement quality.
+  author: 0.25,
+  engagementVelocity: 0.30,
+  quality: 0.10,
+  recency: 0.35,
 } as const;
+
+/**
+ * Hard age gate: only consider posts indexed within the last 72 hours.
+ * Posts older than this are dropped from the candidate pool regardless of score,
+ * preventing high-engagement older posts from permanently occupying top ranks.
+ */
+const CANDIDATE_MAX_AGE_HOURS = 72;
 
 /**
  * Minimum gap between ranking runs — 14 minutes keeps us to ≤103 runs/day
@@ -54,6 +64,11 @@ export async function precomputeFeedRankings(env: Env): Promise<void> {
   const feeds = await db.select().from(feedsTable).where(eq(feedsTable.isActive, true));
 
   for (const feed of feeds) {
+    // Hard age gate: drop posts older than CANDIDATE_MAX_AGE_HOURS from the pool.
+    // This prevents high-engagement posts from weeks ago from permanently
+    // outscoring fresh content even when their recency decay approaches zero.
+    const cutoffIso = new Date(Date.now() - CANDIDATE_MAX_AGE_HOURS * 60 * 60 * 1000).toISOString();
+
     const candidates = await db
       .select({
         post: indexedPostsTable,
@@ -61,7 +76,9 @@ export async function precomputeFeedRankings(env: Env): Promise<void> {
       })
       .from(indexedPostsTable)
       .leftJoin(authorScoresTable, eq(authorScoresTable.did, indexedPostsTable.author))
-      .where(sql`instr(',' || ${indexedPostsTable.algoTags} || ',', ',' || ${feed.recordName} || ',') > 0`)
+      .where(
+        sql`instr(',' || ${indexedPostsTable.algoTags} || ',', ',' || ${feed.recordName} || ',') > 0 AND ${indexedPostsTable.indexedAt} >= ${cutoffIso}`
+      )
       .orderBy(desc(indexedPostsTable.indexedAt))
       .limit(CANDIDATE_LIMIT);
 
