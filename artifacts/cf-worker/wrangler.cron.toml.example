@@ -1,0 +1,33 @@
+# FeedForge Cron Worker — Wrangler Config Template
+# Copy to wrangler.cron.toml and fill in your database_id (same DB as wrangler.toml)
+
+name = "feedforge-cron"
+main = "src/cron.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "feedforge-db"
+database_id = "PASTE-YOUR-DATABASE-ID-HERE"
+
+[triggers]
+crons = ["*/3 * * * *", "0 2 * * *"]
+
+[placement]
+mode = "smart"
+
+[[durable_objects.bindings]]
+name = "JETSTREAM_DO"
+class_name = "JetstreamConsumerDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["JetstreamConsumerDO"]
+
+# Secrets — set via `wrangler secret put <NAME> --config wrangler.cron.toml`
+#   wrangler secret put BLUESKY_HANDLE        --config wrangler.cron.toml
+#   wrangler secret put BLUESKY_APP_PASSWORD  --config wrangler.cron.toml
+#   wrangler secret put FEEDGEN_PUBLISHER_DID --config wrangler.cron.toml
+#   wrangler secret put FEEDGEN_HOSTNAME      --config wrangler.cron.toml

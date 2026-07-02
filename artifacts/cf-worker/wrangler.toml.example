@@ -1,0 +1,20 @@
+# FeedForge API Worker — Wrangler Config Template
+# Copy to wrangler.toml and fill in your database_id after running:
+#   npx wrangler d1 create feedforge-db
+
+name = "feedforge-api"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "feedforge-db"
+database_id = "PASTE-YOUR-DATABASE-ID-HERE"
+
+# Secrets — set via `wrangler secret put <NAME>` (never put real values here)
+#   wrangler secret put BLUESKY_HANDLE
+#   wrangler secret put BLUESKY_APP_PASSWORD
+#   wrangler secret put FEEDGEN_PUBLISHER_DID
+#   wrangler secret put FEEDGEN_HOSTNAME

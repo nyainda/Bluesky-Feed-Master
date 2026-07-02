@@ -1,49 +1,56 @@
-# See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
-
-# compiled output
+# ─── Compiled output ────────────────────────────────────────────────────────
 dist
 tmp
 out-tsc
 *.tsbuildinfo
+
+# ─── Dependencies ───────────────────────────────────────────────────────────
+node_modules
+
+# ─── Environment / Secrets ──────────────────────────────────────────────────
+# Never commit real env files — use .env.example as the template
+.env
+.env.local
+.env.production
+.env.*.local
+
+# ─── Wrangler ───────────────────────────────────────────────────────────────
+# Real wrangler configs contain database_id — contributors copy from *.example
+# wrangler.toml        ← uncomment if you want to force contributors to copy from .example
+# wrangler.cron.toml   ← same
+.wrangler/
+
+# ─── Mobile (Expo) ──────────────────────────────────────────────────────────
 .expo
 .expo-shared
 
-# dependencies
-node_modules
-
-# IDEs and editors
-/.idea
+# ─── IDEs ───────────────────────────────────────────────────────────────────
+.idea
 .project
 .classpath
 .c9/
 *.launch
 .settings/
 *.sublime-workspace
-
-# IDE - VSCode
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
 
-# misc
-/.sass-cache
-/connect.lock
-/coverage
-/libpeerconnection.log
-npm-debug.log
-yarn-error.log
-testem.log
-/typings
-
-# System Files
+# ─── OS ─────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 
-.cursor/rules/nx-rules.mdc
-.github/instructions/nx.instructions.md
+# ─── Logs ───────────────────────────────────────────────────────────────────
+npm-debug.log
+yarn-error.log
+*.log
 
-# Replit
+# ─── Test / Coverage ────────────────────────────────────────────────────────
+/coverage
+
+# ─── Replit (platform-specific, not needed in forks) ────────────────────────
 .cache/
 .local/
+.replitignore
