@@ -124,12 +124,11 @@ type ResolvedPost = {
   createdAt: string;
 };
 
-function LiveFeedTester({ recordName, publishedAt }: { recordName: string; publishedAt: string | null }) {
+function LiveFeedTester({ recordName, publishedAt, publisherDid }: { recordName: string; publishedAt: string | null; publisherDid: string }) {
   const [running, setRunning] = useState(false);
   const [skeleton, setSkeleton] = useState<SkeletonPost[] | null>(null);
   const [resolved, setResolved] = useState<ResolvedPost[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const publisherDid = "did:plc:oobxeg4vljlqpp62k7fd6flp";
 
   async function runTest() {
     setRunning(true);
@@ -409,7 +408,17 @@ function FeedAvatarEditor({ feedId, avatarUrl, onSaved }: { feedId: number; avat
       });
       onSaved();
       setOpen(false);
-      toast({ title: value ? "Feed image saved — click Re-publish to update Bluesky" : "Feed image removed" });
+      if (value) {
+        toast({ title: "Updating feed on Bluesky…", description: "Publishing new image now." });
+        try {
+          await customFetch(`/api/feeds/${feedId}/publish`, { method: "POST" });
+          toast({ title: "Feed image updated on Bluesky!" });
+        } catch {
+          toast({ title: "Image saved locally", description: "Bluesky publish failed — use Re-publish to retry.", variant: "destructive" });
+        }
+      } else {
+        toast({ title: "Feed image removed" });
+      }
     } catch {
       toast({ title: "Failed to save image", variant: "destructive" });
     } finally {
@@ -687,6 +696,7 @@ export default function FeedDetail() {
   const [shareText, setShareText] = useState("");
   const [sendingShare, setSendingShare] = useState(false);
   const [shareSentUri, setShareSentUri] = useState<string | null>(null);
+  const [topAuthorProfiles, setTopAuthorProfiles] = useState<Map<string, BskyProfile>>(new Map());
 
   // Feed Boost settings
   type BoostSettings = { enabled: boolean; dayOfWeek: number; hourUtc: number; template: string | null; lastBoostedAt: string | null };
@@ -695,6 +705,15 @@ export default function FeedDetail() {
   const [boostPanelOpen, setBoostPanelOpen] = useState(false);
   const [savingBoost, setSavingBoost] = useState(false);
   const [boostTemplate, setBoostTemplate] = useState("");
+
+  const { data: publisherProfile } = useQuery<{ did: string; handle: string; displayName?: string; avatar?: string }>({
+    queryKey: ["publisher-profile"],
+    queryFn: () => customFetch("/api/bluesky/profile"),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const publisherDid = publisherProfile?.did ?? "did:plc:oobxeg4vljlqpp62k7fd6flp";
+  const publisherHandle = publisherProfile?.handle ?? publisherDid;
 
   const { data: feed, isLoading: loadingFeed } = useGetFeed(id);
   const { data: keywords } = useGetFeedKeywords(id);
@@ -792,11 +811,17 @@ export default function FeedDetail() {
     });
   }, [postsPage?.posts]);
 
-  const publisherDid = "did:plc:oobxeg4vljlqpp62k7fd6flp";
+  useEffect(() => {
+    if (!topAuthors?.length) return;
+    const dids = topAuthors.map((a: { did: string }) => a.did);
+    resolveProfiles(dids).then(resolved => {
+      setTopAuthorProfiles(prev => new Map([...prev, ...resolved]));
+    });
+  }, [topAuthors]);
 
   function openShareDialog() {
     if (!feed) return;
-    const feedUrl = `https://bsky.app/profile/${publisherDid}/feed/${feed.recordName}`;
+    const feedUrl = `https://bsky.app/profile/${publisherHandle}/feed/${feed.recordName}`;
     const defaultText = `📡 Check out my custom Bluesky feed: "${feed.displayName}"${feed.description ? ` — ${feed.description}` : ""}\n\n${feedUrl}`;
     setShareText(defaultText);
     setShareSentUri(null);
@@ -805,7 +830,7 @@ export default function FeedDetail() {
 
   function copyFeedLink() {
     if (!feed) return;
-    const feedUrl = `https://bsky.app/profile/${publisherDid}/feed/${feed.recordName}`;
+    const feedUrl = `https://bsky.app/profile/${publisherHandle}/feed/${feed.recordName}`;
     navigator.clipboard.writeText(feedUrl).then(() => {
       toast({ title: "Feed link copied!", description: "Share it anywhere to grow your audience." });
     });
@@ -993,7 +1018,7 @@ export default function FeedDetail() {
                 Post about this
               </Button>
               <a
-                href={`https://bsky.app/profile/${publisherDid}/feed/${feed.recordName}`}
+                href={`https://bsky.app/profile/${publisherHandle}/feed/${feed.recordName}`}
                 target="_blank"
                 rel="noreferrer"
                 title="View on Bluesky"
@@ -1296,7 +1321,7 @@ export default function FeedDetail() {
         {/* TEST */}
         {tab === "test" && (
           <motion.div key="test" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-            <LiveFeedTester recordName={feed.recordName} publishedAt={feed.publishedAt ?? null} />
+            <LiveFeedTester recordName={feed.recordName} publishedAt={feed.publishedAt ?? null} publisherDid={publisherDid} />
           </motion.div>
         )}
 
@@ -1361,22 +1386,35 @@ export default function FeedDetail() {
                 <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">No author data yet.</div>
               ) : (
                 <div className="divide-y divide-border/50">
-                  {topAuthors.slice(0, 10).map((author, i) => (
+                  {topAuthors.slice(0, 10).map((author, i) => {
+                    const prof = topAuthorProfiles.get(author.did);
+                    const handle = prof?.handle ?? author.did;
+                    const displayName = prof?.displayName;
+                    const initials = (displayName ?? handle)?.[0]?.toUpperCase() ?? "?";
+                    return (
                     <div key={author.did} className="flex items-center gap-3 px-5 py-3 hover:bg-muted/20 transition-colors">
                       <span className="text-[10px] text-muted-foreground/40 font-mono w-5 flex-shrink-0 text-right">{i + 1}</span>
-                      <div className="w-7 h-7 rounded-full bg-primary/10 border border-primary/15 flex items-center justify-center flex-shrink-0">
-                        <Users className="w-3 h-3 text-primary" />
+                      <div className="w-7 h-7 rounded-full bg-primary/10 border border-primary/15 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                        {prof?.avatar
+                          ? <img src={prof.avatar} alt={handle} className="w-full h-full object-cover" />
+                          : <span className="text-[11px] font-semibold text-primary">{initials}</span>
+                        }
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-xs font-mono text-foreground truncate">{shortenDid(author.did)}</div>
-                        <div className="text-[10px] text-muted-foreground">Last {formatDistanceToNow(new Date(author.latestPostAt), { addSuffix: true })}</div>
+                        <div className="text-xs font-medium text-foreground truncate">
+                          {displayName ?? `@${handle}`}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground truncate">
+                          {displayName && `@${handle} · `}{formatDistanceToNow(new Date(author.latestPostAt), { addSuffix: true })}
+                        </div>
                       </div>
                       <span className="text-xs bg-muted text-muted-foreground border border-border px-2 py-0.5 rounded-full tabular-nums">{author.postCount} posts</span>
-                      <a href={`https://bsky.app/profile/${author.did}`} target="_blank" rel="noreferrer" className="text-muted-foreground hover:text-primary transition-colors">
+                      <a href={`https://bsky.app/profile/${handle}`} target="_blank" rel="noreferrer" className="text-muted-foreground hover:text-primary transition-colors">
                         <ExternalLink className="w-3.5 h-3.5" />
                       </a>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

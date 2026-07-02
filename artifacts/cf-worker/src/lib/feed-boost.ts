@@ -58,8 +58,8 @@ export async function saveBoostSettings(env: Env, feedId: number, settings: Feed
     .run();
 }
 
-function buildBoostText(feed: { displayName: string; description?: string | null; recordName: string }, publisherDid: string, template: string | null): string {
-  const url = `https://bsky.app/profile/${publisherDid}/feed/${feed.recordName}`;
+function buildBoostText(feed: { displayName: string; description?: string | null; recordName: string }, publisherIdentifier: string, template: string | null): string {
+  const url = `https://bsky.app/profile/${publisherIdentifier}/feed/${feed.recordName}`;
   if (template) {
     return template
       .replace(/\{name\}/g, feed.displayName)
@@ -104,7 +104,7 @@ export async function runFeedBoost(env: Env): Promise<void> {
       }
     }
 
-    const text = buildBoostText(feed, env.FEEDGEN_PUBLISHER_DID || "", settings.template);
+    const text = buildBoostText(feed, env.BLUESKY_HANDLE || env.FEEDGEN_PUBLISHER_DID || "", settings.template);
 
     try {
       if (!agent) {
