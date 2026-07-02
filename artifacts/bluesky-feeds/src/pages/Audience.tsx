@@ -1888,6 +1888,7 @@ type AFFollowbackStats = {
   ok: boolean;
   totals: { pending: number; followed: number; unfollowed: number };
   daily: Array<{ day: string; followed: number; followedBack: number; unfollowed: number; rate: number }>;
+  byMarket: Array<{ market: string; followed: number; followedBack: number; unfollowed: number; pending: number; rate: number | null }>;
 };
 
 function AutoFollowTab() {
@@ -2176,6 +2177,70 @@ function AutoFollowTab() {
                 </span>
               </div>
             )}
+          </div>
+        );
+      })()}
+
+      {/* ── Market Breakdown ── */}
+      {(() => {
+        const byMarket = fbStats?.byMarket ?? [];
+        if (byMarket.length === 0) return null;
+        const MARKET_LABELS: Record<string, string> = {
+          usa: "🇺🇸 USA", europe: "🇪🇺 Europe", uk: "🇬🇧 UK",
+          canada: "🇨🇦 Canada", australia: "🇦🇺 Australia",
+          latam: "🌎 LatAm", asia: "🌏 Asia", global: "🌐 Global",
+        };
+        const maxFollowed = Math.max(...byMarket.map(m => m.followed), 1);
+        const sorted = [...byMarket].sort((a, b) => b.followed - a.followed);
+        return (
+          <div className="bg-card border border-card-border rounded-xl px-4 py-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Follow-back by Market</p>
+              <span className="text-[10px] text-muted-foreground">all time · checked accounts only</span>
+            </div>
+            <div className="space-y-2.5">
+              {sorted.map(m => {
+                const label = MARKET_LABELS[m.market] ?? m.market;
+                const barPct = Math.round((m.followed / maxFollowed) * 100);
+                const checkedTotal = m.followedBack + m.unfollowed;
+                const rate = checkedTotal > 0 ? Math.round((m.followedBack / checkedTotal) * 100) : null;
+                return (
+                  <div key={m.market} className="space-y-1">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-medium text-foreground min-w-[90px]">{label}</span>
+                      <div className="flex items-center gap-3 text-[11px] text-muted-foreground tabular-nums">
+                        <span>{m.followed.toLocaleString()} followed</span>
+                        <span className={cn(
+                          "font-semibold",
+                          rate === null ? "text-muted-foreground/50" :
+                          rate >= 30 ? "text-emerald-500" : rate >= 15 ? "text-amber-500" : "text-muted-foreground"
+                        )}>
+                          {rate !== null ? `${rate}% back` : `${m.pending} pending`}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="relative h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className="absolute inset-y-0 left-0 rounded-full bg-primary/40"
+                        style={{ width: `${barPct}%` }}
+                      />
+                      {checkedTotal > 0 && (
+                        <div
+                          className={cn(
+                            "absolute inset-y-0 left-0 rounded-full",
+                            rate !== null && rate >= 30 ? "bg-emerald-500" : rate !== null && rate >= 15 ? "bg-amber-500" : "bg-muted-foreground/40"
+                          )}
+                          style={{ width: `${Math.round((m.followedBack / maxFollowed) * 100)}%` }}
+                        />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-muted-foreground/60">
+              Bar shows total followed (grey) vs followed-back (coloured). Rate shown only after the 7-day check window.
+            </p>
           </div>
         );
       })()}

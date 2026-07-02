@@ -646,20 +646,24 @@ export default function Feeds() {
           <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
             <Globe className="w-4 h-4 text-blue-500" />
           </div>
-          <div className="min-w-0">
-            <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide leading-none mb-0.5">Serving From</p>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide leading-none mb-0.5">Global Edge Network</p>
             {geoData ? (
               <p className="text-sm font-semibold text-foreground truncate">
-                <span className="font-mono text-blue-500">{geoData.colo}</span>
-                <span className="text-muted-foreground font-normal"> · {geoData.city}, {geoData.country}</span>
+                Feeds served from <span className="text-blue-500">300+</span> locations
               </p>
             ) : (
               <div className="h-4 w-36 bg-muted rounded animate-pulse" />
             )}
+            {geoData && (
+              <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                Your connection → <span className="font-mono">{geoData.colo}</span> · {geoData.city}, {geoData.country}
+              </p>
+            )}
           </div>
           {geoData && (
-            <span className="ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-600 dark:text-green-400 flex-shrink-0">
-              Edge · {geoData.continent}
+            <span className="ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-600 dark:text-green-400 flex-shrink-0 whitespace-nowrap">
+              Live · {geoData.continent}
             </span>
           )}
         </div>
