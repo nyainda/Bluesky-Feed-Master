@@ -2,9 +2,12 @@
 
 > A self-hosted dashboard for managing custom Bluesky (AT Protocol) feed generators — built on Cloudflare Workers, D1, and React.
 
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/nyainda/Bluesky-Feed-Master)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-20+-green.svg)
 ![Platform](https://img.shields.io/badge/platform-Cloudflare%20Workers-orange.svg)
+
+> **One-click above** deploys the HTTP API worker. For the full setup (cron worker + D1 + secrets) follow the [step-by-step guide](docs/deploy-cloudflare.md).
 
 FeedForge lets any Bluesky user run their own feed management platform — completely free using Cloudflare's generous free tier. No servers to maintain, no monthly bills for typical usage.
 
@@ -19,7 +22,7 @@ FeedForge lets any Bluesky user run their own feed management platform — compl
 - **Analytics** — Follower growth charts, engagement trends, and firehose activity monitoring
 - **Post Composer** — Draft, schedule, and publish posts and threads to Bluesky
 - **Notifications** — Monitor mentions, replies, and interactions in real time
-- **Real-time Indexing** — Bluesky Jetstream firehose consumer via Durable Objects for live post indexing
+- **Live Indexing** — Bluesky Jetstream firehose consumer (cron-based, cursor-resumable) indexes matching posts every ~3 minutes with zero event loss
 - **Feed Skeleton API** — Serves `getFeedSkeleton` XRPC responses so your feeds work natively in the Bluesky app
 
 ---
@@ -39,9 +42,9 @@ FeedForge lets any Bluesky user run their own feed management platform — compl
                    │ D1 SQL
         ┌──────────▼──────────┐      ┌──────────────────────┐
         │   feedforge-cron     │      │   Bluesky Jetstream   │
-        │  Cloudflare Worker   │◄─────│  (Durable Object WS)  │
-        │  Cron: */3 * * * *  │      └──────────────────────┘
-        │  Cron: 0 2 * * *    │
+        │  Cloudflare Worker   │◄─────│  (WebSocket, 20s/tick)│
+        │  Cron: */3 * * * *  │      │  cursor-based resume  │
+        │  Cron: 0 2 * * *    │      └──────────────────────┘
         └──────────┬──────────┘
                    │
         ┌──────────▼──────────┐
@@ -65,7 +68,7 @@ See **[docs/deploy-cloudflare.md](docs/deploy-cloudflare.md)** for the full step
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/your-username/feedforge.git
+git clone https://github.com/nyainda/Bluesky-Feed-Master.git
 cd feedforge
 pnpm install
 
@@ -173,7 +176,7 @@ For a typical single-user instance:
 | D1 reads | 5,000,000/day | ~50,000–200,000/day |
 | D1 writes | 100,000/day | ~30,000–65,000/day |
 | D1 storage | 5 GB | ~50–200 MB |
-| Durable Objects | 1,000,000 req/month | ~43,000/day (cron) |
+| Durable Objects | 1,000,000 req/month | **0** (not used — cron approach) |
 
 You are very unlikely to exceed free limits running FeedForge for a single Bluesky account.
 

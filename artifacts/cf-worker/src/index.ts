@@ -392,10 +392,17 @@ app.get("/api/admin/cron-health", async (c) => {
       ? Math.round((Date.now() - jetstreamCursorMs) / 1_000)
       : null;
 
-    const doLastPing = kv["jetstream_do_last_ping"] ?? null;
-    const doConnected = doLastPing
-      ? Date.now() - new Date(doLastPing).getTime() < 10 * 60 * 1000
-      : false;
+    const lastJetstreamRun = kv["jetstream_last_run"] ?? null;
+    const lastEvents = parseInt(kv["jetstream_last_events"] ?? "0", 10) || 0;
+
+    // Stalled: last run was >10 min ago (two missed cron ticks)
+    const stalled = lastJetstreamRun
+      ? Date.now() - new Date(lastJetstreamRun).getTime() > 10 * 60 * 1000
+      : true;
+
+    // Cap warning: if lastEvents hit MAX_EVENTS (5000), the 20s window may be
+    // too short for current firehose volume — consider increasing COLLECT_MS
+    const cappedAtMaxEvents = lastEvents >= 5_000;
 
     return c.json({
       ok: true,
@@ -405,15 +412,14 @@ app.get("/api/admin/cron-health", async (c) => {
       scanPagesDone: parseInt(kv["auto_unfollow_scan_pages_done"] ?? "0", 10) || 0,
       lastScanCompleted: kv["auto_unfollow_last_run"] ?? null,
       jetstream: {
-        lastRun: kv["jetstream_last_run"] ?? null,
+        lastRun: lastJetstreamRun,
         lastIndexed: parseInt(kv["jetstream_last_indexed"] ?? "0", 10) || 0,
-        lastEvents: parseInt(kv["jetstream_last_events"] ?? "0", 10) || 0,
+        lastEvents,
         cursorMs: jetstreamCursorMs,
         lagSeconds: jetstreamLagSeconds,
-        active: (kv["jetstream_last_run"] ?? "") !== "",
+        stalled,
+        cappedAtMaxEvents,
         lastFollowers: parseInt(kv["jetstream_last_followers"] ?? "0", 10) || 0,
-        doLastPing,
-        doConnected,
       },
     });
   } catch (err) {

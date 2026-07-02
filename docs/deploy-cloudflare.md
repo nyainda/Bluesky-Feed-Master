@@ -19,7 +19,7 @@ This is the recommended way to run FeedForge. Both workers and the dashboard run
 ## Step 1 — Clone and Install
 
 ```bash
-git clone https://github.com/your-username/feedforge.git
+git clone https://github.com/nyainda/Bluesky-Feed-Master.git
 cd feedforge
 pnpm install
 ```

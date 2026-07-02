@@ -83,7 +83,7 @@ EOF
 
 ```bash
 cd /opt
-sudo git clone https://github.com/your-username/feedforge.git
+sudo git clone https://github.com/nyainda/Bluesky-Feed-Master.git
 sudo chown -R $USER:$USER feedforge
 cd feedforge
 pnpm install
