@@ -54,3 +54,10 @@ yarn-error.log
 .cache/
 .local/
 .replitignore
+
+# ─── Agent / AI tooling (Replit internals, not for contributors) ─────────────
+.agents/
+
+# ─── Scratch files from Replit uploads and migration history ─────────────────
+attached_assets/
+.migration-backup/
