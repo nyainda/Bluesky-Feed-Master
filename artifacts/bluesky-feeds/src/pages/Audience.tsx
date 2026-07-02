@@ -793,13 +793,6 @@ function AutoUnfollowCard() {
   });
 
   const [queuePending, setQueuePending] = useState(0);
-  const { data: queueStatus, refetch: refetchQueue } = useQuery<{
-    pending: number; done: number; failed: number; total: number; estimatedMinutesLeft: number;
-  }>({
-    queryKey: ["unfollow-queue-status"],
-    queryFn: () => customFetch("/api/bluesky/unfollow-schedule/status"),
-    refetchInterval: queuePending > 0 ? 15_000 : 30_000,
-  });
 
   const { data: cronHealth } = useQuery<{
     ok: boolean;
@@ -815,17 +808,11 @@ function AutoUnfollowCard() {
     staleTime: 30_000,
   });
 
-  useEffect(() => {
-    setQueuePending(queueStatus?.pending ?? 0);
-  }, [queueStatus?.pending]);
-
-  const isRunningActive = (queueStatus?.pending ?? 0) > 0;
-
   const { data: recentLog } = useQuery<{ ok: boolean; entries: UnfollowLogEntry[] }>({
     queryKey: ["auto-unfollow-log-live"],
     queryFn: () => customFetch("/api/auto-unfollow/log?limit=5"),
-    refetchInterval: isRunningActive ? 30_000 : false,
-    enabled: isRunningActive,
+    refetchInterval: queuePending > 0 ? 30_000 : false,
+    enabled: queuePending > 0,
     staleTime: 10_000,
   });
 
@@ -844,6 +831,8 @@ function AutoUnfollowCard() {
     ok: boolean;
     scan: { scanning: boolean; pagesScanned: number; totalEnqueued: number; startedAt: string | null; completedAt: string | null };
     queue: { pending: number; done: number; failed: number; total: number; estimatedMinutesLeft: number };
+    lastDrain: { at: string | null; done: number; failed: number; error: string | null; attemptedAt: string | null; skipReason: string | null };
+    lastCronTick: string | null;
   }>({
     queryKey: ["unfollow-campaign"],
     queryFn: () => customFetch("/api/bluesky/unfollow-campaign/status"),
@@ -860,13 +849,18 @@ function AutoUnfollowCard() {
   const displayMinFollowers = minFollowersToKeep ?? settings?.minFollowersToKeep ?? 0;
   const isDirty = enabled !== null || intervalDays !== null || cap !== null || minFollowersToKeep !== null;
 
-  const isRunning = (queueStatus?.pending ?? 0) > 0;
-  const qTotal = queueStatus?.total ?? 0;
-  const qDone = queueStatus?.done ?? 0;
-  const qPending = queueStatus?.pending ?? 0;
-  const qFailed = queueStatus?.failed ?? 0;
+  // Drive all queue metrics from campaign.queue (the correct real-time source)
+  const qTotal = campaign?.queue?.total ?? 0;
+  const qDone = campaign?.queue?.done ?? 0;
+  const qPending = campaign?.queue?.pending ?? 0;
+  const qFailed = campaign?.queue?.failed ?? 0;
+  const isRunning = qPending > 0;
   const pct = qTotal > 0 ? Math.round((qDone / qTotal) * 100) : 0;
-  const estimatedHours = queueStatus ? Math.ceil(queueStatus.estimatedMinutesLeft / 60) : 0;
+  const estimatedMins = campaign?.queue?.estimatedMinutesLeft ?? 0;
+  const estimatedHours = Math.ceil(estimatedMins / 60);
+
+  // Keep the pending count synced so recentLog refetch interval is correct
+  useEffect(() => { setQueuePending(qPending); }, [qPending]);
 
   async function handleSave() {
     setSaving(true);
@@ -899,9 +893,9 @@ function AutoUnfollowCard() {
     try {
       await customFetch("/api/admin/trigger-scan", { method: "POST" });
       toast({ title: "Scan started", description: "CF Worker is scanning your following list now" });
-      setTimeout(() => refetchQueue(), 4_000);
-      setTimeout(() => refetchQueue(), 10_000);
-      setTimeout(() => refetchQueue(), 20_000);
+      setTimeout(() => refetchCampaign(), 4_000);
+      setTimeout(() => refetchCampaign(), 10_000);
+      setTimeout(() => refetchCampaign(), 20_000);
     } catch {
       toast({ title: "Failed to start scan", variant: "destructive" });
     } finally {
@@ -911,8 +905,8 @@ function AutoUnfollowCard() {
 
   async function clearQueue() {
     try {
-      await customFetch("/api/bluesky/unfollow-schedule", { method: "DELETE" });
-      refetchQueue();
+      await customFetch("/api/bluesky/queue-all-following", { method: "DELETE" });
+      refetchCampaign();
       toast({ title: "Queue cleared" });
     } catch {
       toast({ title: "Failed to clear queue", variant: "destructive" });
@@ -977,7 +971,7 @@ function AutoUnfollowCard() {
                 <p className="text-[10px] text-amber-600/70">Last tick: {format(new Date(cronHealth.lastCronTick), "MMM d h:mm a")} · Expected every 3 min</p>
               </div>
               <button
-                onClick={() => customFetch("/api/admin/trigger-scan", { method: "POST" }).then(() => refetchQueue())}
+                onClick={() => customFetch("/api/admin/trigger-scan", { method: "POST" }).then(() => refetchCampaign())}
                 className="text-[10px] font-medium bg-amber-500/15 hover:bg-amber-500/25 px-2 py-1 rounded transition-colors flex-shrink-0"
               >
                 Retry
@@ -1034,7 +1028,7 @@ function AutoUnfollowCard() {
               )}
               {isRunning && (
                 <span className="text-[10px] text-muted-foreground hidden sm:block">
-                  Cron fires every 3 min · 10 unfollows per tick · ~200/hr
+                  Cron fires every 3 min · ~100 unfollows per tick · ~2,000/hr
                 </span>
               )}
             </div>
@@ -1079,7 +1073,7 @@ function AutoUnfollowCard() {
                       onClick={async () => {
                         try {
                           await customFetch("/api/admin/retry-failed-unfollows", { method: "POST" });
-                          setTimeout(() => refetchQueue(), 3_000);
+                          setTimeout(() => refetchCampaign(), 3_000);
                           toast({ title: `Retrying ${qFailed} failed unfollows` });
                         } catch {
                           toast({ title: "Retry failed", variant: "destructive" });
@@ -1094,9 +1088,37 @@ function AutoUnfollowCard() {
                 )}
                 <span className="text-[10px] text-muted-foreground ml-auto tabular-nums">
                   {pct}%
-                  {estimatedHours > 0 && ` · ~${estimatedHours}h left`}
+                  {estimatedMins > 0 && estimatedMins < 60 && ` · ~${estimatedMins}m left`}
+                  {estimatedHours > 0 && estimatedMins >= 60 && ` · ~${estimatedHours}h left`}
                 </span>
               </div>
+              {/* Last drain telemetry */}
+              {campaign?.lastDrain?.attemptedAt && (
+                <div className="flex items-center gap-2 pt-1 border-t border-border/20 flex-wrap">
+                  <span className="text-[10px] text-muted-foreground/60 flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    Last drain: {campaign.lastDrain.at
+                      ? formatDistanceToNow(new Date(campaign.lastDrain.at), { addSuffix: true })
+                      : formatDistanceToNow(new Date(campaign.lastDrain.attemptedAt), { addSuffix: true })}
+                  </span>
+                  {campaign.lastDrain.done > 0 && (
+                    <span className="text-[10px] text-emerald-600 font-medium">{campaign.lastDrain.done} unfollowed</span>
+                  )}
+                  {campaign.lastDrain.failed > 0 && (
+                    <span className="text-[10px] text-destructive/70">{campaign.lastDrain.failed} failed</span>
+                  )}
+                  {campaign.lastDrain.skipReason && (
+                    <span className="text-[10px] text-amber-600 bg-amber-500/8 border border-amber-500/20 px-1.5 py-0.5 rounded-full">
+                      skipped: {campaign.lastDrain.skipReason}
+                    </span>
+                  )}
+                  {campaign.lastCronTick && (
+                    <span className="text-[10px] text-muted-foreground/40 ml-auto">
+                      cron: {formatDistanceToNow(new Date(campaign.lastCronTick), { addSuffix: true })}
+                    </span>
+                  )}
+                </div>
+              )}
             </>
           )}
 
@@ -1106,9 +1128,9 @@ function AutoUnfollowCard() {
               <p className="text-[11px] text-muted-foreground/60 font-medium uppercase tracking-widest">How to trigger</p>
               <div className="space-y-1.5">
                 {[
-                  { step: "1", text: 'Click "Trigger Scan Now" below — CF Worker scans 500 following per cron tick (incremental, no timeouts). Each 3-min tick queues the next batch of non-followers-back.' },
-                  { step: "2", text: "Cron drains 10 unfollows per tick in parallel with scanning (~200/hr). No action needed — it runs 24/7 automatically." },
-                  { step: "3", text: "Watch this card: a blue 'Scan in progress' banner shows how many following have been checked. Queue bar appears once the first batch is queued." },
+                  { step: "1", text: 'Click "Trigger Scan Now" below — CF Worker scans your following list incrementally. Each 3-min cron tick queues the next batch of non-followers-back, no timeouts.' },
+                  { step: "2", text: "Cron drains ~100 unfollows per tick in parallel with scanning (~2,000/hr). No action needed after starting — it runs 24/7 automatically." },
+                  { step: "3", text: "Watch the progress bar: pending count drops every 3 minutes. The 'Last drain' line shows exactly when the cron last ran and how many it processed." },
                 ].map(({ step, text }) => (
                   <div key={step} className="flex items-start gap-2">
                     <span className="w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{step}</span>
@@ -1261,7 +1283,7 @@ function AutoUnfollowCard() {
                     onSuccess: (r) => {
                       const msg = (r as typeof r & { message?: string }).message;
                       toast({ title: `${r.succeeded} non-followers unfollowed`, description: msg ?? `Accounts followed in the last ${withinDays} days that never followed back.` });
-                      refetchQueue();
+                      refetchCampaign();
                     },
                     onError: () => toast({ title: "Cleanup failed", variant: "destructive" }),
                   });
