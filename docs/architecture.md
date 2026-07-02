@@ -40,7 +40,9 @@ FeedForge splits into two Cloudflare Workers that share one D1 database:
 
 - Two cron triggers: `*/3 * * * *` (every 3 min) and `0 2 * * *` (daily at 2 AM UTC)
 - Smart Placement enabled — anchors near D1's primary region since it does heavy write work
-- Hosts the `JetstreamConsumerDO` Durable Object for the Bluesky firehose WebSocket
+- Runs `runJetstreamIndexer()` each tick: opens a WebSocket to Bluesky Jetstream, collects events for 20 seconds, closes, writes matched posts to D1. Cursor persisted in `cron_settings` so each tick resumes exactly where the last stopped — no gaps.
+
+> **Why not `JetstreamConsumerDO`?** A persistent Durable Object WebSocket sounds ideal, but Cloudflare bills incoming DO WebSocket messages at **20:1** against the DO free-tier quota (100K/day). At Bluesky's real firehose volume (~thousands of posts/min network-wide), the DO exhausts its quota in hours. The cron-based approach uses a plain Worker execution (not billed per-message) and is completely free. Trade-off: up to ~3 min indexing latency. `jetstream-do.ts` is kept in the repo for a future paid-tier migration.
 
 **Why split?** Putting cron triggers and the Jetstream Durable Object in the same worker as the HTTP API created a conflict: Smart Placement (needed for D1-write-heavy cron work) anchors the entire worker to one region, which broke the latency of globally-distributed feed skeleton requests. Splitting lets each worker use the right placement strategy.
 
@@ -84,9 +86,9 @@ This makes it easy to add new telemetry fields (last drain time, skip reason, et
 
 ```
 Bluesky Jetstream (firehose)
-        │
+        │  (20s window per cron tick, cursor-based resume)
         ▼
-JetstreamConsumerDO         — persistent WebSocket in a Durable Object
+runJetstreamIndexer()       — opens WebSocket, collects, closes (free tier safe)
         │ (new post events)
         ▼
 Post filtering              — does post text match any active feed's keywords?

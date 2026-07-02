@@ -1,0 +1,205 @@
+# FeedForge — Jetstream Durable Object: Request Cap & D1 Write Inefficiency Fix
+
+**Target file(s):** `artifacts/cf-worker/src/lib/jetstream-do.ts`, `artifacts/cf-worker/src/lib/jetstream.ts`
+**Repo:** Bluesky-Feed-Master (FeedForge)
+**Priority:** P1 — currently exhausting Cloudflare Durable Objects free-tier request quota daily
+**Type:** Root-cause fix + schema migration + code refactor
+
+---
+
+## 1. Problem Statement
+
+`JetstreamConsumerDO` (in `jetstream-do.ts`) maintains a persistent WebSocket to Jetstream and is hitting Cloudflare's Durable Objects free-tier request cap (100K requests/day) well before the day resets.
+
+Two independent issues contribute:
+
+### 1.1 Root cause — unfiltered collection subscription (primary)
+
+In `startConnection()`:
+
+```ts
+const url = new URL(JETSTREAM_URL);
+url.searchParams.append("wantedCollections", "app.bsky.feed.post");
+url.searchParams.append("wantedCollections", "app.bsky.graph.follow");
+if (cursor) url.searchParams.set("cursor", cursor);
+```
+
+`wantedCollections` filters Jetstream's stream by **collection type only**, not content. The DO's WebSocket therefore receives every `app.bsky.feed.post` and `app.bsky.graph.follow` event created **network-wide** on Bluesky. Keyword matching happens client-side afterward, in `handleMessage()`.
+
+Cloudflare bills incoming Durable Object WebSocket messages at a 20:1 ratio (20 incoming messages = 1 billed request). At Bluesky's actual post volume, this alone accounts for the bulk of daily DO request consumption — independent of the 5-second alarm flush cadence, which is cheap (~17,280 alarm invocations/day, well within budget on its own).
+
+### 1.2 Secondary inefficiency — unbatched per-post read-before-write
+
+In `flushBuffer()` (`jetstream-do.ts`, and the equivalent Phase 5a block in `jetstream.ts`):
+
+```ts
+for (const post of posts) {
+  const existing = await this.env.DB.prepare(
+    "SELECT algo_tags FROM indexed_posts WHERE uri = ?",
+  ).bind(post.uri).first<{ algo_tags: string | null }>();
+
+  const mergedTags = mergeAlgoTags(existing?.algo_tags ?? null, post.algoTags);
+
+  await this.env.DB.prepare(
+    `INSERT INTO indexed_posts (...) VALUES (...) ON CONFLICT(uri) DO UPDATE SET algo_tags = ?, ...`,
+  ).bind(...).run();
+}
+```
+
+This performs a `SELECT` then an `INSERT`/`UPDATE` **per matched post, sequentially, unbatched** — 2 D1 round trips per post, awaited one at a time in a loop. The existing code comment ("one batched write instead of one per post") refers only to the `batchMarkAuthorsDirty()` call later in the function — it does **not** apply to this loop.
+
+Consequences:
+- 2x D1 operations per matched post instead of 1.
+- During high-match bursts, the sequential loop increases wall-clock time inside the 5-second alarm handler, risking overlap with the next scheduled flush.
+- The SELECT-before-INSERT pattern exists solely to deduplicate `algo_tags` (a comma-separated string column), which is fixable at the schema level.
+
+---
+
+## 2. Fix 1 — Eliminate DO request consumption entirely (stay on free tier)
+
+**Constraint: no paid Cloudflare plans. This must be solved architecturally, not by upgrading billing tier.**
+
+### Root insight
+The DO request cap is only hit because `JetstreamConsumerDO` maintains a **persistent** WebSocket inside a Durable Object, where every incoming message is billed 20:1 against the DO's request quota. A plain Cloudflare Worker invocation (e.g. triggered by a Cron Trigger) is **not** subject to this billing model — WebSocket messages received and processed inside a single Worker execution do not multiply against a per-message request quota the way DO WS messages do.
+
+### Fix: revert to the cron-based consumer (`jetstream.ts`) instead of the DO-based one (`jetstream-do.ts`)
+
+This pattern already exists in the codebase (`runJetstreamIndexer()` in `jetstream.ts`) and is explicitly documented in its own file header as `Cost: FREE`:
+
+```ts
+const COLLECT_MS = 20_000;  // collect for 20 seconds per cron tick
+const MAX_EVENTS = 5_000;   // hard cap to prevent memory blowup on firehose bursts
+```
+
+It opens a WebSocket, collects events for a fixed 20-second window, closes the connection, processes matched posts, saves the cursor, and exits. The next cron tick (every 3 min, per the existing scheduler) reconnects using the saved cursor, so no events are lost between ticks — only near-real-time responsiveness is traded for a ~3-minute batching delay.
+
+**Action for agent:**
+1. Confirm `jetstream.ts`'s `runJetstreamIndexer()` is wired into the Worker's `scheduled()` cron handler (check `scheduler.ts` / `index.ts`) and is the active path — not `jetstream-do.ts`.
+2. If `jetstream-do.ts` (the DO-based consumer) is currently the active path, switch the cron/scheduler binding back to call `runJetstreamIndexer()` from `jetstream.ts` instead.
+3. Do **not** delete `jetstream-do.ts` outright — keep it in the repo but unused/unbound, in case a future paid-tier migration wants to revisit persistent-connection latency. Add a code comment noting why it's currently unused (DO free-tier request cap).
+4. Verify the DO namespace binding for `JetstreamConsumerDO` is removed from `wrangler.toml`/`wrangler.jsonc` if no longer invoked, so no DO instance spins up and silently consumes quota.
+
+### Trade-offs to note in the PR description
+- Event latency increases from near-instant (persistent WS) to up to ~3 minutes (cron interval).
+- `MAX_EVENTS = 5_000` caps events collected per 20s window — if Jetstream's cursor-based replay on reconnect exceeds this cap during a burst, some events in that window could be dropped. Monitor `jetstream_last_events` in `cron_settings` after deploy to confirm this cap isn't being hit regularly; raise it if needed, weighed against Worker CPU-time limits on the free plan.
+- This approach still applies the D1 batching fix in Section 3 below — the per-post SELECT-before-INSERT inefficiency exists in `jetstream.ts`'s Phase 5a too and should be fixed there, not just in `jetstream-do.ts`.
+
+---
+
+## 3. Fix 2 — Eliminate per-post SELECT-before-INSERT (implement this)
+
+### 3.1 Schema migration
+
+Replace the `algo_tags` comma-separated string column on `indexed_posts` with a normalized junction table.
+
+```sql
+-- New table: one row per (post, tag) pair
+CREATE TABLE IF NOT EXISTS post_tags (
+  uri  TEXT NOT NULL,
+  tag  TEXT NOT NULL,
+  PRIMARY KEY (uri, tag)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_post_tags_tag ON post_tags(tag);
+CREATE INDEX IF NOT EXISTS idx_post_tags_uri ON post_tags(uri);
+```
+
+Keep `indexed_posts.algo_tags` in place during migration for backward compatibility with any code paths not yet updated (feed-ranking, RSS, syndication, etc. — grep for `algo_tags` usage before removing the column). Deprecate and drop it in a follow-up migration once all reads are confirmed to use `post_tags`.
+
+**Backfill migration (one-time):**
+```sql
+-- Run once against existing indexed_posts.algo_tags data
+-- (agent: write this as a one-off migration script, not part of the hot path)
+INSERT OR IGNORE INTO post_tags (uri, tag)
+SELECT uri, TRIM(value)
+FROM indexed_posts, json_each('["' || REPLACE(algo_tags, ',', '","') || '"]')
+WHERE algo_tags IS NOT NULL AND algo_tags != '';
+```
+Verify this backfill against a copy of production data before running against live D1 — comma-splitting via `json_each` string hacks is fragile; consider a small Node/TS script using D1's HTTP API instead if the SQL approach proves unreliable.
+
+### 3.2 Code changes — `flushBuffer()` in `jetstream-do.ts`
+
+Replace the per-post SELECT+INSERT loop with:
+
+1. A single batched `INSERT ... ON CONFLICT DO NOTHING` for `indexed_posts` rows (no tag merging needed here anymore — post metadata like `cid`, `author`, `text` doesn't require a read-check).
+2. A single batched `INSERT OR IGNORE` for all `(uri, tag)` pairs into `post_tags`, flattened across all posts in the buffer.
+
+```ts
+private async flushBuffer(): Promise<void> {
+  if (this.buffer.length === 0 && this.lastEventTimeUs === null) return;
+
+  const items = [...this.buffer];
+  this.buffer = [];
+
+  const now = new Date().toISOString();
+  const posts = items.filter((i): i is BufferedPost => i.kind === "post");
+  const follows = items.filter((i): i is BufferedFollow => i.kind === "follow");
+
+  let indexed = 0;
+  const dirtyAuthorDids: string[] = [];
+
+  if (posts.length > 0) {
+    const postStmts = posts.map((post) =>
+      this.env.DB.prepare(
+        `INSERT INTO indexed_posts (uri, cid, author, text, indexed_at, likes, reposts, replies, quotes)
+         VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0)
+         ON CONFLICT(uri) DO UPDATE SET engagement_synced_at = ?`,
+      ).bind(post.uri, post.cid, post.author, post.text, now, now),
+    );
+
+    const tagStmts = posts.flatMap((post) =>
+      [...post.algoTags].map((tag) =>
+        this.env.DB.prepare(
+          `INSERT OR IGNORE INTO post_tags (uri, tag) VALUES (?, ?)`,
+        ).bind(post.uri, tag),
+      ),
+    );
+
+    try {
+      await this.env.DB.batch([...postStmts, ...tagStmts]);
+      indexed = posts.length;
+      dirtyAuthorDids.push(...posts.map((p) => p.author));
+    } catch (err) {
+      console.error("[jetstream-do] Batched post insert failed:", err);
+    }
+  }
+
+  if (dirtyAuthorDids.length > 0) {
+    await batchMarkAuthorsDirty(this.env as any, dirtyAuthorDids).catch(() => {});
+  }
+
+  // ... follow-queue block and cursor-persist block unchanged ...
+}
+```
+
+**Note for agent:** `mergeAlgoTags()` becomes dead code once this lands — remove it and its import if no longer referenced elsewhere in the file.
+
+### 3.3 Downstream read-path updates required
+
+Grep the codebase for every place that reads `indexed_posts.algo_tags` (likely candidates: `feed-ranking.ts`, `rss.ts`, `syndication.ts`, `quality-layer.ts`) and update those queries to `JOIN post_tags` or run a separate tag lookup instead of reading the comma-separated column. **Do not skip this step** — shipping the write-path change without updating reads will silently break tag-based feed filtering.
+
+---
+
+## 4. Acceptance Criteria
+
+- [ ] `post_tags` table created via migration; indexes present.
+- [ ] Backfill migration run and verified against a non-production copy of `indexed_posts` first.
+- [ ] `flushBuffer()` in `jetstream-do.ts` no longer performs any per-post `SELECT` before insert.
+- [ ] `flushBuffer()` uses a single `env.DB.batch()` call for all post + tag writes per flush cycle (not sequential awaits in a loop).
+- [ ] Equivalent Phase 5a logic in `jetstream.ts` updated to match (same fix, same pattern).
+- [ ] All downstream reads of `algo_tags` updated to query `post_tags` instead.
+- [ ] `mergeAlgoTags()` removed if no longer referenced.
+- [ ] No regression in feed matching/tagging behavior — spot-check a handful of known keyword matches pre/post deploy.
+- [ ] Cron/scheduler is confirmed bound to `runJetstreamIndexer()` (`jetstream.ts`), not `JetstreamConsumerDO` (`jetstream-do.ts`).
+- [ ] `JetstreamConsumerDO`'s namespace binding removed from `wrangler.toml`/`wrangler.jsonc` if unused, so no DO instance is spun up.
+- [ ] `jetstream_last_events` monitored post-deploy for a few days to confirm `MAX_EVENTS = 5_000` isn't routinely hit (would indicate dropped events during bursts).
+
+---
+
+## 5. Explicitly Out of Scope for This PR
+
+- Any paid Cloudflare plan upgrade — hard constraint, do not suggest as a fix.
+- Changing the `wantedCollections` filtering strategy — Jetstream filters by collection type only; no server-side keyword filter is assumed available unless verified otherwise.
+- Dropping the legacy `algo_tags` column from `indexed_posts` — defer to a follow-up cleanup PR after confirming no remaining reads depend on it.
+- Increasing `MAX_EVENTS` beyond 5,000 without first confirming it's actually being hit (see acceptance criteria) — avoid premature tuning.
+- Deleting `jetstream-do.ts` — keep as dormant/unused code for potential future paid-tier revisit.

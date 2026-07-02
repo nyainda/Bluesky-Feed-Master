@@ -3,12 +3,22 @@
  *
  * Owns:
  *   - Cron triggers (every 3 min + daily 2am cleanup)
- *   - JetstreamConsumerDO (persistent Jetstream WebSocket via Durable Object)
+ *   - Jetstream indexing via a short-lived WebSocket per cron tick (jetstream.ts)
  *   - All indexing, ranking, scoring, follow/unfollow automation
  *
  * Does NOT own public HTTP routes — those live in the feedforge-api worker
  * (src/index.ts) so they are served from the nearest PoP to the reader
  * rather than being anchored near D1 by Smart Placement.
+ *
+ * ── Why not JetstreamConsumerDO? ────────────────────────────────────────────
+ * jetstream-do.ts implements a persistent Durable Object WebSocket connection.
+ * That approach was reverted because Cloudflare bills incoming DO WebSocket
+ * messages at 20:1 against the DO free-tier request quota (100K/day). At
+ * Bluesky's actual firehose volume (~thousands of posts/min network-wide),
+ * the DO exhausts its quota in hours. The cron-based approach in jetstream.ts
+ * uses a plain Worker execution (not billed per-message) and is completely
+ * free. Trade-off: ~3-min indexing latency vs near-real-time.
+ * Keep jetstream-do.ts in the repo for a future paid-tier migration.
  */
 
 import { runIndexer, runCleanup } from "./lib/indexer";
@@ -22,21 +32,16 @@ import { runScheduledUnfollow } from "./lib/scheduled-unfollow";
 import { runQueueAllScan } from "./lib/queue-all-scan";
 import { runAutoFollow } from "./lib/auto-follow";
 import { runScheduledFollow, runFollowBackCheck } from "./lib/scheduled-follow";
-import { JetstreamConsumerDO } from "./lib/jetstream-do";
+import { runJetstreamIndexer } from "./lib/jetstream";
 import type { Env } from "./index";
 
-export { JetstreamConsumerDO };
-
 export interface CronEnv extends Env {
-  JETSTREAM_DO: DurableObjectNamespace;
+  // JETSTREAM_DO binding removed — DO approach exhausts free-tier quota.
+  // Re-add when on a paid Cloudflare plan: see jetstream-do.ts.
 }
-
-const DO_NAME = "singleton";
 
 export default {
   async fetch(_request: Request, env: CronEnv): Promise<Response> {
-    // Minimal HTTP surface — just a health check so monitoring can verify
-    // the cron worker is deployed and reachable
     return Response.json({ status: "ok", worker: "feedforge-cron" });
   },
 
@@ -56,29 +61,18 @@ export default {
           return;
         }
 
-        // ── Every 3 min: ping Jetstream DO to ensure persistent connection ─
-        // The DO opens a single WebSocket that stays alive indefinitely.
-        // This ping just health-checks it and reconnects if the DO was evicted.
+        // ── Every 3 min: Jetstream — open WS, collect 20s, close ─────────
+        // Free-tier safe: plain Worker execution, no per-message DO billing.
+        // Cursor persisted in cron_settings so each tick resumes exactly where
+        // the last one stopped — no event gaps, just up to ~3-min latency.
         try {
-          const doId = env.JETSTREAM_DO.idFromName(DO_NAME);
-          const stub = env.JETSTREAM_DO.get(doId);
-          const resp = await stub.fetch("https://do-internal/ping");
-          const data = (await resp.json()) as {
-            status: string;
-            cursorLagSeconds: number | null;
-          };
-          console.log(
-            `[cron] Jetstream DO: ${data.status}, lag=${data.cursorLagSeconds ?? "n/a"}s`,
-          );
+          await runJetstreamIndexer(env);
         } catch (err) {
-          console.error(
-            "[cron] Jetstream DO ping failed:",
-            err instanceof Error ? err.message : String(err),
-          );
+          console.error("[cron] Jetstream indexer failed:", err instanceof Error ? err.message : String(err));
         }
 
         // ── 1. Drain follow/unfollow queues + advance queue-all scan ─────
-        await runQueueAllScan(env);   // cursor-based: 20 pages/tick, resumes on CF kill
+        await runQueueAllScan(env);
         await runScheduledUnfollow(env);
         await runScheduledFollow(env);
 

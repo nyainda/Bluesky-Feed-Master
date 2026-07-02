@@ -227,39 +227,51 @@ export async function runJetstreamIndexer(
     }
   }
 
-  // ── Phase 5a: Upsert matched posts ────────────────────────────────────────────
-  // Fetch existing algo_tags first so we can merge per-tag in JS (not as a blob),
-  // preventing duplicates like "tech,tech,startups" on repeated indexing passes.
+  // ── Phase 5a: Batch upsert matched posts ─────────────────────────────────────
+  // One SELECT for all matched URIs (not one per post), then one DB.batch() for
+  // all writes. Reduces 2N sequential D1 round trips to 2 total.
   let indexed = 0;
   const now = new Date().toISOString();
   const dirtyAuthorDids: string[] = [];
+  const matchedPosts = [...matchedByUri.values()];
 
-  for (const post of matchedByUri.values()) {
+  if (matchedPosts.length > 0) {
+    // Batch-fetch existing algo_tags for all matched URIs in one round trip
+    const uris = matchedPosts.map((p) => p.uri);
+    const placeholders = uris.map(() => "?").join(",");
+    let existingTagsByUri = new Map<string, string | null>();
     try {
-      const existing = await env.DB
-        .prepare("SELECT algo_tags FROM indexed_posts WHERE uri = ?")
-        .bind(post.uri)
-        .first<{ algo_tags: string | null }>();
+      const existingRows = await env.DB
+        .prepare(`SELECT uri, algo_tags FROM indexed_posts WHERE uri IN (${placeholders})`)
+        .bind(...uris)
+        .all<{ uri: string; algo_tags: string | null }>();
+      existingTagsByUri = new Map(existingRows.results.map((r) => [r.uri, r.algo_tags]));
+    } catch {
+      // Non-fatal — fall back to treating all posts as new (no tag merging)
+    }
 
-      const mergedTags = mergeAlgoTags(existing?.algo_tags ?? null, post.algoTags);
-
-      await env.DB
-        .prepare(
-          `INSERT INTO indexed_posts (uri, cid, author, text, algo_tags, indexed_at, likes, reposts, replies, quotes)
-           VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0)
-           ON CONFLICT(uri) DO UPDATE SET
-             algo_tags = ?,
-             engagement_synced_at = ?`,
-        )
-        .bind(post.uri, post.cid, post.author, post.text, mergedTags, now, mergedTags, now)
-        .run();
+    // Build all write statements, merging tags in JS (not per-post awaits)
+    const writeStmts = matchedPosts.map((post) => {
+      const mergedTags = mergeAlgoTags(existingTagsByUri.get(post.uri) ?? null, post.algoTags);
       dirtyAuthorDids.push(post.author);
-      indexed++;
+      return env.DB.prepare(
+        `INSERT INTO indexed_posts (uri, cid, author, text, algo_tags, indexed_at, likes, reposts, replies, quotes)
+         VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0)
+         ON CONFLICT(uri) DO UPDATE SET
+           algo_tags = ?,
+           engagement_synced_at = ?`,
+      ).bind(post.uri, post.cid, post.author, post.text, mergedTags, now, mergedTags, now);
+    });
+
+    try {
+      await env.DB.batch(writeStmts);
+      indexed = matchedPosts.length;
     } catch (err) {
-      console.error("[jetstream] Insert failed for", post.uri.slice(-20), err);
+      console.error("[jetstream] Batch insert failed:", err);
     }
   }
-  // Batch all author-dirty marks in one D1 batch instead of one write per post
+
+  // Batch all author-dirty marks in one D1 write instead of one per post
   if (dirtyAuthorDids.length > 0) {
     await batchMarkAuthorsDirty(env, dirtyAuthorDids).catch(() => {});
   }

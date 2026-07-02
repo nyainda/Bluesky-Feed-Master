@@ -1,12 +1,28 @@
 /**
  * JetstreamConsumerDO — Durable Object with persistent Jetstream WebSocket.
  *
- * Replaces the cron-tick open→collect→close pattern in jetstream.ts.
- * One WebSocket connection stays open indefinitely; the DO is kept alive by
- * the open socket. Matched posts are buffered in-memory and flushed to D1
- * every 5 seconds via the alarm() handler.
+ * ── CURRENTLY DORMANT ────────────────────────────────────────────────────────
+ * This file is kept for a future paid-tier migration but is NOT wired into the
+ * cron worker. The DO binding is commented out in wrangler.cron.toml.
  *
- * Lifecycle:
+ * Why reverted: Cloudflare bills incoming DO WebSocket messages at 20:1 against
+ * the DO free-tier request quota (100K/day). At Bluesky's firehose volume
+ * (~thousands of posts/min network-wide), the DO exhausts its quota in hours.
+ * The cron-based jetstream.ts approach has no per-message billing and is free.
+ *
+ * Trade-off vs persistent DO:
+ *   - Indexing latency: up to ~3 min (cron interval) vs near-real-time
+ *   - No quota risk on free tier
+ *   - Cursor-based resume means no event gaps between ticks
+ *
+ * To re-enable on a paid plan:
+ *   1. Uncomment [[durable_objects.bindings]] in wrangler.cron.toml
+ *   2. Re-export JetstreamConsumerDO from cron.ts
+ *   3. Add CronEnv.JETSTREAM_DO binding back to cron.ts
+ *   4. Replace runJetstreamIndexer() call with the DO ping block
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Original design:
  *   - Cron tick calls JETSTREAM_DO.get('singleton').fetch('/ping') every 3 min
  *   - On first ping, DO opens WebSocket to Jetstream and schedules alarm
  *   - alarm() flushes buffer → D1, reschedules itself, saves cursor to DO storage
