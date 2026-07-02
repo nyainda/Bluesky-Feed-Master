@@ -33,6 +33,7 @@ import { runQueueAllScan } from "./lib/queue-all-scan";
 import { runAutoFollow } from "./lib/auto-follow";
 import { runScheduledFollow, runFollowBackCheck } from "./lib/scheduled-follow";
 import { runJetstreamIndexer } from "./lib/jetstream";
+import { runFeedBoost } from "./lib/feed-boost";
 import type { Env } from "./index";
 
 export interface CronEnv extends Env {
@@ -92,6 +93,9 @@ export default {
         await runAutoUnfollow(env);
         await runAmplifier(env);
         await runAutoAmplify(env);
+
+        // ── 6. Feed Boost — weekly promotional posts ───────────────────────
+        await runFeedBoost(env);
       })(),
     );
   },

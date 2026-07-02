@@ -688,6 +688,14 @@ export default function FeedDetail() {
   const [sendingShare, setSendingShare] = useState(false);
   const [shareSentUri, setShareSentUri] = useState<string | null>(null);
 
+  // Feed Boost settings
+  type BoostSettings = { enabled: boolean; dayOfWeek: number; hourUtc: number; template: string | null; lastBoostedAt: string | null };
+  const BOOST_DEFAULTS: BoostSettings = { enabled: false, dayOfWeek: 1, hourUtc: 9, template: null, lastBoostedAt: null };
+  const [boostSettings, setBoostSettings] = useState<BoostSettings>(BOOST_DEFAULTS);
+  const [boostPanelOpen, setBoostPanelOpen] = useState(false);
+  const [savingBoost, setSavingBoost] = useState(false);
+  const [boostTemplate, setBoostTemplate] = useState("");
+
   const { data: feed, isLoading: loadingFeed } = useGetFeed(id);
   const { data: keywords } = useGetFeedKeywords(id);
   const { data: postsPage, isLoading: loadingPosts } = useGetFeedPosts(

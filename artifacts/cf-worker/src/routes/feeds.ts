@@ -362,4 +362,50 @@ route.post("/feeds/:id/auto-amplify", async (c) => {
   return c.json(body);
 });
 
+// ── Feed Boost settings (stored as cron_settings JSON) ───────────────────────
+// Boost posts a promotional Bluesky update about the feed on a weekly schedule.
+
+const BOOST_DEFAULTS = {
+  enabled: false,
+  dayOfWeek: 1,
+  hourUtc: 9,
+  template: null as string | null,
+  lastBoostedAt: null as string | null,
+};
+
+route.get("/feeds/:id/boost", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  const key = `feed_boost_${id}`;
+  const row = await c.env.DB.prepare("SELECT value FROM cron_settings WHERE key = ?")
+    .bind(key)
+    .first<{ value: string }>();
+  if (!row) return c.json(BOOST_DEFAULTS);
+  try {
+    return c.json({ ...BOOST_DEFAULTS, ...JSON.parse(row.value) });
+  } catch {
+    return c.json(BOOST_DEFAULTS);
+  }
+});
+
+route.post("/feeds/:id/boost", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  let body: Partial<typeof BOOST_DEFAULTS>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  const merged = { ...BOOST_DEFAULTS, ...body };
+  const key = `feed_boost_${id}`;
+  const value = JSON.stringify(merged);
+  await c.env.DB.prepare(
+    "INSERT INTO cron_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = datetime('now')",
+  )
+    .bind(key, value, value)
+    .run();
+  return c.json(merged);
+});
+
 export default route;
