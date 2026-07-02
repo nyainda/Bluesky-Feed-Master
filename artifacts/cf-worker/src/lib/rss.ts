@@ -43,11 +43,11 @@ export async function generateFeedRss(env: Env, feedId: number): Promise<string 
     const recentRows = await env.DB.prepare(
       `SELECT uri, text, author, indexed_at, likes, reposts, replies
        FROM indexed_posts
-       WHERE algo_tags LIKE ?
+       WHERE instr(',' || algo_tags || ',', ',' || ? || ',') > 0
        ORDER BY indexed_at DESC
        LIMIT 50`,
     )
-      .bind(`%${feedRow.record_name}%`)
+      .bind(feedRow.record_name)
       .all<{ uri: string; text: string; author: string; indexed_at: string; likes: number; reposts: number; replies: number }>();
     posts = recentRows.results ?? [];
   }

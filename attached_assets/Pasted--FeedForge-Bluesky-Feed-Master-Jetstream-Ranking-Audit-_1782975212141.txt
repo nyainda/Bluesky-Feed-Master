@@ -1,0 +1,205 @@
+# FeedForge / Bluesky-Feed-Master — Jetstream & Ranking Audit Spec
+
+Agent-ready spec. Each section is a self-contained task: problem, root cause, fix, and acceptance criteria. Work top to bottom — task 1 blocks the most value, the rest are independent.
+
+---
+
+## TASK 1 — Replace cron-cycle Jetstream polling with a persistent Durable Object connection
+
+### Problem
+`src/lib/jetstream.ts` opens a fresh WebSocket to Jetstream every cron tick (every 3 min), collects for `COLLECT_MS = 20_000` (20s), then closes. It subscribes to the **entire network's** `app.bsky.feed.post` + `app.bsky.graph.follow` collections (no `wantedDids` filtering), capped at `MAX_EVENTS = 5_000`.
+
+At real Bluesky volume, 5,000 events arrive in well under 20 seconds. So:
+- Each tick only samples the first few seconds of network activity, not the full 20s.
+- The worker is disconnected ~160 of every 180 seconds.
+- The stored cursor jumps forward to wherever collection stopped — the gap is real data loss, not just a delay, because Jetstream's catch-up buffer is not built for multi-minute backlogs at full network volume.
+- Net effect: the indexer silently falls further behind real-time every cycle, while logs look "healthy" (non-zero `indexed` counts each run mask the gap).
+
+### Root cause
+Architecture mismatch — Workers Cron Triggers are not designed for long-lived connections, and the indexer pattern requires a connection that's *never* closed.
+
+### Fix
+Move the Jetstream consumer to a **Durable Object using WebSocket Hibernation**:
+
+1. Create `JetstreamConsumerDO` — a Durable Object that opens **one** Jetstream connection on first activation and keeps it open indefinitely via hibernatable WebSockets (`state.acceptWebSocket()`), so it survives DO eviction without re-paying connection setup cost.
+2. On each incoming message, apply the existing keyword/follow filtering logic (reuse the matching code from `jetstream.ts` verbatim — only the connection lifecycle changes).
+3. Buffer matched posts in DO storage (`this.state.storage`) and flush to D1 in batches every 5–10 seconds (small batches, not every message — D1 has per-request overhead).
+4. Use `wantedDids` filtering wherever possible (e.g. for follow-back tracking, you already only care about events targeting `publisherDid` — Jetstream can filter that server-side instead of you filtering 5,000 events client-side every tick).
+5. Remove the cron-triggered `runJetstreamIndexer` call entirely; replace with a lightweight cron health-check that just confirms the DO's WebSocket is still alive (ping `cron_settings.jetstream_last_run`, and if stale >2 min, have the cron tick re-activate the DO).
+6. Keep the existing cursor persistence (`jetstream_cursor` in `cron_settings`) as a recovery mechanism for when the DO does get evicted/restarted — but it should now be the exception path, not the normal one.
+
+### Acceptance criteria
+- WebSocket to Jetstream stays open continuously, not reconnected every 3 minutes.
+- `jetstream_last_events` no longer caps near `MAX_EVENTS` on every run — it should reflect actual steady-state throughput of matched events, not raw firehose volume.
+- Verify by comparing `jetstream_cursor` timestamp to `Date.now()` after a few hours of operation — gap should stay under ~30s, not grow unbounded.
+
+---
+
+## TASK 2 — Fix tag-append dedup logic (duplicate tags accumulating)
+
+### Problem
+Both `jetstream.ts` (Phase 5a) and `indexer.ts` (search-API fallback) use this pattern to avoid re-appending a tag a post already has:
+
+```sql
+algo_tags = CASE
+  WHEN instr(',' || algo_tags || ',', ',' || ? || ',') > 0
+  THEN algo_tags
+  ELSE algo_tags || ',' || ?
+END
+```
+
+But the bound parameter is the **entire comma-joined string of newly-matched tags** (e.g. `"tech,startups"`), not each tag checked individually. If a post matches `"tech"` on one indexing pass and `"tech,startups"` on the next, the substring check fails (the combined string differs) and `"tech,startups"` gets appended wholesale — producing `algo_tags = "tech,tech,startups"`. This compounds over repeated indexing passes.
+
+### Fix
+Replace the single-blob CASE with a loop that checks and appends **per tag**, either in application code (preferred — clearer, easier to test) or via a SQL scalar function if staying in pure SQL. Application-code version:
+
+```ts
+function mergeAlgoTags(existing: string, newTags: Set<string>): string {
+  const existingSet = new Set(existing.split(",").map(t => t.trim()).filter(Boolean));
+  for (const tag of newTags) existingSet.add(tag);
+  return [...existingSet].join(",");
+}
+```
+
+Fetch the existing `algo_tags` value first (or use `RETURNING` on the upsert), merge in JS, then write the deduped result back. This also fixes Task 3 below for free, since the merge function should split/compare exact tags rather than substrings.
+
+### Acceptance criteria
+- Write a test: insert a post tagged `"tech"`, then re-index the same post with new match `"tech,startups"`. Resulting `algo_tags` should be exactly `"tech,startups"`, not `"tech,tech,startups"`.
+- Run a one-off cleanup migration on existing `indexed_posts` rows to dedupe any `algo_tags` that already have repeats (`SELECT uri, algo_tags FROM indexed_posts WHERE algo_tags LIKE '%,%,%'` is a good starting filter to find candidates, then dedupe in a script).
+
+---
+
+## TASK 3 — Fix `LIKE '%tag%'` substring collisions
+
+### Problem
+`feed-ranking.ts` (candidate query) and `indexer.ts` (search-API upsert) both match/filter `algo_tags` with plain SQL `LIKE '%recordName%'` against the comma-joined string. Any feed name that's a substring of another (`"ai"` / `"fail"`, `"tech"` / `"fintech"`) will cross-contaminate feeds with unrelated posts.
+
+### Fix
+Same delimiter-safe pattern as Task 2 — always wrap both sides in commas before comparing:
+
+```sql
+instr(',' || algo_tags || ',', ',' || ? || ',') > 0
+```
+
+Apply this everywhere `algo_tags` is filtered or matched, not just on write. Update `feed-ranking.ts`'s candidate query:
+
+```sql
+WHERE instr(',' || algo_tags || ',', ',' || ? || ',') > 0
+```
+instead of `like(indexedPostsTable.algoTags, '%' + feed.recordName + '%')`.
+
+### Acceptance criteria
+- Create two feeds named `"ai"` and `"fail"` (or similar overlapping pair) with distinct keywords, post matching content to each, confirm no cross-contamination in `precomputeFeedRankings` output.
+
+### Note — third call site
+`routes/xrpc.ts`'s `getFeedSkeleton` handler has the same `LIKE '%tag%'` pattern in its fallback path (used when `feed_ranked_posts` is empty, e.g. right after deploy):
+
+```ts
+const conditions = [like(indexedPostsTable.algoTags, `%${feed.recordName}%`)];
+```
+
+Apply the same delimiter-safe `instr(',' || algo_tags || ',', ',' || ? || ',') > 0` fix here too. This is the path that serves live traffic when ranking hasn't run yet, so it's not just a backfill edge case — it directly affects what real users see in their feed.
+
+---
+
+## TASK 4 — Unify recency decay (kill the dead code / conflicting half-life)
+
+### Problem
+`quality-layer.ts` exports `computeRecencyDecay()` documented as a 12-hour half-life, but it's never called. `feed-ranking.ts` reimplements its own inline 6-hour half-life decay instead. Two sources of truth, one of them unused and misleading to anyone reading the codebase (including future agent passes).
+
+### Fix
+Pick one half-life (6h is already the active production behavior, so keep that unless you have a reason to change it), update `computeRecencyDecay` in `quality-layer.ts` to match, and call it from `feed-ranking.ts` instead of the inline `Math.exp(-ageHours / 6)`. Delete the duplicate.
+
+### Acceptance criteria
+- Only one recency decay implementation exists in the codebase.
+- `feed-ranking.ts` imports and calls it rather than reimplementing.
+
+---
+
+## TASK 5 — Make the spam penalty actually do something
+
+### Problem
+`scoring-formula.ts`: prolific posters get a flat `-12` penalty once `postCount > 1200`. But `postCount * WEIGHTS.posts` (0.2/post) alone contributes +240 at that threshold, and the log-scaled `consistencyScore` adds up to +35 on top. A flat -12 is statistical noise against +275 of reward — the penalty does not change ranking outcomes in practice.
+
+### Fix
+Scale the penalty with how far over the threshold the author is, and apply it as a multiplier on the *engagement* component rather than a flat subtract on the total (so it actually suppresses low-quality-but-high-volume accounts rather than just shaving a constant off a large number):
+
+```ts
+const SPAM_THRESHOLD = 1200;
+const overage = Math.max(0, postCount - SPAM_THRESHOLD);
+// Scales from 1.0 (no penalty) down toward 0.5 as overage grows, log-scaled so it doesn't cliff
+const spamMultiplier = postCount > SPAM_THRESHOLD
+  ? clamp(1 - Math.log1p(overage) * 0.05, 0.5, 1)
+  : 1;
+
+const base = (postCount * WEIGHTS.posts + likes * WEIGHTS.likes + reposts * WEIGHTS.reposts + replies * WEIGHTS.replies + engagementPerPost) * spamMultiplier;
+```
+
+Tune the `0.05` coefficient against real data once you have volume — the point is the penalty should visibly move an account's rank, not round to a rounding error.
+
+### Acceptance criteria
+- Construct a synthetic author with `postCount = 5000`, low engagement-per-post, and confirm their final score visibly drops relative to an author with `postCount = 500` and similar total engagement.
+
+---
+
+## TASK 6 — Stop using Smart Placement for a worker that does two different jobs
+
+### Problem
+`wrangler.toml` sets `[placement] mode = "smart"`. The comment in the file claims this "minimises latency for readers in US, EU, APAC for feed-skeleton reads" — but that's not how Smart Placement works. Smart Placement picks **one** physical location for the entire worker, chosen by where it talks to its backends most (in this case, D1). It does not dynamically split placement between the cron job and the public read path.
+
+In practice this means: because the worker also runs D1-heavy cron tasks (indexer, ranking, author scoring), Smart Placement will likely anchor the worker near D1's region. Every `getFeedSkeleton` request from a reader on the other side of the world then pays extra latency getting to that anchored location before the edge cache can even serve a cache hit on first contact — directly undercutting the "real-time, low-latency feed" positioning from the differentiation section below.
+
+### Fix
+Split into two workers:
+1. **`feedforge-cron`** — owns the cron triggers (indexer, ranking, author scoring, scheduler, amplifier). Keep Smart Placement here; it's exactly the write-heavy/D1-heavy workload it's designed for.
+2. **`feedforge-api`** — owns the public `xrpc/*`, `.well-known/did.json`, and `/api/geo` routes. Remove `[placement] mode = "smart"` from this one (or explicitly omit it) so each request is handled by the nearest PoP to the reader, letting your existing edge cache headers (`s-maxage=30`, `stale-while-revalidate=60`) do their job properly.
+
+Both workers share the same D1 binding (`feedforge-db`) — no data migration needed, just a wrangler.toml split and an `index.ts` split into two entry points.
+
+### Acceptance criteria
+- Two separate `wrangler.toml` files / worker deployments, one cron-only, one read-only.
+- Measure `getFeedSkeleton` response time from at least two geographically distant test locations before/after the split — should see a measurable improvement for the region farther from D1's primary location.
+
+---
+
+## TASK 7 — Durable Objects binding required for Task 1
+
+### Problem
+Task 1 (persistent Jetstream connection via Durable Object + WebSocket Hibernation) requires infrastructure that isn't in `wrangler.toml` yet — there's no `[[durable_objects.bindings]]` block or migrations entry. Flagging this separately so it isn't missed as a deploy blocker when Task 1 is implemented.
+
+### Fix
+Add to `wrangler.toml` (on the `feedforge-cron` worker post-Task-6-split, since that's the natural home for the always-on indexer):
+
+```toml
+[[durable_objects.bindings]]
+name = "JETSTREAM_DO"
+class_name = "JetstreamConsumerDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["JetstreamConsumerDO"]
+```
+
+And export the DO class from the worker's `index.ts` (`export { JetstreamConsumerDO }`). Durable Objects with WebSocket Hibernation are available on the Workers Free plan as of recent Cloudflare pricing changes, but confirm current limits/pricing for your account tier before deploying, since this is exactly the kind of detail that changes — worth a quick check against Cloudflare's current docs rather than assuming.
+
+### Acceptance criteria
+- `wrangler deploy` succeeds with the DO binding present.
+- DO survives a manual eviction test (e.g. via `wrangler tail` watching reconnect behavior) without losing the Jetstream cursor.
+
+---
+
+# Differentiation & monetization — what would make this sellable
+
+You already have GoKazini as the Kenyan incumbent (95K+ users, M-Pesa). Don't compete on user count — compete on what they structurally can't easily copy: **real-time, not search-API-lag feeds**, and **transparent, tunable ranking** instead of a black box.
+
+### Positioning angle
+"Feeds powered by the live firehose, not search polling" is a genuine technical differentiator once Task 1 is done — most hobbyist Bluesky feed tools (including a lot of what's floating around in the ecosystem) are still doing periodic search-API polling, which has real lag. A correctly-implemented persistent Jetstream consumer is meaningfully faster and gives you near-instant feed updates as a marketable feature, not just an internal nice-to-have.
+
+### Productizable features worth building on top of what you have
+1. **Per-feed ranking weight sliders** — you already have `RANK_WEIGHTS` (author/velocity/quality/recency) as constants. Expose these as a per-feed config in the UI (`Feeds.tsx` / `FeedDetail.tsx` already exist) so feed owners can tune "favor recency" vs "favor quality" themselves. This is a feature GoKazini and most hobby feed generators don't offer, and it's nearly free to build since the math already exists — you're just parameterizing constants that are currently hardcoded.
+2. **Author reputation as a standalone product** — `author-scoring.ts` + `scoring-formula.ts` is effectively a portable "is this account spammy/high-quality" score. Once Task 5 is fixed and it's trustworthy, this could be exposed as its own lightweight API endpoint (look up any DID, get a quality/spam score) — sellable to other Bluesky tool builders, not just your own feed users, as a paid API tier.
+3. **Auto follow-back as a paid tier feature** — you already have `auto-follow.ts` / `scheduled-follow.ts` wired to Jetstream's follow events. Once Task 1 makes that real-time and reliable, "instant follow-back" is a clean, demonstrable paid feature for account growth tools.
+4. **Trending detection as a notification product** — `feed-ranking.ts` already computes `isTrending` (velocity-based boost). Surface that as a push/email alert ("a post in your tracked keywords is trending right now") rather than only using it internally to reorder a feed — turns a ranking signal into a standalone retention feature.
+
+### What NOT to lead with
+Don't market this as "AI-powered" (consistent with your standing ProCV positioning) — there's no LLM in this pipeline at all, it's deterministic scoring + a real-time data pipeline. Lead with "real-time" and "transparent, tunable algorithm" instead — that's both true and harder for a bigger, slower-moving competitor to retrofit.
