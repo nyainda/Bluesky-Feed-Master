@@ -267,5 +267,15 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
         "INSERT INTO cron_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
       ).bind("last_drain_error", lastError).run();
     }
+    // Accumulate a lifetime unfollow counter that survives queue clears.
+    // Uses SQLite arithmetic in the ON CONFLICT clause for an atomic increment.
+    if (done > 0) {
+      await env.DB.prepare(
+        `INSERT INTO cron_settings (key, value) VALUES ('total_unfollowed_ever', ?)
+         ON CONFLICT(key) DO UPDATE SET
+           value = CAST(CAST(value AS INTEGER) + ? AS TEXT),
+           updated_at = datetime('now')`,
+      ).bind(String(done), done).run();
+    }
   } catch {}
 }

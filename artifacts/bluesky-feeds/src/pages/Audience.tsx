@@ -903,17 +903,21 @@ function AutoUnfollowCard() {
   const [campaignStarting, setCampaignStarting] = useState(false);
   const cleanupNonFollowers = useUnfollowNonFollowers();
 
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+
   const { data: campaign, refetch: refetchCampaign } = useQuery<{
     ok: boolean;
     scan: { scanning: boolean; pagesScanned: number; totalEnqueued: number; startedAt: string | null; completedAt: string | null };
     queue: { pending: number; done: number; failed: number; total: number; estimatedMinutesLeft: number };
     lastDrain: { at: string | null; done: number; failed: number; error: string | null; attemptedAt: string | null; skipReason: string | null };
     lastCronTick: string | null;
+    totalUnfollowedEver: number;
   }>({
     queryKey: ["unfollow-campaign"],
     queryFn: () => customFetch("/api/bluesky/unfollow-campaign/status"),
-    refetchInterval: 4_000,
-    staleTime: 3_000,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
   });
 
   const campaignActive = (campaign?.scan?.scanning ?? false) || (campaign?.queue?.pending ?? 0) > 0;
@@ -980,12 +984,27 @@ function AutoUnfollowCard() {
   }
 
   async function clearQueue() {
+    if (!confirmClear) { setConfirmClear(true); return; }
+    setConfirmClear(false);
     try {
-      await customFetch("/api/bluesky/queue-all-following", { method: "DELETE" });
+      await customFetch("/api/bluesky/unfollow-schedule", { method: "DELETE" });
       refetchCampaign();
       toast({ title: "Queue cleared" });
     } catch {
       toast({ title: "Failed to clear queue", variant: "destructive" });
+    }
+  }
+
+  async function restartCampaign() {
+    setRestarting(true);
+    try {
+      await customFetch("/api/bluesky/unfollow-campaign/restart", { method: "POST" });
+      toast({ title: "Fresh scan started", description: "Queue cleared — CF Worker will re-scan your following list." });
+      setTimeout(() => refetchCampaign(), 3_000);
+    } catch {
+      toast({ title: "Failed to restart", variant: "destructive" });
+    } finally {
+      setRestarting(false);
     }
   }
 
@@ -1104,11 +1123,17 @@ function AutoUnfollowCard() {
               )}
               {isRunning && (
                 <span className="text-[10px] text-muted-foreground hidden sm:block">
-                  Cron fires every 3 min · ~100 unfollows per tick · ~2,000/hr
+                  Dedicated cron slot every ~12 min · 6 unfollows per tick · ~30/hr
                 </span>
               )}
             </div>
             <div className="flex items-center gap-2">
+              {(campaign?.totalUnfollowedEver ?? 0) > 0 && (
+                <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                  <CheckCircle className="w-3 h-3 text-emerald-500" />
+                  {(campaign?.totalUnfollowedEver ?? 0).toLocaleString()} unfollowed ever
+                </span>
+              )}
               {settings?.lastRun && (
                 <span className="text-[10px] text-muted-foreground flex items-center gap-1">
                   <Clock className="w-3 h-3" />
@@ -1116,9 +1141,17 @@ function AutoUnfollowCard() {
                 </span>
               )}
               {qTotal > 0 && (
-                <button onClick={clearQueue} className="text-[10px] text-destructive/70 hover:text-destructive hover:underline">
-                  Clear
-                </button>
+                confirmClear ? (
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-[10px] text-destructive font-medium">Sure?</span>
+                    <button onClick={clearQueue} className="text-[10px] font-medium text-destructive bg-destructive/10 hover:bg-destructive/20 px-1.5 py-0.5 rounded transition-colors">Yes, clear</button>
+                    <button onClick={() => setConfirmClear(false)} className="text-[10px] text-muted-foreground hover:text-foreground">No</button>
+                  </span>
+                ) : (
+                  <button onClick={clearQueue} className="text-[10px] text-destructive/60 hover:text-destructive hover:underline">
+                    Clear
+                  </button>
+                )
               )}
             </div>
           </div>
@@ -1207,15 +1240,33 @@ function AutoUnfollowCard() {
             </>
           )}
 
+          {/* Campaign complete — offer fresh scan */}
+          {campaignComplete && !isRunning && (
+            <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-emerald-500/6 border border-emerald-500/20">
+              <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">All done — queue drained</p>
+                <p className="text-[10px] text-muted-foreground/70">Run a new scan to catch anyone who unfollowed you since last time.</p>
+              </div>
+              <button
+                onClick={restartCampaign}
+                disabled={restarting}
+                className="text-[11px] font-medium bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-700 dark:text-emerald-400 px-2.5 py-1 rounded-lg transition-colors flex-shrink-0 disabled:opacity-50"
+              >
+                {restarting ? "Starting…" : "Re-scan now"}
+              </button>
+            </div>
+          )}
+
           {/* Idle state: step-by-step guide */}
-          {!isRunning && qTotal === 0 && !(cronHealth?.scanInProgress || settings?.scanInProgress) && (
+          {!isRunning && qTotal === 0 && !campaignComplete && !(cronHealth?.scanInProgress || settings?.scanInProgress) && (
             <div className="space-y-2 pt-0.5">
               <p className="text-[11px] text-muted-foreground/60 font-medium uppercase tracking-widest">How to trigger</p>
               <div className="space-y-1.5">
                 {[
-                  { step: "1", text: 'Click "Trigger Scan Now" below — CF Worker scans your following list incrementally. Each 3-min cron tick queues the next batch of non-followers-back, no timeouts.' },
-                  { step: "2", text: "Cron drains ~100 unfollows per tick in parallel with scanning (~2,000/hr). No action needed after starting — it runs 24/7 automatically." },
-                  { step: "3", text: "Watch the progress bar: pending count drops every 3 minutes. The 'Last drain' line shows exactly when the cron last ran and how many it processed." },
+                  { step: "1", text: 'Click "Trigger Scan Now" below — CF Worker scans your following list incrementally. Each 3-min cron tick queues 500 non-followers-back, no timeouts.' },
+                  { step: "2", text: "A dedicated cron slot fires every ~12 min and unfollows 6 per run (~30/hr). Batches stay small so the free-tier subrequest cap is never hit." },
+                  { step: "3", text: "Watch the progress bar: pending count drops every 12 minutes. The 'Last drain' line shows exactly when the cron last ran and how many it processed." },
                 ].map(({ step, text }) => (
                   <div key={step} className="flex items-start gap-2">
                     <span className="w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{step}</span>
@@ -1224,7 +1275,7 @@ function AutoUnfollowCard() {
                 ))}
               </div>
               <p className="text-[10px] text-muted-foreground/40 pt-0.5 border-t border-border/30">
-                52k following → ~104 cron ticks to finish scanning · queue drains at ~200 unfollows/hr
+                Free-tier safe · 6/tick every ~12 min · ~30 unfollows/hr · no manual action needed
               </p>
             </div>
           )}

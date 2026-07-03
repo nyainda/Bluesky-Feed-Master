@@ -419,7 +419,26 @@ route.get("/bluesky/unfollow-campaign/status", async (c) => {
     };
     const lastCronTick = tel["last_cron_tick"] ?? null;
 
-    return c.json({ ok: true, scan, queue, lastDrain, lastCronTick });
+    // Lifetime counter — survives queue clears
+    const totalRow = await c.env.DB.prepare(
+      "SELECT value FROM cron_settings WHERE key = 'total_unfollowed_ever'"
+    ).first<{ value: string }>().catch(() => null);
+    const totalUnfollowedEver = parseInt(totalRow?.value ?? "0", 10) || 0;
+
+    return c.json({ ok: true, scan, queue, lastDrain, lastCronTick, totalUnfollowedEver });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+/** Clears the queue and starts a fresh scan — use when all items are done and you want to re-run. */
+route.post("/bluesky/unfollow-campaign/restart", async (c) => {
+  try {
+    const { startQueueAllScan } = await import("../lib/queue-all-scan");
+    const { clearScheduledUnfollowQueue } = await import("../lib/scheduled-unfollow");
+    await clearScheduledUnfollowQueue(c.env);
+    await startQueueAllScan(c.env);
+    return c.json({ ok: true, message: "Queue cleared and fresh scan started." });
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
   }
