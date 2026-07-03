@@ -1123,7 +1123,7 @@ function AutoUnfollowCard() {
               )}
               {isRunning && (
                 <span className="text-[10px] text-muted-foreground hidden sm:block">
-                  Dedicated cron slot every ~12 min · 6 unfollows per tick · ~30/hr
+                  Dedicated cron slot every ~12 min · 10 unfollows per tick · ~50/hr
                 </span>
               )}
             </div>
@@ -1265,7 +1265,7 @@ function AutoUnfollowCard() {
               <div className="space-y-1.5">
                 {[
                   { step: "1", text: 'Click "Trigger Scan Now" below — CF Worker scans your following list incrementally. Each 3-min cron tick queues 500 non-followers-back, no timeouts.' },
-                  { step: "2", text: "A dedicated cron slot fires every ~12 min and unfollows 6 per run (~30/hr). Batches stay small so the free-tier subrequest cap is never hit." },
+                  { step: "2", text: "A dedicated cron slot fires every ~12 min and unfollows 10 per run (~50/hr). Batches stay small so the free-tier subrequest cap is never hit." },
                   { step: "3", text: "Watch the progress bar: pending count drops every 12 minutes. The 'Last drain' line shows exactly when the cron last ran and how many it processed." },
                 ].map(({ step, text }) => (
                   <div key={step} className="flex items-start gap-2">
@@ -1275,7 +1275,7 @@ function AutoUnfollowCard() {
                 ))}
               </div>
               <p className="text-[10px] text-muted-foreground/40 pt-0.5 border-t border-border/30">
-                Free-tier safe · 6/tick every ~12 min · ~30 unfollows/hr · no manual action needed
+                Free-tier safe · 10/tick every ~12 min · ~50 unfollows/hr · no manual action needed
               </p>
             </div>
           )}

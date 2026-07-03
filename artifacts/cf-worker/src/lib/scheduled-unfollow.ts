@@ -9,11 +9,12 @@ const TABLE = "unfollow_scheduled_queue";
 // cap, and once the cap is hit mid-loop, the "mark failed" write inside the
 // catch block was ALSO a subrequest that then threw uncaught, skipping the
 // end-of-run telemetry entirely and making the drain look permanently stuck.
-// 6/tick leaves large headroom. See STOP_ON_SUBREQUEST_LIMIT below for the
-// other half of the fix — bailing out cleanly instead of burning remaining
-// budget on doomed retries.
-const BATCH_PER_CRON = 6;
-const DELAY_MS = 150;          // 150ms between each deleteFollow — 15 × 150ms = 2.25s overhead per tick
+// 10/tick gives ~31 subrequests (8 setup + 10×2.3) — 38% below the 50-cap,
+// well-measured headroom. 15 items hit 40-45 (too close); 10 is the sweet
+// spot: meaningfully faster without risking mid-loop cap exhaustion.
+// See STOP_ON_SUBREQUEST_LIMIT below for the clean bail-out on cap hit.
+const BATCH_PER_CRON = 10;
+const DELAY_MS = 150;          // 150ms between each deleteFollow — 10 × 150ms = 1.5s overhead per tick
 
 export async function ensureScheduledUnfollowTable(env: Env): Promise<void> {
   await env.DB.prepare(
