@@ -2,14 +2,17 @@ import type { Env } from "../index";
 
 const TABLE = "auto_follow_queue";
 
-// 40 follows per 3-min cron = ~19,200/day attempts, capped by Bluesky at 5,000/day.
-// 200ms delay between follows = 40 × 200ms = 8s overhead per tick, well within 3min.
-const BATCH_PER_CRON = 40;
+// Capped at 8/tick (down from 40) to stay under Cloudflare Workers Free plan's
+// 50-subrequest-per-invocation limit — this cron tick also runs the jetstream
+// indexer, feed scheduler, author scoring, unfollow drain, and amplifier, each
+// consuming its own share of the same 50-subrequest budget.
+// 8 × 480 ticks/day = ~3,840/day attempts, still capped by Bluesky at 5,000/day.
+const BATCH_PER_CRON = 8;
 const DELAY_MS = 200;
 
-// Follow-back check: verify 5 accounts per tick that haven't followed back after N days.
-// 5 × 480 ticks/day = 2,400 checks/day — more than enough to track follow→followback loop.
-const FOLLOWBACK_CHECK_PER_TICK = 5;
+// Follow-back check: verify 3 accounts per tick that haven't followed back after N days.
+// Reduced from 5 to leave more subrequest headroom for the other phases in this tick.
+const FOLLOWBACK_CHECK_PER_TICK = 3;
 
 export async function ensureFollowQueueTable(env: Env): Promise<void> {
   await env.DB.prepare(

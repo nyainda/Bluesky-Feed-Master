@@ -139,7 +139,7 @@ export async function runJetstreamIndexer(
     });
   } catch (err) {
     console.error("[jetstream] WebSocket connection failed:", err);
-    return { indexed: 0, matched: 0, events: 0, newFollowers: 0 };
+    return { indexed: 0, matched: 0, events: 0, newFollowers: 0, authorsQueued: 0 };
   }
 
   console.log(`[jetstream] Collected ${events.length} events (cursor=${cursor ? "stored" : "latest"})`);
@@ -160,7 +160,20 @@ export async function runJetstreamIndexer(
 
   const matchedByUri = new Map<string, MatchedPost>();
 
-  if (hasKeywords) {
+  // Fast single-regex pre-filter, built once per invocation (not per event).
+  // Jetstream's app.bsky.feed.post collection is the ENTIRE network firehose —
+  // thousands of posts per tick, almost none of which match any keyword. Running
+  // the full keywordIndex loop (O(keywords) string.includes calls) against every
+  // single one of those posts synchronously was blowing the Worker CPU-time
+  // limit. A single compiled regex reduces the common (non-matching) case to one
+  // cheap O(1) test; the expensive per-keyword loop only runs on actual hits.
+  const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const nonEmptyKeywords = [...keywordIndex.keys()].filter((k) => k.length > 0);
+  const quickTestRegex = hasKeywords && nonEmptyKeywords.length > 0
+    ? new RegExp(nonEmptyKeywords.map(escapeRegex).join("|"), "i")
+    : null;
+
+  if (hasKeywords && quickTestRegex) {
     for (const event of events) {
       if (
         event.commit?.operation !== "create" ||
@@ -172,6 +185,11 @@ export async function runJetstreamIndexer(
       if (!record?.text) continue;
 
       const text = record.text;
+
+      // Fast reject: skip the expensive per-keyword loop entirely for the
+      // overwhelming majority of firehose posts that match nothing.
+      if (!quickTestRegex.test(text)) continue;
+
       const textLower = text.toLowerCase();
       const uri = `at://${event.did}/app.bsky.feed.post/${event.commit.rkey}`;
       const matchingTags = new Set<string>();

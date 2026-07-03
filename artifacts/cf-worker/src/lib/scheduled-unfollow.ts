@@ -1,11 +1,15 @@
 import type { Env } from "../index";
 
 const TABLE = "unfollow_scheduled_queue";
-// 100 unfollows per 3-min cron = ~2,000/hour.
-// Well within Bluesky's rate limit (600/min). 1k queued = ~30 min to drain.
-// At this pace: 5k = 2.5h, 10k = 5h, 51k = ~25h. Aggressive but safe.
-const BATCH_PER_CRON = 100;
-const DELAY_MS = 150;          // 150ms between each deleteFollow — 100 × 150ms = 15s overhead per tick
+// Capped at 15/tick to stay under Cloudflare Workers Free plan's 50-subrequest-
+// per-invocation limit. The same cron tick also runs the jetstream indexer,
+// feed scheduler, author scoring, auto-follow, follow-back check, and content
+// amplifier — each making its own subrequests (D1 calls, Bluesky API calls,
+// the Jetstream WebSocket). 100/tick blew that budget and caused
+// "Too many subrequests" errors that killed every later phase in the tick.
+// 15/tick × 480 ticks/day = ~7,200/day — 51k queued drains in ~7 days.
+const BATCH_PER_CRON = 15;
+const DELAY_MS = 150;          // 150ms between each deleteFollow — 15 × 150ms = 2.25s overhead per tick
 
 export async function ensureScheduledUnfollowTable(env: Env): Promise<void> {
   await env.DB.prepare(
