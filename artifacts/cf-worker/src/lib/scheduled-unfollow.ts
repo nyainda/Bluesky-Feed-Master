@@ -1,14 +1,18 @@
 import type { Env } from "../index";
 
 const TABLE = "unfollow_scheduled_queue";
-// Capped at 15/tick to stay under Cloudflare Workers Free plan's 50-subrequest-
-// per-invocation limit. The same cron tick also runs the jetstream indexer,
-// feed scheduler, author scoring, auto-follow, follow-back check, and content
-// amplifier — each making its own subrequests (D1 calls, Bluesky API calls,
-// the Jetstream WebSocket). 100/tick blew that budget and caused
-// "Too many subrequests" errors that killed every later phase in the tick.
-// 15/tick × 480 ticks/day = ~7,200/day — 51k queued drains in ~7 days.
-const BATCH_PER_CRON = 15;
+// This job now gets its own fully dedicated SOCIAL_CRON tick (see cron.ts
+// rotation), but it still has to fit within Cloudflare Workers Free plan's
+// 50-subrequest-per-invocation cap *by itself*: ~7 setup/telemetry D1 calls +
+// agent.login + up to 2 subrequests per item (deleteFollow/getProfile +
+// D1 update) was measured to land at ~40-45 with 15 items — too close to the
+// cap, and once the cap is hit mid-loop, the "mark failed" write inside the
+// catch block was ALSO a subrequest that then threw uncaught, skipping the
+// end-of-run telemetry entirely and making the drain look permanently stuck.
+// 6/tick leaves large headroom. See STOP_ON_SUBREQUEST_LIMIT below for the
+// other half of the fix — bailing out cleanly instead of burning remaining
+// budget on doomed retries.
+const BATCH_PER_CRON = 6;
 const DELAY_MS = 150;          // 150ms between each deleteFollow — 15 × 150ms = 2.25s overhead per tick
 
 export async function ensureScheduledUnfollowTable(env: Env): Promise<void> {
@@ -174,8 +178,27 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
   let done = 0;
   let failed = 0;
   let lastError = "";
+  let processedCount = 0;
+
+  const isSubrequestLimitError = (msg: string) => /too many subrequests/i.test(msg);
+
+  // Best-effort status update — deliberately swallows errors so that a
+  // subrequest-cap hit here (a write, i.e. itself a subrequest) can never
+  // escape uncaught and skip the end-of-run telemetry below.
+  const markStatus = async (id: number, status: "done" | "failed") => {
+    try {
+      await env.DB.prepare(
+        `UPDATE ${TABLE} SET status = ?, processed_at = datetime('now') WHERE id = ?`,
+      )
+        .bind(status, id)
+        .run();
+    } catch (err) {
+      console.error(`[scheduled-unfollow] Failed to mark id=${id} as ${status}:`, err);
+    }
+  };
 
   for (const row of rows.results) {
+    processedCount++;
     try {
       let followUri = row.follow_uri;
 
@@ -184,13 +207,11 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
         try {
           const profile = await agent.getProfile({ actor: row.did });
           followUri = profile.data.viewer?.following ?? null;
-        } catch {
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (isSubrequestLimitError(msg)) throw err; // Bail the whole loop below, don't mask it as "done"
           // Account gone or not followed — count as done
-          await env.DB.prepare(
-            `UPDATE ${TABLE} SET status = 'done', processed_at = datetime('now') WHERE id = ?`,
-          )
-            .bind(row.id)
-            .run();
+          await markStatus(row.id, "done");
           done++;
           continue;
         }
@@ -200,28 +221,32 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
         await agent.deleteFollow(followUri);
       }
       // Whether we deleted or weren't following, mark done
-      await env.DB.prepare(
-        `UPDATE ${TABLE} SET status = 'done', processed_at = datetime('now') WHERE id = ?`,
-      )
-        .bind(row.id)
-        .run();
+      await markStatus(row.id, "done");
       done++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[scheduled-unfollow] Failed did=${row.did}:`, msg);
       lastError = msg;
-      await env.DB.prepare(
-        `UPDATE ${TABLE} SET status = 'failed', processed_at = datetime('now') WHERE id = ?`,
-      )
-        .bind(row.id)
-        .run();
+
+      if (isSubrequestLimitError(msg)) {
+        // Budget is exhausted for this invocation — every further D1/API call
+        // (including the "mark failed" write below) would also throw. Leave
+        // this item pending for the next dedicated tick instead of burning
+        // more calls trying to record failure, and stop the loop entirely.
+        console.error(
+          `[scheduled-unfollow] Subrequest limit hit after ${processedCount - 1} items — stopping batch early.`,
+        );
+        break;
+      }
+
+      await markStatus(row.id, "failed");
       failed++;
     }
 
     await new Promise((r) => setTimeout(r, DELAY_MS));
   }
 
-  const remaining = pendingRow.cnt - rows.results.length;
+  const remaining = pendingRow.cnt - done - failed;
   console.log(
     `[scheduled-unfollow] Batch done — ${done} unfollowed, ${failed} failed, ${remaining} remaining`,
   );

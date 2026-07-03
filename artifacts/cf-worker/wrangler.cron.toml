@@ -25,6 +25,18 @@ database_id = "6d1329cc-e8b9-4183-bbf6-42ede9a83b74"
 [triggers]
 crons = ["*/3 * * * *", "1-59/3 * * * *", "2-59/3 * * * *"]
 
+# ─── CPU time — hard free-tier constraint, cannot be raised ────────────────────
+# Cloudflare rejects any `[limits] cpu_ms` override on the Free plan ("CPU
+# limits are not supported for the Free plan") — every invocation gets a
+# fixed, non-configurable 10ms of *active* CPU time (I/O waits are free, but
+# JSON parsing of Bluesky API responses, D1 row mapping, and crypto in
+# agent.login() all count). Live logs confirmed "Exceeded CPU Limit" killing
+# the indexer/jetstream/scheduled-follow jobs mid-run — this is the real
+# reason cron jobs looked like they randomly "froze" and feeds needed a
+# manual trigger. Since the limit can't be raised, both cron.ts groups now
+# rotate through only 1-2 jobs per invocation instead of running everything
+# in one shared 10ms budget — see the per-group comments below.
+#
 # ─── Smart Placement ───────────────────────────────────────────────────────────
 # Write-heavy / D1-heavy workload — Smart Placement correctly anchors this worker
 # near D1's primary region. Cron latency is not user-facing so this is fine.

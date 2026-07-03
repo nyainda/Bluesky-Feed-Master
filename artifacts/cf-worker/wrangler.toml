@@ -14,6 +14,11 @@ database_id = "6d1329cc-e8b9-4183-bbf6-42ede9a83b74"
 # ─── No cron triggers ──────────────────────────────────────────────────────────
 # All cron jobs moved to feedforge-cron worker (wrangler.cron.toml).
 # This worker handles HTTP only — no scheduled() handler.
+#
+# Note: `[limits] cpu_ms` cannot be raised — Cloudflare rejects it on the Free
+# plan ("CPU limits are not supported for the Free plan"). The 10ms/invocation
+# CPU budget is fixed; see wrangler.cron.toml for how the cron worker works
+# around this by rotating jobs across ticks instead.
 
 # ─── No Smart Placement ────────────────────────────────────────────────────────
 # Removed: Smart Placement picks ONE location for the whole worker based on D1

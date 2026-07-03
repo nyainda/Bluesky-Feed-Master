@@ -79,6 +79,27 @@ async function recordTick(env: CronEnv, key: string) {
     .catch(() => {});
 }
 
+// Runs a single cron job in isolation so one job throwing (e.g. hitting the
+// free-tier 50-subrequest cap) can't silently prevent every later job in the
+// same tick from running. Previously all jobs in a tick were awaited back-to-
+// back with no try/catch — one failure meant everything after it that tick
+// (including feed indexing/ranking, or the unfollow drain) simply never ran,
+// which looked like random freezes and feeds only updating on manual trigger.
+async function runJob(env: CronEnv, name: string, fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[cron] Job "${name}" failed (isolated — other jobs still ran):`, message);
+    await env.DB.prepare(
+      `INSERT INTO cron_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+    )
+      .bind(`last_job_error_${name}`, `${new Date().toISOString()} :: ${message}`)
+      .run()
+      .catch(() => {});
+  }
+}
+
 async function runDailyCleanupIfDue(env: CronEnv) {
   const now = new Date();
   if (now.getUTCHours() !== CLEANUP_HOUR_UTC) return;
@@ -128,32 +149,75 @@ export default {
         }
 
         // ── SOCIAL_CRON: follow/unfollow queues + discovery — subrequest-heavy ──
-        // Each Bluesky API call here is a subrequest; this schedule gets its
-        // own fresh 50-subrequest budget instead of sharing it with jetstream.
+        // Each Bluesky API call AND each D1 query here counts against the same
+        // 50-subrequest-per-invocation free-tier cap. Every job below runs in
+        // isolation via runJob() — one job hitting the cap no longer prevents
+        // the rest from running this tick. On top of that, the 6 jobs are split
+        // across 4 rotating slots (not 2) because `scheduled_unfollow` alone
+        // (login + up to N items x deleteFollow/getProfile/D1-update + setup
+        // queries) can approach ~40-50 subrequests by itself — stacking ANY
+        // other job on the same tick reliably blew the cap. It now gets a
+        // fully dedicated tick every 4th SOCIAL_CRON fire (~12 min).
         if (event.cron === SOCIAL_CRON) {
           await recordTick(env, "last_cron_tick_social");
-          await runQueueAllScan(env);
-          await runScheduledUnfollow(env);
-          await runScheduledFollow(env);
-          await runFollowBackCheck(env);
-          await runAutoFollow(env);
-          await runAutoUnfollow(env);
-          await runAmplifier(env);
+          const minute = new Date(event.scheduledTime).getUTCMinutes();
+          const tickIndex = Math.floor((minute - 1) / 3); // 0,1,2,3... for minutes 1,4,7,10...
+          const slot = tickIndex % 4;
+
+          if (slot === 0) {
+            // Dedicated slot — heaviest single job, no sharing.
+            await runJob(env, "scheduled_unfollow", () => runScheduledUnfollow(env));
+          } else if (slot === 1) {
+            await runJob(env, "scheduled_follow", () => runScheduledFollow(env));
+            await runJob(env, "follow_back_check", () => runFollowBackCheck(env));
+          } else if (slot === 2) {
+            await runJob(env, "queue_all_scan", () => runQueueAllScan(env));
+            await runJob(env, "auto_unfollow", () => runAutoUnfollow(env));
+          } else {
+            await runJob(env, "auto_follow", () => runAutoFollow(env));
+            await runJob(env, "amplifier", () => runAmplifier(env));
+          }
           return;
         }
 
-        // ── CONTENT_CRON: indexing/scoring/ranking/posting — D1-heavy ────
-        // Mostly D1 reads/writes plus low-volume posting; safe to share one
-        // schedule since it rarely touches the subrequest budget.
+        // ── CONTENT_CRON: indexing/scoring/ranking/posting — CPU-constrained ────
+        // Each job runs in isolation via runJob() — previously a single throw
+        // (e.g. from runScheduler) silently skipped runIndexer/precomputeFeedRankings
+        // for the rest of that tick.
+        //
+        // More importantly: Workers Free plan has a fixed, non-configurable
+        // 10ms *active CPU* budget per invocation (I/O waits are free, but
+        // JSON parsing of Bluesky API responses and D1 row mapping are not).
+        // Running all 7 jobs back-to-back in one invocation reliably hit
+        // "Exceeded CPU Limit" mid-tick and silently killed the entire
+        // invocation (not just one job) — this is the real reason feeds
+        // sometimes only picked up new posts after a manual "trigger-index".
+        //
+        // Fix: keep only the two cheapest, most latency-sensitive jobs
+        // (scheduler, indexer) on every tick, and rotate the 4 heavier
+        // compute jobs one-at-a-time across ticks so no single invocation
+        // does more than ~2-3 jobs of CPU work.
         if (event.cron === CONTENT_CRON) {
           await recordTick(env, "last_cron_tick_content");
-          await runScheduler(env);
-          await runIndexer(env);
-          await runAuthorScoring(env);
-          await precomputeFeedRankings(env);
-          await runAutoAmplify(env);
-          await runFeedBoost(env);
-          await runDailyCleanupIfDue(env);
+          await runJob(env, "scheduler", () => runScheduler(env));
+          await runJob(env, "indexer", () => runIndexer(env));
+
+          const minute = new Date(event.scheduledTime).getUTCMinutes();
+          const tickIndex = Math.floor((minute - 2) / 3); // 0,1,2,3... for minutes 2,5,8,11...
+          const slot = ((tickIndex % 4) + 4) % 4;
+
+          if (slot === 0) {
+            await runJob(env, "author_scoring", () => runAuthorScoring(env));
+          } else if (slot === 1) {
+            await runJob(env, "feed_ranking", () => precomputeFeedRankings(env));
+          } else if (slot === 2) {
+            await runJob(env, "auto_amplify", () => runAutoAmplify(env));
+          } else {
+            await runJob(env, "feed_boost", () => runFeedBoost(env));
+          }
+
+          // Cheap no-op unless it's actually the cleanup hour, so safe every tick.
+          await runJob(env, "daily_cleanup", () => runDailyCleanupIfDue(env));
           return;
         }
 
