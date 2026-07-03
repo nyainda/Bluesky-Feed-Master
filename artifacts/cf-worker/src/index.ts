@@ -221,7 +221,7 @@ app.get("/api/admin/debug-auto-follow", async (c) => {
     for (const post of result.data.posts) {
       total++;
       const author = post.author;
-      if (rawSamples.length < 10) rawSamples.push({ handle: author.handle, followersCount: author.followersCount, postsCount: author.postsCount });
+      if (rawSamples.length < 10) rawSamples.push({ handle: author.handle, followersCount: author.followersCount as number | undefined, postsCount: author.postsCount as number | undefined });
       if (alreadyLogged.has(author.did)) { filtered_log++; continue; }
       passed++;
       if (passedSamples.length < 5) passedSamples.push({ handle: author.handle, did: author.did });
