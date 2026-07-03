@@ -425,7 +425,23 @@ route.get("/bluesky/unfollow-campaign/status", async (c) => {
     ).first<{ value: string }>().catch(() => null);
     const totalUnfollowedEver = parseInt(totalRow?.value ?? "0", 10) || 0;
 
-    return c.json({ ok: true, scan, queue, lastDrain, lastCronTick, totalUnfollowedEver });
+    // Last 14 days daily counts for sparkline chart
+    const last14 = Array.from({ length: 14 }, (_, i) => {
+      const d = new Date(Date.now() - i * 86_400_000);
+      return d.toISOString().slice(0, 10);
+    });
+    const dailyKeys = last14.map(d => `unfollow_daily_${d}`);
+    const placeholderStr = dailyKeys.map(() => "?").join(",");
+    const dailyRows = await c.env.DB.prepare(
+      `SELECT key, value FROM cron_settings WHERE key IN (${placeholderStr})`
+    ).bind(...dailyKeys).all<{ key: string; value: string }>().catch(() => ({ results: [] as { key: string; value: string }[] }));
+    const dailyMap = new Map(dailyRows.results.map(r => [r.key, parseInt(r.value, 10) || 0]));
+    const dailyCounts = last14.reverse().map(d => ({
+      date: d.slice(5),           // MM-DD for display
+      count: dailyMap.get(`unfollow_daily_${d}`) ?? 0,
+    }));
+
+    return c.json({ ok: true, scan, queue, lastDrain, lastCronTick, totalUnfollowedEver, dailyCounts });
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
   }

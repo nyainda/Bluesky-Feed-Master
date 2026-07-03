@@ -10,6 +10,7 @@ import type { AudienceUser } from "@workspace/api-client-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, Cell,
 } from "recharts";
 import {
   Users, UserMinus, UserPlus, UserCheck, RefreshCw, ExternalLink,
@@ -913,6 +914,7 @@ function AutoUnfollowCard() {
     lastDrain: { at: string | null; done: number; failed: number; error: string | null; attemptedAt: string | null; skipReason: string | null };
     lastCronTick: string | null;
     totalUnfollowedEver: number;
+    dailyCounts: Array<{ date: string; count: number }>;
   }>({
     queryKey: ["unfollow-campaign"],
     queryFn: () => customFetch("/api/bluesky/unfollow-campaign/status"),
@@ -1239,6 +1241,42 @@ function AutoUnfollowCard() {
               )}
             </>
           )}
+
+          {/* 14-day unfollows sparkline — shown once we have at least 1 day of data */}
+          {(campaign?.dailyCounts ?? []).some(d => d.count > 0) && (() => {
+            const data = campaign!.dailyCounts;
+            const peak = Math.max(...data.map(d => d.count), 1);
+            return (
+              <div className="pt-2 border-t border-border/20">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] text-muted-foreground/50 font-medium uppercase tracking-widest">Unfollows / day (14d)</span>
+                  <span className="text-[10px] text-muted-foreground/40">peak: {peak}/day</span>
+                </div>
+                <ResponsiveContainer width="100%" height={52}>
+                  <BarChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }} barCategoryGap="20%">
+                    <Tooltip
+                      content={({ active, payload }) =>
+                        active && payload?.[0] ? (
+                          <div className="bg-popover border border-border rounded px-2 py-1 text-[10px] shadow">
+                            <span className="font-medium text-foreground">{payload[0].value}</span>
+                            <span className="text-muted-foreground ml-1">unfollowed on {payload[0].payload.date}</span>
+                          </div>
+                        ) : null
+                      }
+                    />
+                    <Bar dataKey="count" radius={[2, 2, 0, 0]}>
+                      {data.map((entry, i) => (
+                        <Cell
+                          key={i}
+                          fill={entry.count === 0 ? "hsl(var(--muted))" : entry.count === peak ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.5)"}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            );
+          })()}
 
           {/* Campaign complete — offer fresh scan */}
           {campaignComplete && !isRunning && (
