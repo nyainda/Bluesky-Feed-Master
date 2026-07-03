@@ -14,8 +14,11 @@ database_id = "PASTE-YOUR-DATABASE-ID-HERE"
 
 # Split by resource profile so each invocation gets its own fresh CPU/subrequest
 # budget instead of sharing it across every job. See src/cron.ts for details.
+# NOTE: some accounts' actual cron trigger cap is 3 total (not the 5 the docs
+# reference) — verify with `curl .../workers/scripts/<name>/schedules` before
+# adding more. Daily cleanup is folded into the 2-59/3 tick, not a 4th trigger.
 [triggers]
-crons = ["*/3 * * * *", "1-59/3 * * * *", "2-59/3 * * * *", "0 2 * * *"]
+crons = ["*/3 * * * *", "1-59/3 * * * *", "2-59/3 * * * *"]
 
 [placement]
 mode = "smart"

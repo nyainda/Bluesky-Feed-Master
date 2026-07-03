@@ -14,12 +14,16 @@ database_id = "6d1329cc-e8b9-4183-bbf6-42ede9a83b74"
 # Split by resource profile so each invocation gets its own fresh 10ms CPU /
 # 50-subrequest free-tier budget instead of every job sharing one tick's
 # scraps. See the "Why split?" comment in src/cron.ts for the full rationale.
+#
+# This account's actual cron trigger cap is 3 total (confirmed via the
+# Cloudflare API — not the 5 the generic docs error message references), so
+# there is exactly one trigger per resource group. Daily cleanup has no
+# dedicated trigger — it's folded into the 2-59/3 tick, gated to run once/day.
 #   */3        — jetstream firehose indexing (CPU-heavy, isolated)
 #   1-59/3     — follow/unfollow queues + discovery (subrequest-heavy)
-#   2-59/3     — indexing/scoring/ranking/posting (D1-heavy)
-#   0 2 * * *  — daily cleanup
+#   2-59/3     — indexing/scoring/ranking/posting (D1-heavy) + daily cleanup
 [triggers]
-crons = ["*/3 * * * *", "1-59/3 * * * *", "2-59/3 * * * *", "0 2 * * *"]
+crons = ["*/3 * * * *", "1-59/3 * * * *", "2-59/3 * * * *"]
 
 # ─── Smart Placement ───────────────────────────────────────────────────────────
 # Write-heavy / D1-heavy workload — Smart Placement correctly anchors this worker

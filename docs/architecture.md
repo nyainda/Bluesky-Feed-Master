@@ -38,11 +38,10 @@ FeedForge splits into two Cloudflare Workers that share one D1 database:
 
 ### `feedforge-cron` — Cron Worker
 
-- Four cron triggers, split by resource profile so each invocation gets its own fresh free-tier budget (10ms CPU / 50 subrequests) instead of every job sharing one tick's scraps:
+- Three cron triggers, split by resource profile so each invocation gets its own fresh free-tier budget (10ms CPU / 50 subrequests) instead of every job sharing one tick's scraps. This account's actual cron trigger cap is **3 total** (confirmed via the Cloudflare API — not the 5 the generic docs error message references), so there's exactly one trigger per resource group and no separate cleanup trigger:
   - `*/3 * * * *` — **jetstream**: firehose indexing only (CPU-heavy, isolated)
   - `1-59/3 * * * *` — **social**: follow/unfollow queue drains + auto-follow/unfollow discovery + amplifier (subrequest-heavy — each Bluesky API call is a subrequest)
-  - `2-59/3 * * * *` — **content**: search-API backfill, author scoring, feed ranking, auto-amplify, scheduled posting, feed boost (D1-heavy, low subrequest volume)
-  - `0 2 * * *` — daily cleanup (2 AM UTC)
+  - `2-59/3 * * * *` — **content**: search-API backfill, author scoring, feed ranking, auto-amplify, scheduled posting, feed boost (D1-heavy, low subrequest volume) — also runs daily cleanup once/day (gated at 2 AM UTC via a `cron_settings` date check, not a dedicated trigger)
 - Smart Placement enabled — anchors near D1's primary region since it does heavy write work
 - Runs `runJetstreamIndexer()` on its own schedule: opens a WebSocket to Bluesky Jetstream, collects events for 20 seconds, closes, writes matched posts to D1. Cursor persisted in `cron_settings` so each tick resumes exactly where the last stopped — no gaps.
 - Each schedule records its own heartbeat in `cron_settings` (`last_cron_tick_jetstream`, `last_cron_tick_social`, `last_cron_tick_content`) alongside the overall `last_cron_tick`, so `/api/admin/cron-health` can tell which specific job family stalled instead of just "cron is stuck".

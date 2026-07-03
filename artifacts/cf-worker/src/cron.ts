@@ -23,8 +23,11 @@
  *   - SOCIAL_CRON:     subrequest-heavy follow/unfollow queue draining and
  *                      discovery (each Bluesky API call is a subrequest).
  *   - CONTENT_CRON:    D1-heavy indexing/scoring/ranking + low-volume posting.
- * Cloudflare's free plan allows up to 5 cron triggers per Worker, so this
- * fits comfortably alongside the existing daily cleanup trigger.
+ * NOTE: this account's actual Workers Free plan cap is 3 cron triggers total
+ * (confirmed empirically via the Cloudflare API — not the 5 the generic docs
+ * error message points to). That's exactly one trigger per resource group,
+ * so the daily cleanup no longer gets its own trigger — it's folded into the
+ * CONTENT_CRON tick, gated by a once-per-day check against `cron_settings`.
  *
  * ── Why not JetstreamConsumerDO? ────────────────────────────────────────────
  * jetstream-do.ts implements a persistent Durable Object WebSocket connection.
@@ -61,7 +64,10 @@ export interface CronEnv extends Env {
 const JETSTREAM_CRON = "*/3 * * * *";
 const SOCIAL_CRON = "1-59/3 * * * *";
 const CONTENT_CRON = "2-59/3 * * * *";
-const CLEANUP_CRON = "0 2 * * *";
+
+// Cleanup runs once/day gated inside CONTENT_CRON (no dedicated trigger —
+// this account's cron trigger cap is 3 total, one per resource group).
+const CLEANUP_HOUR_UTC = 2;
 
 async function recordTick(env: CronEnv, key: string) {
   await env.DB.prepare(
@@ -69,6 +75,26 @@ async function recordTick(env: CronEnv, key: string) {
      ON CONFLICT(key) DO UPDATE SET value = datetime('now'), updated_at = datetime('now')`,
   )
     .bind(key)
+    .run()
+    .catch(() => {});
+}
+
+async function runDailyCleanupIfDue(env: CronEnv) {
+  const now = new Date();
+  if (now.getUTCHours() !== CLEANUP_HOUR_UTC) return;
+
+  const today = now.toISOString().slice(0, 10); // YYYY-MM-DD
+  const row = await env.DB.prepare("SELECT value FROM cron_settings WHERE key = 'last_cleanup_date'")
+    .first<{ value: string }>()
+    .catch(() => null);
+  if (row?.value === today) return; // already ran today
+
+  await runCleanup(env);
+  await env.DB.prepare(
+    `INSERT INTO cron_settings (key, value) VALUES ('last_cleanup_date', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+  )
+    .bind(today)
     .run()
     .catch(() => {});
 }
@@ -86,12 +112,6 @@ export default {
         // group) for back-compat; the per-group keys let cron-health detect
         // a stall in one job family even while the others keep ticking.
         await recordTick(env, "last_cron_tick");
-
-        // ── 2am daily: cleanup old posts only ────────────────────────────
-        if (event.cron === CLEANUP_CRON) {
-          await runCleanup(env);
-          return;
-        }
 
         // ── JETSTREAM_CRON: firehose indexing — CPU-heavy, isolated ──────
         // Free-tier safe: plain Worker execution, no per-message DO billing.
@@ -133,6 +153,7 @@ export default {
           await precomputeFeedRankings(env);
           await runAutoAmplify(env);
           await runFeedBoost(env);
+          await runDailyCleanupIfDue(env);
           return;
         }
 
