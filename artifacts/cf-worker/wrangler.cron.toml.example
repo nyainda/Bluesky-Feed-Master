@@ -12,8 +12,10 @@ binding = "DB"
 database_name = "feedforge-db"
 database_id = "PASTE-YOUR-DATABASE-ID-HERE"
 
+# Split by resource profile so each invocation gets its own fresh CPU/subrequest
+# budget instead of sharing it across every job. See src/cron.ts for details.
 [triggers]
-crons = ["*/3 * * * *", "0 2 * * *"]
+crons = ["*/3 * * * *", "1-59/3 * * * *", "2-59/3 * * * *", "0 2 * * *"]
 
 [placement]
 mode = "smart"

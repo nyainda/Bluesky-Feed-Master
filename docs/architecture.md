@@ -38,13 +38,20 @@ FeedForge splits into two Cloudflare Workers that share one D1 database:
 
 ### `feedforge-cron` — Cron Worker
 
-- Two cron triggers: `*/3 * * * *` (every 3 min) and `0 2 * * *` (daily at 2 AM UTC)
+- Four cron triggers, split by resource profile so each invocation gets its own fresh free-tier budget (10ms CPU / 50 subrequests) instead of every job sharing one tick's scraps:
+  - `*/3 * * * *` — **jetstream**: firehose indexing only (CPU-heavy, isolated)
+  - `1-59/3 * * * *` — **social**: follow/unfollow queue drains + auto-follow/unfollow discovery + amplifier (subrequest-heavy — each Bluesky API call is a subrequest)
+  - `2-59/3 * * * *` — **content**: search-API backfill, author scoring, feed ranking, auto-amplify, scheduled posting, feed boost (D1-heavy, low subrequest volume)
+  - `0 2 * * *` — daily cleanup (2 AM UTC)
 - Smart Placement enabled — anchors near D1's primary region since it does heavy write work
-- Runs `runJetstreamIndexer()` each tick: opens a WebSocket to Bluesky Jetstream, collects events for 20 seconds, closes, writes matched posts to D1. Cursor persisted in `cron_settings` so each tick resumes exactly where the last stopped — no gaps.
+- Runs `runJetstreamIndexer()` on its own schedule: opens a WebSocket to Bluesky Jetstream, collects events for 20 seconds, closes, writes matched posts to D1. Cursor persisted in `cron_settings` so each tick resumes exactly where the last stopped — no gaps.
+- Each schedule records its own heartbeat in `cron_settings` (`last_cron_tick_jetstream`, `last_cron_tick_social`, `last_cron_tick_content`) alongside the overall `last_cron_tick`, so `/api/admin/cron-health` can tell which specific job family stalled instead of just "cron is stuck".
 
 > **Why not `JetstreamConsumerDO`?** A persistent Durable Object WebSocket sounds ideal, but Cloudflare bills incoming DO WebSocket messages at **20:1** against the DO free-tier quota (100K/day). At Bluesky's real firehose volume (~thousands of posts/min network-wide), the DO exhausts its quota in hours. The cron-based approach uses a plain Worker execution (not billed per-message) and is completely free. Trade-off: up to ~3 min indexing latency. `jetstream-do.ts` is kept in the repo for a future paid-tier migration.
 
-**Why split?** Putting cron triggers and the Jetstream Durable Object in the same worker as the HTTP API created a conflict: Smart Placement (needed for D1-write-heavy cron work) anchors the entire worker to one region, which broke the latency of globally-distributed feed skeleton requests. Splitting lets each worker use the right placement strategy.
+**Why split from the HTTP worker?** Putting cron triggers and the Jetstream Durable Object in the same worker as the HTTP API created a conflict: Smart Placement (needed for D1-write-heavy cron work) anchors the entire worker to one region, which broke the latency of globally-distributed feed skeleton requests. Splitting lets each worker use the right placement strategy.
+
+**Why split the cron itself into 3 schedules?** Originally every job (jetstream, queue drains, indexing, scoring, ranking, auto-follow) ran inside one cron invocation, all sharing that single invocation's CPU/subrequest budget. CPU-heavy jetstream and subrequest-heavy follow/unfollow draining were competing for the same scraps — fixing one job's resource usage just exposed the next job's contention on the same tick. Giving each resource profile its own schedule (and therefore its own fresh budget) removes that contention. Cloudflare's free plan allows up to 5 cron triggers per Worker, so this fits with room to spare.
 
 ---
 

@@ -11,8 +11,15 @@ database_name = "feedforge-db"
 database_id = "6d1329cc-e8b9-4183-bbf6-42ede9a83b74"
 
 # ─── Cron triggers ─────────────────────────────────────────────────────────────
+# Split by resource profile so each invocation gets its own fresh 10ms CPU /
+# 50-subrequest free-tier budget instead of every job sharing one tick's
+# scraps. See the "Why split?" comment in src/cron.ts for the full rationale.
+#   */3        — jetstream firehose indexing (CPU-heavy, isolated)
+#   1-59/3     — follow/unfollow queues + discovery (subrequest-heavy)
+#   2-59/3     — indexing/scoring/ranking/posting (D1-heavy)
+#   0 2 * * *  — daily cleanup
 [triggers]
-crons = ["*/3 * * * *", "0 2 * * *"]
+crons = ["*/3 * * * *", "1-59/3 * * * *", "2-59/3 * * * *", "0 2 * * *"]
 
 # ─── Smart Placement ───────────────────────────────────────────────────────────
 # Write-heavy / D1-heavy workload — Smart Placement correctly anchors this worker
