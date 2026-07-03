@@ -740,6 +740,117 @@ function FollowerGrowthTab() {
           </div>
         </motion.div>
       )}
+
+      {/* 1M Milestone Tracker — computed entirely from snapshot history */}
+      {latest && (() => {
+        const MILESTONES = [5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 750_000, 1_000_000];
+        const current = latest.followersCount;
+
+        // Daily growth rate from oldest → newest snapshot
+        let dailyRate: number | null = null;
+        if (list.length >= 2) {
+          const oldest = list[0];
+          const newest = list[list.length - 1];
+          const days = (new Date(newest.recordedAt).getTime() - new Date(oldest.recordedAt).getTime()) / 86_400_000;
+          if (days >= 0.5) {
+            dailyRate = (newest.followersCount - oldest.followersCount) / days;
+          }
+        }
+
+        const nextMilestones = MILESTONES.filter(m => m > current).slice(0, 4);
+        const bigGoal = 1_000_000;
+        const progressPct = Math.min(100, (current / bigGoal) * 100);
+
+        const etaLabel = (target: number) => {
+          if (dailyRate === null || dailyRate <= 0) return "—";
+          const daysLeft = (target - current) / dailyRate;
+          if (daysLeft < 1) return "Today";
+          if (daysLeft < 60) return `~${Math.round(daysLeft)}d`;
+          if (daysLeft < 730) return `~${Math.round(daysLeft / 30)}mo`;
+          return `~${(daysLeft / 365).toFixed(1)}yr`;
+        };
+
+        const milestoneLabel = (m: number) => {
+          if (m >= 1_000_000) return "1M";
+          if (m >= 1_000) return `${m / 1_000}K`;
+          return m.toLocaleString();
+        };
+
+        return (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="bg-card border border-card-border rounded-xl p-5"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-foreground">1M Milestone Tracker</h3>
+              <span className="text-[10px] text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-full tabular-nums">
+                {current.toLocaleString()} / 1,000,000
+              </span>
+            </div>
+
+            {/* Progress bar toward 1M */}
+            <div className="mb-5">
+              <div className="flex justify-between text-[10px] text-muted-foreground mb-1.5">
+                <span>
+                  {progressPct < 0.1 ? "<0.1" : progressPct.toFixed(progressPct < 1 ? 2 : 1)}% to 1M
+                </span>
+                {dailyRate !== null && dailyRate > 0 && (
+                  <span className="text-emerald-500 font-medium">+{Math.round(dailyRate)}/day avg</span>
+                )}
+              </div>
+              <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-primary to-primary/60 rounded-full transition-all duration-700"
+                  style={{ width: `${Math.max(progressPct, 0.3)}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Next milestone rows */}
+            {nextMilestones.length > 0 && (
+              <div className="space-y-2.5">
+                {nextMilestones.map(m => {
+                  const pct = Math.min(100, (current / m) * 100);
+                  const needed = m - current;
+                  return (
+                    <div key={m} className="flex items-center gap-2.5">
+                      <div className="w-12 text-[10px] font-semibold text-muted-foreground tabular-nums text-right flex-shrink-0">
+                        {milestoneLabel(m)}
+                      </div>
+                      <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${m === 1_000_000 ? "bg-primary" : "bg-primary/45"}`}
+                          style={{ width: `${Math.max(pct, 0.5)}%` }}
+                        />
+                      </div>
+                      <div className="w-[3.5rem] text-[10px] text-muted-foreground tabular-nums text-right flex-shrink-0 leading-tight">
+                        {etaLabel(m)}
+                      </div>
+                      <div className="w-[4.5rem] text-[10px] text-muted-foreground/50 tabular-nums text-right flex-shrink-0 leading-tight">
+                        +{needed.toLocaleString()}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {nextMilestones.length === 0 && (
+              <p className="text-sm text-emerald-500 font-semibold text-center py-2">🎉 You've hit 1M followers!</p>
+            )}
+
+            <p className="text-[10px] text-muted-foreground/40 text-center mt-4">
+              {list.length < 2
+                ? "Record 2+ snapshots a few days apart to calculate daily growth rate and ETA."
+                : dailyRate !== null && dailyRate <= 0
+                  ? "Growth rate is flat or negative across your recorded snapshots."
+                  : `Rate calculated from ${list.length} snapshots · ${etaLabel(1_000_000)} to 1M at current pace`}
+            </p>
+          </motion.div>
+        );
+      })()}
     </div>
   );
 }
