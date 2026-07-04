@@ -264,6 +264,23 @@ app.post("/api/admin/trigger-scan", async (c) => {
   return c.json({ ok: true, message: "Scan started — queue status will update within seconds" });
 });
 
+// Drain-only trigger — processes the next batch from the existing queue without
+// running a new scan. Faster than trigger-scan when the queue already has items.
+// Cron handles automatic drain every 3 min; this is for immediate manual relief.
+app.post("/api/admin/drain-queue", async (c) => {
+  c.executionCtx.waitUntil(
+    (async () => {
+      try {
+        const result = await runScheduledUnfollow(c.env);
+        console.log("[drain-queue] Completed, drained:", result.drained);
+      } catch (err) {
+        console.error("[drain-queue] Error:", err instanceof Error ? err.message : String(err));
+      }
+    })(),
+  );
+  return c.json({ ok: true, message: "Drain started — processing next batch from queue now" });
+});
+
 // Manual trigger — runs auto-follow discovery + drains the follow queue immediately
 app.post("/api/admin/trigger-follow", async (c) => {
   c.executionCtx.waitUntil(

@@ -999,7 +999,7 @@ function AutoUnfollowCard() {
   const { data: recentLog } = useQuery<{ ok: boolean; entries: UnfollowLogEntry[] }>({
     queryKey: ["auto-unfollow-log-live"],
     queryFn: () => customFetch("/api/auto-unfollow/log?limit=5"),
-    refetchInterval: queuePending > 0 ? 30_000 : false,
+    refetchInterval: queuePending > 0 ? 10_000 : false,
     enabled: queuePending > 0,
     staleTime: 10_000,
   });
@@ -1017,6 +1017,7 @@ function AutoUnfollowCard() {
 
   const [confirmClear, setConfirmClear] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [draining, setDraining] = useState(false);
 
   const { data: campaign, refetch: refetchCampaign } = useQuery<{
     ok: boolean;
@@ -1029,8 +1030,8 @@ function AutoUnfollowCard() {
   }>({
     queryKey: ["unfollow-campaign"],
     queryFn: () => customFetch("/api/bluesky/unfollow-campaign/status"),
-    refetchInterval: 30_000,
-    staleTime: 15_000,
+    refetchInterval: (data) => ((data as { queue?: { pending?: number } } | undefined)?.queue?.pending ?? 0) > 0 ? 10_000 : 30_000,
+    staleTime: 8_000,
   });
 
   const campaignActive = (campaign?.scan?.scanning ?? false) || (campaign?.queue?.pending ?? 0) > 0;
@@ -1093,6 +1094,21 @@ function AutoUnfollowCard() {
       toast({ title: "Failed to start scan", variant: "destructive" });
     } finally {
       setTriggering(false);
+    }
+  }
+
+  async function drainNow() {
+    setDraining(true);
+    try {
+      await customFetch("/api/admin/drain-queue", { method: "POST" });
+      toast({ title: "Draining next batch", description: "Processing 20 unfollows now — queue will update shortly" });
+      setTimeout(() => refetchCampaign(), 4_000);
+      setTimeout(() => refetchCampaign(), 10_000);
+      setTimeout(() => refetchCampaign(), 20_000);
+    } catch {
+      toast({ title: "Failed to trigger drain", variant: "destructive" });
+    } finally {
+      setDraining(false);
     }
   }
 
@@ -1236,7 +1252,7 @@ function AutoUnfollowCard() {
               )}
               {isRunning && (
                 <span className="text-[10px] text-muted-foreground hidden sm:block">
-                  Dedicated cron slot every ~12 min · 10 unfollows per tick · ~50/hr
+                  Auto-draining every 3 min · 20 unfollows per tick · ~400/hr
                 </span>
               )}
             </div>
@@ -1524,18 +1540,35 @@ function AutoUnfollowCard() {
 
             {/* Row 4: Actions */}
             <div className="flex items-center justify-between gap-3 pt-1 border-t border-border/40">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={triggerScan}
-                disabled={triggering}
-                className="h-8 text-xs gap-1.5"
-              >
-                {triggering
-                  ? <><RefreshCw className="w-3 h-3 animate-spin" />Starting…</>
-                  : <><Zap className="w-3 h-3" />Trigger Scan Now</>
-                }
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={triggerScan}
+                  disabled={triggering || draining}
+                  className="h-8 text-xs gap-1.5"
+                >
+                  {triggering
+                    ? <><RefreshCw className="w-3 h-3 animate-spin" />Starting…</>
+                    : <><Zap className="w-3 h-3" />Trigger Scan Now</>
+                  }
+                </Button>
+                {qPending > 0 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={drainNow}
+                    disabled={draining || triggering}
+                    className="h-8 text-xs gap-1.5 border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10"
+                    title="Drain the next batch from the queue right now (cron auto-runs every 3 min)"
+                  >
+                    {draining
+                      ? <><RefreshCw className="w-3 h-3 animate-spin" />Draining…</>
+                      : <><Activity className="w-3 h-3" />Drain Now</>
+                    }
+                  </Button>
+                )}
+              </div>
               <Button size="sm" onClick={handleSave} disabled={saving || (!isDirty && !settings)}
                 className={cn("h-8 text-xs gap-1.5", isDirty && "ring-1 ring-primary/40")}>
                 {saving ? <><RefreshCw className="w-3 h-3 animate-spin" />Saving…</> : <><Settings2 className="w-3 h-3" />Save Settings</>}

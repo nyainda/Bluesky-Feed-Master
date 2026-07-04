@@ -1,20 +1,56 @@
 import type { Env } from "../index";
 
 const TABLE = "unfollow_scheduled_queue";
-// This job now gets its own fully dedicated SOCIAL_CRON tick (see cron.ts
-// rotation), but it still has to fit within Cloudflare Workers Free plan's
-// 50-subrequest-per-invocation cap *by itself*: ~7 setup/telemetry D1 calls +
-// agent.login + up to 2 subrequests per item (deleteFollow/getProfile +
-// D1 update) was measured to land at ~40-45 with 15 items — too close to the
-// cap, and once the cap is hit mid-loop, the "mark failed" write inside the
-// catch block was ALSO a subrequest that then threw uncaught, skipping the
-// end-of-run telemetry entirely and making the drain look permanently stuck.
-// 10/tick gives ~31 subrequests (8 setup + 10×2.3) — 38% below the 50-cap,
-// well-measured headroom. 15 items hit 40-45 (too close); 10 is the sweet
-// spot: meaningfully faster without risking mid-loop cap exhaustion.
-// See STOP_ON_SUBREQUEST_LIMIT below for the clean bail-out on cap hit.
-const BATCH_PER_CRON = 10;
-const DELAY_MS = 150;          // 150ms between each deleteFollow — 10 × 150ms = 1.5s overhead per tick
+
+// ── Throughput tuning ────────────────────────────────────────────────────────
+//
+// Free-tier subrequest budget: 50 per Worker invocation.
+//
+// With BATCHED D1 writes (all status updates sent in one env.DB.batch() call
+// at the end of the loop) the per-tick budget looks like:
+//
+//   Setup (before loop):
+//     saveSetting(attempted_at)     = 1
+//     SELECT COUNT(*) pending       = 1
+//     UPDATE failed→pending reset   = 1
+//     SELECT COUNT(*) after reset   = 1
+//     saveSetting(skip_reason, "")  = 1
+//     agent.login()                 = 1
+//     SELECT id,did,follow_uri LIMIT = 1
+//                              subtotal = 7
+//
+//   Per item WITH follow_uri stored:
+//     agent.deleteFollow()          = 1 each
+//
+//   Per item WITHOUT follow_uri (rare edge case):
+//     agent.getProfile()            = +1 extra each
+//
+//   End (batched):
+//     env.DB.batch([N status writes]) = 1   ← key saving vs N individual writes
+//     saveSetting(last_drain_at)      = 1
+//     saveSetting(last_drain_done)    = 1
+//     saveSetting(last_drain_failed)  = 1
+//     total_unfollowed_ever update    = 1
+//     unfollow_daily_* update         = 1
+//                              subtotal = 6
+//
+//   Total with 20 items (all with URI): 7 + 20 + 1 + 6 = 34 ✓  (32% below cap)
+//   Total with 20 items (all no URI):   7 + 40 + 1 + 6 = 54 ✗  (over — rare)
+//   Total with 20 items (mixed, ~15 URI + 5 no-URI): 7 + 25 + 1 + 6 = 39 ✓
+//
+// In practice nearly all queued items have follow_uri (both runAutoUnfollow and
+// runQueueAllScan store it). The no-URI path is a fallback for orphaned rows.
+//
+// DELAY_MS: 100ms × 20 = 2s of deliberate sleep per tick. Bluesky's rate limit
+// is 600 unfollows/min; 20 items/tick × 20 ticks/hr = 400/hr = 6.7/min — well
+// within limits. 100ms gives enough time for the deleteFollow response to land.
+//
+// Previous config: BATCH=10, DELAY=150ms, slot-0-only (every 12 min) = ~50/hr
+// New config:      BATCH=20, DELAY=100ms, every tick (every 3 min)   = ~400/hr
+//                                                         8× throughput improvement
+
+const BATCH_PER_CRON = 20;
+const DELAY_MS = 100;
 
 export async function ensureScheduledUnfollowTable(env: Env): Promise<void> {
   await env.DB.prepare(
@@ -83,6 +119,7 @@ export async function getScheduledUnfollowStatus(env: Env): Promise<{
       if (row.status in counts) counts[row.status] = Number(row.cnt);
     }
     const total = counts.pending + counts.done + counts.failed;
+    // New rate: 20 items every 3 minutes = ~400/hr
     const estimatedMinutesLeft = Math.ceil((counts.pending / BATCH_PER_CRON) * 3);
     return {
       pending: counts.pending,
@@ -102,25 +139,29 @@ export async function clearScheduledUnfollowQueue(env: Env): Promise<void> {
   } catch {}
 }
 
-/**
- * Called by the every-3-minute cron. Processes up to BATCH_PER_CRON pending items.
- * Rate: 100 items × 150ms delay = ~15s of delays + ~30s of network = fits comfortably in 3 min.
- * Effective unfollow rate: ~33/min — well within Bluesky's 600/min limit.
- */
 async function saveSetting(env: Env, key: string, value: string): Promise<void> {
   await env.DB.prepare(
     "INSERT INTO cron_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
   ).bind(key, value).run();
 }
 
-export async function runScheduledUnfollow(env: Env): Promise<void> {
+/**
+ * Called every SOCIAL_CRON tick (every 3 min). Returns { drained: true } if it
+ * processed items this tick so the cron can skip other social jobs (budget used).
+ * Returns { drained: false } when queue was empty — cron proceeds with other jobs.
+ *
+ * Processes up to BATCH_PER_CRON=20 pending items per tick using a single batched
+ * D1 write at the end (saves N-1 subrequests vs per-item writes).
+ * Rate: ~20 items × 20 ticks/hr = ~400 unfollows/hr. Well within Bluesky's 600/min.
+ */
+export async function runScheduledUnfollow(env: Env): Promise<{ drained: boolean }> {
   // Write a heartbeat immediately so dashboard can confirm function was called
   const attemptedAt = new Date().toISOString();
   try { await saveSetting(env, "last_drain_attempted_at", attemptedAt); } catch {}
 
   if (!env.BLUESKY_HANDLE || !env.BLUESKY_APP_PASSWORD) {
     try { await saveSetting(env, "last_drain_skip_reason", "missing-credentials"); } catch {}
-    return;
+    return { drained: false };
   }
 
   let pendingRow: { cnt: number } | null = null;
@@ -131,10 +172,10 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     try { await saveSetting(env, "last_drain_skip_reason", `table-error: ${msg}`); } catch {}
-    return; // Table not created yet — skip silently
+    return { drained: false }; // Table not created yet — skip silently
   }
 
-  // Auto-retry failed items that have been stuck in 'failed' state for > 15 minutes
+  // Auto-retry failed items stuck in 'failed' state for > 15 minutes
   try {
     await env.DB.prepare(
       `UPDATE ${TABLE} SET status = 'pending', processed_at = NULL, queued_at = datetime('now')
@@ -148,7 +189,7 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
 
   if (!pendingRow || pendingRow.cnt === 0) {
     try { await saveSetting(env, "last_drain_skip_reason", `no-pending (cnt=${pendingRow?.cnt ?? "null"})`); } catch {}
-    return;
+    return { drained: false }; // Nothing to do — caller can run other social jobs
   }
 
   try { await saveSetting(env, "last_drain_skip_reason", ""); } catch {} // Clear skip reason — we're proceeding
@@ -166,7 +207,7 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
     });
   } catch (err) {
     console.error("[scheduled-unfollow] Login failed:", err);
-    return;
+    return { drained: false };
   }
 
   const rows = await env.DB.prepare(
@@ -180,39 +221,33 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
   let failed = 0;
   let lastError = "";
   let processedCount = 0;
+  let hitSubrequestLimit = false;
+
+  // Collect status results during the loop — write them all in one batch() call at
+  // the end. This saves (N-1) subrequests vs per-item writes, allowing 20 items to
+  // fit comfortably within the 50-subrequest free-tier cap.
+  const statusUpdates: Array<{ id: number; status: "done" | "failed" }> = [];
 
   const isSubrequestLimitError = (msg: string) => /too many subrequests/i.test(msg);
-
-  // Best-effort status update — deliberately swallows errors so that a
-  // subrequest-cap hit here (a write, i.e. itself a subrequest) can never
-  // escape uncaught and skip the end-of-run telemetry below.
-  const markStatus = async (id: number, status: "done" | "failed") => {
-    try {
-      await env.DB.prepare(
-        `UPDATE ${TABLE} SET status = ?, processed_at = datetime('now') WHERE id = ?`,
-      )
-        .bind(status, id)
-        .run();
-    } catch (err) {
-      console.error(`[scheduled-unfollow] Failed to mark id=${id} as ${status}:`, err);
-    }
-  };
 
   for (const row of rows.results) {
     processedCount++;
     try {
       let followUri = row.follow_uri;
 
-      // No followUri stored — look it up from the authenticated agent
+      // No followUri stored — look it up from the authenticated agent (rare edge case)
       if (!followUri) {
         try {
           const profile = await agent.getProfile({ actor: row.did });
           followUri = profile.data.viewer?.following ?? null;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          if (isSubrequestLimitError(msg)) throw err; // Bail the whole loop below, don't mask it as "done"
+          if (isSubrequestLimitError(msg)) {
+            hitSubrequestLimit = true;
+            break;
+          }
           // Account gone or not followed — count as done
-          await markStatus(row.id, "done");
+          statusUpdates.push({ id: row.id, status: "done" });
           done++;
           continue;
         }
@@ -222,7 +257,7 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
         await agent.deleteFollow(followUri);
       }
       // Whether we deleted or weren't following, mark done
-      await markStatus(row.id, "done");
+      statusUpdates.push({ id: row.id, status: "done" });
       done++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -230,26 +265,45 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
       lastError = msg;
 
       if (isSubrequestLimitError(msg)) {
-        // Budget is exhausted for this invocation — every further D1/API call
-        // (including the "mark failed" write below) would also throw. Leave
-        // this item pending for the next dedicated tick instead of burning
-        // more calls trying to record failure, and stop the loop entirely.
+        // Budget exhausted — even the batch write below would fail.
+        // Leave these items pending for the next tick (picks up from same rows).
         console.error(
           `[scheduled-unfollow] Subrequest limit hit after ${processedCount - 1} items — stopping batch early.`,
         );
+        hitSubrequestLimit = true;
         break;
       }
 
-      await markStatus(row.id, "failed");
+      statusUpdates.push({ id: row.id, status: "failed" });
       failed++;
     }
 
-    await new Promise((r) => setTimeout(r, DELAY_MS));
+    // No delay after the last item — the sleep is just spacing for Bluesky's rate limit
+    if (processedCount < rows.results.length) {
+      await new Promise((r) => setTimeout(r, DELAY_MS));
+    }
   }
 
-  const remaining = pendingRow.cnt - done - failed;
+  // ── Batch write all status updates in one D1 call ─────────────────────────
+  // Saves N-1 subrequests vs per-item writes. Skipped on subrequest-limit hit
+  // since even this write would throw — items remain pending for next tick.
+  if (!hitSubrequestLimit && statusUpdates.length > 0) {
+    try {
+      await env.DB.batch(
+        statusUpdates.map(({ id, status }) =>
+          env.DB.prepare(
+            `UPDATE ${TABLE} SET status = ?, processed_at = datetime('now') WHERE id = ?`,
+          ).bind(status, id),
+        ),
+      );
+    } catch (err) {
+      console.error("[scheduled-unfollow] Batch status write failed:", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  const remaining = pendingRow.cnt - done;
   console.log(
-    `[scheduled-unfollow] Batch done — ${done} unfollowed, ${failed} failed, ${remaining} remaining`,
+    `[scheduled-unfollow] Batch done — ${done} unfollowed, ${failed} failed, ~${remaining} remaining`,
   );
 
   // Save telemetry so the dashboard can show last drain results
@@ -269,7 +323,6 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
       ).bind("last_drain_error", lastError).run();
     }
     // Accumulate a lifetime unfollow counter that survives queue clears.
-    // Uses SQLite arithmetic in the ON CONFLICT clause for an atomic increment.
     if (done > 0) {
       const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
       await env.DB.prepare(
@@ -278,7 +331,7 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
            value = CAST(CAST(value AS INTEGER) + ? AS TEXT),
            updated_at = datetime('now')`,
       ).bind(String(done), done).run();
-      // Per-day counter for the sparkline chart — key = unfollow_daily_YYYY-MM-DD
+      // Per-day counter for the sparkline chart
       await env.DB.prepare(
         `INSERT INTO cron_settings (key, value) VALUES (?, ?)
          ON CONFLICT(key) DO UPDATE SET
@@ -287,4 +340,6 @@ export async function runScheduledUnfollow(env: Env): Promise<void> {
       ).bind(`unfollow_daily_${today}`, String(done), done).run();
     }
   } catch {}
+
+  return { drained: true };
 }

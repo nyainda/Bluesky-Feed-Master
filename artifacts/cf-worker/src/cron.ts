@@ -149,28 +149,48 @@ export default {
         }
 
         // ── SOCIAL_CRON: follow/unfollow queues + discovery — subrequest-heavy ──
-        // Each Bluesky API call AND each D1 query here counts against the same
-        // 50-subrequest-per-invocation free-tier cap. Every job below runs in
-        // isolation via runJob() — one job hitting the cap no longer prevents
-        // the rest from running this tick. On top of that, the 6 jobs are split
-        // across 4 rotating slots (not 2) because `scheduled_unfollow` alone
-        // (login + up to N items x deleteFollow/getProfile/D1-update + setup
-        // queries) can approach ~40-50 subrequests by itself — stacking ANY
-        // other job on the same tick reliably blew the cap. It now gets a
-        // fully dedicated tick every 4th SOCIAL_CRON fire (~12 min).
+        // Each Bluesky API call AND each D1 query counts against the same
+        // 50-subrequest-per-invocation free-tier cap.
+        //
+        // ── Why drain runs on EVERY tick ────────────────────────────────────
+        // Previously scheduled_unfollow ran only on slot 0 (every 4th fire =
+        // every 12 min) processing 10 items/tick = ~50/hr. With 29k+ pending
+        // that would take 24 days to drain.
+        //
+        // Now: runScheduledUnfollow uses a single batched D1 write for all
+        // status updates (N individual writes → 1 batch call), saving N-1
+        // subrequests and allowing 20 items/tick safely (34 subreqs vs 50 cap).
+        // It runs every tick (every 3 min) → 20 × 20 = ~400/hr = 8× faster.
+        //
+        // When the queue is empty runScheduledUnfollow costs only ~4 D1 calls
+        // (cheap early-exit) and returns { drained: false }, at which point the
+        // normal per-slot rotation runs for other social jobs. When it drained
+        // items the budget is consumed (~34 subreqs) so we skip other jobs that
+        // tick — they run next tick when queue is empty.
         if (event.cron === SOCIAL_CRON) {
           await recordTick(env, "last_cron_tick_social");
           const minute = new Date(event.scheduledTime).getUTCMinutes();
           const tickIndex = Math.floor((minute - 1) / 3); // 0,1,2,3... for minutes 1,4,7,10...
-          const slot = tickIndex % 4;
+          const slot = tickIndex % 3; // 3-slot rotation for non-drain jobs
+
+          // Always drain first on every tick — fast early-exit when queue empty.
+          let drained = false;
+          try {
+            const result = await runScheduledUnfollow(env);
+            drained = result.drained;
+          } catch (err) {
+            console.error("[cron] scheduled_unfollow failed:", err instanceof Error ? err.message : String(err));
+          }
+
+          // Skip other social jobs this tick when drain was active — the
+          // ~34-subrequest budget is consumed and stacking another job risks
+          // hitting the cap. They run every tick when the queue is idle.
+          if (drained) return;
 
           if (slot === 0) {
-            // Dedicated slot — heaviest single job, no sharing.
-            await runJob(env, "scheduled_unfollow", () => runScheduledUnfollow(env));
-          } else if (slot === 1) {
             await runJob(env, "scheduled_follow", () => runScheduledFollow(env));
             await runJob(env, "follow_back_check", () => runFollowBackCheck(env));
-          } else if (slot === 2) {
+          } else if (slot === 1) {
             await runJob(env, "queue_all_scan", () => runQueueAllScan(env));
             await runJob(env, "auto_unfollow", () => runAutoUnfollow(env));
           } else {
