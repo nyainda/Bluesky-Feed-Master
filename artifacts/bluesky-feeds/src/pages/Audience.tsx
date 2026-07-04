@@ -1027,6 +1027,7 @@ function AutoUnfollowCard() {
     lastCronTick: string | null;
     totalUnfollowedEver: number;
     dailyCounts: Array<{ date: string; count: number }>;
+    hourlyCounts: Array<{ hour: string; count: number }>;
   }>({
     queryKey: ["unfollow-campaign"],
     queryFn: () => customFetch("/api/bluesky/unfollow-campaign/status"),
@@ -1401,6 +1402,71 @@ function AutoUnfollowCard() {
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
+              </div>
+            );
+          })()}
+
+          {/* 24h live rate chart — shown while draining or after recent activity */}
+          {(() => {
+            const hourly = campaign?.hourlyCounts ?? [];
+            const hasData = hourly.some(h => h.count > 0);
+            if (!hasData && !isRunning) return null;
+            const peak = Math.max(...hourly.map(h => h.count), 1);
+            const last3hTotal = hourly.slice(-3).reduce((s, h) => s + h.count, 0);
+            const ratePerHr = Math.round(last3hTotal / 3);
+            return (
+              <div className="pt-2 border-t border-border/20">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted-foreground/50 font-medium uppercase tracking-widest">Unfollows / hour (24h)</span>
+                    {isRunning && ratePerHr === 0 && (
+                      <span className="text-[10px] text-amber-500/80 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                        Warming up — first drain in progress
+                      </span>
+                    )}
+                    {ratePerHr > 0 && (
+                      <span className="text-[10px] font-semibold text-emerald-600 flex items-center gap-1">
+                        <Activity className="w-3 h-3" />
+                        ~{ratePerHr.toLocaleString()}/hr current rate
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground/40">peak: {peak}/hr</span>
+                </div>
+                <ResponsiveContainer width="100%" height={52}>
+                  <BarChart data={hourly} margin={{ top: 2, right: 0, left: 0, bottom: 0 }} barCategoryGap="15%">
+                    <Tooltip
+                      content={({ active, payload }) =>
+                        active && payload?.[0] ? (
+                          <div className="bg-popover border border-border rounded px-2 py-1 text-[10px] shadow">
+                            <span className="font-medium text-foreground">{payload[0].value}</span>
+                            <span className="text-muted-foreground ml-1">unfollowed at {payload[0].payload.hour}</span>
+                          </div>
+                        ) : null
+                      }
+                    />
+                    <Bar dataKey="count" radius={[2, 2, 0, 0]}>
+                      {hourly.map((entry, i) => (
+                        <Cell
+                          key={i}
+                          fill={
+                            entry.count === 0
+                              ? "hsl(var(--muted))"
+                              : entry.count === peak
+                              ? "hsl(142 71% 45%)"
+                              : "hsl(142 71% 45% / 0.5)"
+                          }
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+                {isRunning && qPending > 0 && (
+                  <p className="text-[10px] text-muted-foreground/40 mt-1 text-center">
+                    ~{Math.ceil(qPending / 400).toLocaleString()} hrs to drain {qPending.toLocaleString()} pending · auto-draining every 3 min
+                  </p>
+                )}
               </div>
             );
           })()}

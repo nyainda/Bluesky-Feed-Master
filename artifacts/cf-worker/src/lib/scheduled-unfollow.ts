@@ -324,20 +324,29 @@ export async function runScheduledUnfollow(env: Env): Promise<{ drained: boolean
     }
     // Accumulate a lifetime unfollow counter that survives queue clears.
     if (done > 0) {
-      const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      const now = new Date();
+      const today = now.toISOString().slice(0, 10); // YYYY-MM-DD
+      const hour  = now.toISOString().slice(0, 13); // YYYY-MM-DDTHH
       await env.DB.prepare(
         `INSERT INTO cron_settings (key, value) VALUES ('total_unfollowed_ever', ?)
          ON CONFLICT(key) DO UPDATE SET
            value = CAST(CAST(value AS INTEGER) + ? AS TEXT),
            updated_at = datetime('now')`,
       ).bind(String(done), done).run();
-      // Per-day counter for the sparkline chart
+      // Per-day counter for the 14-day sparkline
       await env.DB.prepare(
         `INSERT INTO cron_settings (key, value) VALUES (?, ?)
          ON CONFLICT(key) DO UPDATE SET
            value = CAST(CAST(value AS INTEGER) + ? AS TEXT),
            updated_at = datetime('now')`,
       ).bind(`unfollow_daily_${today}`, String(done), done).run();
+      // Per-hour counter for the live rate chart (last 48h)
+      await env.DB.prepare(
+        `INSERT INTO cron_settings (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+           value = CAST(CAST(value AS INTEGER) + ? AS TEXT),
+           updated_at = datetime('now')`,
+      ).bind(`unfollow_hourly_${hour}`, String(done), done).run();
     }
   } catch {}
 

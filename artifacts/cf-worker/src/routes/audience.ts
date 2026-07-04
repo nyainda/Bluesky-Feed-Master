@@ -441,7 +441,23 @@ route.get("/bluesky/unfollow-campaign/status", async (c) => {
       count: dailyMap.get(`unfollow_daily_${d}`) ?? 0,
     }));
 
-    return c.json({ ok: true, scan, queue, lastDrain, lastCronTick, totalUnfollowedEver, dailyCounts });
+    // Last 24h hourly counts for the live rate chart
+    const last24h = Array.from({ length: 24 }, (_, i) => {
+      const h = new Date(Date.now() - i * 3_600_000);
+      return h.toISOString().slice(0, 13); // YYYY-MM-DDTHH
+    });
+    const hourlyKeys = last24h.map(h => `unfollow_hourly_${h}`);
+    const hourlyPlaceholder = hourlyKeys.map(() => "?").join(",");
+    const hourlyRows = await c.env.DB.prepare(
+      `SELECT key, value FROM cron_settings WHERE key IN (${hourlyPlaceholder})`
+    ).bind(...hourlyKeys).all<{ key: string; value: string }>().catch(() => ({ results: [] as { key: string; value: string }[] }));
+    const hourlyMap = new Map(hourlyRows.results.map(r => [r.key, parseInt(r.value, 10) || 0]));
+    const hourlyCounts = last24h.reverse().map(h => ({
+      hour: h.slice(11) + ":00",  // HH:00 for display
+      count: hourlyMap.get(`unfollow_hourly_${h}`) ?? 0,
+    }));
+
+    return c.json({ ok: true, scan, queue, lastDrain, lastCronTick, totalUnfollowedEver, dailyCounts, hourlyCounts });
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
   }
