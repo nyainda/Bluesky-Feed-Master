@@ -1057,6 +1057,22 @@ function AutoUnfollowCard() {
   // Keep the pending count synced so recentLog refetch interval is correct
   useEffect(() => { setQueuePending(qPending); }, [qPending]);
 
+  // Watchdog: if cron hasn't fired in >10 min and queue still has pending items,
+  // silently auto-trigger a drain so the campaign never stalls unnoticed.
+  const lastWatchdogTrigger = useRef<number>(0);
+  useEffect(() => {
+    if (!isRunning) return;
+    const lastTick = campaign?.lastCronTick ? new Date(campaign.lastCronTick).getTime() : 0;
+    const staleCron = Date.now() - lastTick > 10 * 60 * 1000; // 10 min
+    if (!staleCron) return;
+    const cooldown = Date.now() - lastWatchdogTrigger.current < 5 * 60 * 1000; // 5 min between watchdog drains
+    if (cooldown) return;
+    lastWatchdogTrigger.current = Date.now();
+    customFetch("/api/admin/drain-queue", { method: "POST" })
+      .then(() => setTimeout(() => refetchCampaign(), 4_000))
+      .catch(() => {}); // silent — no toast, just keeps things moving
+  }, [campaign?.lastCronTick, isRunning]);
+
   async function handleSave() {
     setSaving(true);
     try {
