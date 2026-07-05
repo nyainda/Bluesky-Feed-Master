@@ -1118,13 +1118,20 @@ function AutoUnfollowCard() {
   async function drainNow(count?: number) {
     setDraining(true);
     try {
-      const url = count ? `/api/admin/drain-queue?count=${count}` : "/api/admin/drain-queue";
-      await customFetch(url, { method: "POST" });
       const n = count ?? 20;
-      toast({ title: `Draining ${n} unfollows`, description: `Processing up to ${n} unfollows now — queue will update shortly` });
+      // For large bursts (1500), chain 3 sequential calls so each gets a fresh
+      // CF Worker invocation with its own subrequest budget (~40 unfollows each).
+      const calls = n >= 1500 ? 3 : 1;
+      const perCall = Math.ceil(n / calls);
+      for (let i = 0; i < calls; i++) {
+        await customFetch(`/api/admin/drain-queue?count=${perCall}`, { method: "POST" });
+        if (i < calls - 1) await new Promise(r => setTimeout(r, 3000));
+      }
+      const label = n >= 1500 ? "1500 (3-burst)" : String(n);
+      toast({ title: `Draining ${label} unfollows`, description: `Sent ${calls} drain request${calls > 1 ? "s" : ""} — queue will update shortly` });
       setTimeout(() => refetchCampaign(), 4_000);
-      setTimeout(() => refetchCampaign(), 10_000);
-      setTimeout(() => refetchCampaign(), 20_000);
+      setTimeout(() => refetchCampaign(), 12_000);
+      setTimeout(() => refetchCampaign(), 25_000);
     } catch {
       toast({ title: "Failed to trigger drain", variant: "destructive" });
     } finally {
@@ -1693,6 +1700,16 @@ function AutoUnfollowCard() {
                         title={rateLimited ? `Rate limited — resumes in ${minsLeft}m` : "Drain 500 unfollows right now (manual burst)"}
                       >
                         {draining ? <><RefreshCw className="w-3 h-3 animate-spin" />Draining…</> : <><Zap className="w-3 h-3" />Drain 500</>}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => drainNow(1500)}
+                        disabled={draining || triggering || !!rateLimited}
+                        className="h-8 text-xs gap-1.5 border-violet-500/60 bg-violet-500/8 text-violet-700 hover:bg-violet-500/15 disabled:opacity-40 font-bold"
+                        title={rateLimited ? `Rate limited — resumes in ${minsLeft}m` : "Drain 1500 unfollows — sends 3 burst requests in sequence (~9s total)"}
+                      >
+                        {draining ? <><RefreshCw className="w-3 h-3 animate-spin" />Draining…</> : <><Zap className="w-3 h-3" />Drain 1500</>}
                       </Button>
                     </div>
                   );

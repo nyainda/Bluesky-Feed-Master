@@ -269,7 +269,7 @@ app.post("/api/admin/trigger-scan", async (c) => {
 // Cron handles automatic drain every 3 min; this is for immediate manual relief.
 app.post("/api/admin/drain-queue", async (c) => {
   const countParam = c.req.query("count");
-  const batchOverride = countParam ? Math.min(parseInt(countParam, 10) || 20, 500) : undefined;
+  const batchOverride = countParam ? Math.min(parseInt(countParam, 10) || 20, 1500) : undefined;
   c.executionCtx.waitUntil(
     (async () => {
       try {
