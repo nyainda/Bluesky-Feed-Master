@@ -12,7 +12,10 @@
 
 import type { Env } from "../index";
 
-const PAGES_PER_TICK = 20; // 2 000 accounts per tick
+// Scan now runs on CONTENT_CRON — its own fresh 50-subrequest budget, no drain competition.
+// 10 pages/tick = 1,000 accounts/tick × 20 ticks/hr = 20k accounts/hr.
+// ~23k remaining accounts / 20k/hr ≈ ~1.2 hours to finish the scan.
+const PAGES_PER_TICK = 10; // 1 000 accounts per tick
 
 async function getSetting(env: Env, key: string): Promise<string> {
   try {
@@ -168,10 +171,23 @@ export async function runQueueAllScan(env: Env): Promise<void> {
         return;
       }
     } catch (err) {
-      console.error(
-        `[queue-all-scan] Page ${pagesScanned + 1} failed:`,
-        err instanceof Error ? err.message : String(err),
-      );
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[queue-all-scan] Page ${pagesScanned + 1} failed:`, msg);
+
+      // If we had a cursor and the first page of this tick failed, the cursor
+      // may have expired (Bluesky cursors go stale after hours). Reset to start
+      // of the following list so the next tick resumes from page 1.
+      if (tickPages === 0 && cursor) {
+        console.error("[queue-all-scan] Stale cursor detected — resetting to start of following list");
+        cursor = undefined;
+        pagesScanned = 0;
+        totalEnqueued = 0;
+        await Promise.all([
+          setSetting(env, "queue_all_cursor", ""),
+          setSetting(env, "queue_all_pages", "0"),
+          setSetting(env, "queue_all_enqueued", "0"),
+        ]);
+      }
       break; // Save progress and try again next tick
     }
   }

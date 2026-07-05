@@ -173,7 +173,7 @@ export default {
           const tickIndex = Math.floor((minute - 1) / 3); // 0,1,2,3... for minutes 1,4,7,10...
           const slot = tickIndex % 3; // 3-slot rotation for non-drain jobs
 
-          // Always drain first on every tick — fast early-exit when queue empty.
+          // Always drain on every tick — fast early-exit when queue empty.
           let drained = false;
           try {
             const result = await runScheduledUnfollow(env);
@@ -183,15 +183,13 @@ export default {
           }
 
           // Skip other social jobs this tick when drain was active — the
-          // ~34-subrequest budget is consumed and stacking another job risks
-          // hitting the cap. They run every tick when the queue is idle.
+          // subrequest budget is consumed. They run every tick when queue is idle.
           if (drained) return;
 
           if (slot === 0) {
             await runJob(env, "scheduled_follow", () => runScheduledFollow(env));
             await runJob(env, "follow_back_check", () => runFollowBackCheck(env));
           } else if (slot === 1) {
-            await runJob(env, "queue_all_scan", () => runQueueAllScan(env));
             await runJob(env, "auto_unfollow", () => runAutoUnfollow(env));
           } else {
             await runJob(env, "auto_follow", () => runAutoFollow(env));
@@ -221,6 +219,14 @@ export default {
           await recordTick(env, "last_cron_tick_content");
           await runJob(env, "scheduler", () => runScheduler(env));
           await runJob(env, "indexer", () => runIndexer(env));
+
+          // ── Queue-all scan on CONTENT_CRON ─────────────────────────────────
+          // Moved here from SOCIAL_CRON to give it its own dedicated 50-subrequest
+          // budget, completely separate from the drain. Previously it was gated
+          // behind `if (drained) return` on SOCIAL_CRON and never ran during drain.
+          // On CONTENT_CRON it runs every tick (fast no-op when mode≠1) and
+          // PAGES_PER_TICK=10 = 1000 accounts/tick × 20 ticks/hr = 20k/hr.
+          await runJob(env, "queue_all_scan", () => runQueueAllScan(env));
 
           const minute = new Date(event.scheduledTime).getUTCMinutes();
           const tickIndex = Math.floor((minute - 2) / 3); // 0,1,2,3... for minutes 2,5,8,11...
