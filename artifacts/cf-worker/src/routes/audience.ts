@@ -457,7 +457,15 @@ route.get("/bluesky/unfollow-campaign/status", async (c) => {
       count: hourlyMap.get(`unfollow_hourly_${h}`) ?? 0,
     }));
 
-    return c.json({ ok: true, scan, queue, lastDrain, lastCronTick, totalUnfollowedEver, dailyCounts, hourlyCounts });
+    // Rate limit cooldown — if set and still in the future, surface it to the UI
+    const rlRow = await c.env.DB.prepare(
+      "SELECT value FROM cron_settings WHERE key = 'rate_limit_until'"
+    ).first<{ value: string }>().catch(() => null);
+    const rateLimitUntil = (rlRow?.value && new Date(rlRow.value).getTime() > Date.now())
+      ? rlRow.value
+      : null;
+
+    return c.json({ ok: true, scan, queue, lastDrain, lastCronTick, totalUnfollowedEver, dailyCounts, hourlyCounts, rateLimitUntil });
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
   }

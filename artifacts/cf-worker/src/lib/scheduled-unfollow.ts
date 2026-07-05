@@ -50,7 +50,8 @@ const TABLE = "unfollow_scheduled_queue";
 //                                                         8× throughput improvement
 
 const BATCH_PER_CRON = 20;
-const DELAY_MS = 100;
+const DELAY_MS = 200; // slightly more spacing to stay well within rate limits
+const RATE_LIMIT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour cooldown after a 429
 
 export async function ensureScheduledUnfollowTable(env: Env): Promise<void> {
   await env.DB.prepare(
@@ -150,11 +151,11 @@ async function saveSetting(env: Env, key: string, value: string): Promise<void> 
  * processed items this tick so the cron can skip other social jobs (budget used).
  * Returns { drained: false } when queue was empty — cron proceeds with other jobs.
  *
- * Processes up to BATCH_PER_CRON=20 pending items per tick using a single batched
- * D1 write at the end (saves N-1 subrequests vs per-item writes).
+ * Processes up to batchOverride (default BATCH_PER_CRON=20) pending items per tick.
  * Rate: ~20 items × 20 ticks/hr = ~400 unfollows/hr. Well within Bluesky's 600/min.
+ * On 429 rate limit: sets a 1-hour cooldown and skips without marking items failed.
  */
-export async function runScheduledUnfollow(env: Env): Promise<{ drained: boolean }> {
+export async function runScheduledUnfollow(env: Env, batchOverride?: number): Promise<{ drained: boolean; rateLimited?: boolean }> {
   // Write a heartbeat immediately so dashboard can confirm function was called
   const attemptedAt = new Date().toISOString();
   try { await saveSetting(env, "last_drain_attempted_at", attemptedAt); } catch {}
@@ -163,6 +164,23 @@ export async function runScheduledUnfollow(env: Env): Promise<{ drained: boolean
     try { await saveSetting(env, "last_drain_skip_reason", "missing-credentials"); } catch {}
     return { drained: false };
   }
+
+  // Check rate limit cooldown — skip drain if we're still in a cooldown window
+  try {
+    const rlRow = await env.DB.prepare(
+      "SELECT value FROM cron_settings WHERE key = 'rate_limit_until'"
+    ).first<{ value: string }>();
+    if (rlRow?.value) {
+      const until = new Date(rlRow.value).getTime();
+      if (Date.now() < until) {
+        const minsLeft = Math.ceil((until - Date.now()) / 60_000);
+        try { await saveSetting(env, "last_drain_skip_reason", `rate-limited (${minsLeft}m remaining)`); } catch {}
+        return { drained: false, rateLimited: true };
+      }
+      // Cooldown expired — clear the flag
+      try { await saveSetting(env, "rate_limit_until", ""); } catch {}
+    }
+  } catch {}
 
   let pendingRow: { cnt: number } | null = null;
   try {
@@ -210,11 +228,12 @@ export async function runScheduledUnfollow(env: Env): Promise<{ drained: boolean
     return { drained: false };
   }
 
+  const batchSize = batchOverride ?? BATCH_PER_CRON;
   const rows = await env.DB.prepare(
     `SELECT id, did, follow_uri FROM ${TABLE}
      WHERE status = 'pending'
      ORDER BY queued_at ASC
-     LIMIT ${BATCH_PER_CRON}`,
+     LIMIT ${batchSize}`,
   ).all<{ id: number; did: string; follow_uri: string | null }>();
 
   let done = 0;
@@ -261,8 +280,21 @@ export async function runScheduledUnfollow(env: Env): Promise<{ drained: boolean
       done++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      const status429 = (err as { status?: number })?.status === 429;
+      const isRateLimit = status429 || /rate.?limit/i.test(msg);
       console.error(`[scheduled-unfollow] Failed did=${row.did}:`, msg);
       lastError = msg;
+
+      if (isRateLimit) {
+        // Bluesky 429 — set a 1-hour cooldown. Leave ALL items pending (not failed)
+        // so they're picked up cleanly after the cooldown expires.
+        const cooldownUntil = new Date(Date.now() + RATE_LIMIT_COOLDOWN_MS).toISOString();
+        console.error(`[scheduled-unfollow] Rate limit hit — pausing drain until ${cooldownUntil}`);
+        try { await saveSetting(env, "rate_limit_until", cooldownUntil); } catch {}
+        try { await saveSetting(env, "last_drain_error", `Rate Limit Exceeded — cooldown until ${cooldownUntil}`); } catch {}
+        // Don't write statusUpdates for this or remaining items — leave them pending
+        return { drained: false, rateLimited: true };
+      }
 
       if (isSubrequestLimitError(msg)) {
         // Budget exhausted — even the batch write below would fail.

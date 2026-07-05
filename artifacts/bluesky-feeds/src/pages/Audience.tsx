@@ -1028,6 +1028,7 @@ function AutoUnfollowCard() {
     totalUnfollowedEver: number;
     dailyCounts: Array<{ date: string; count: number }>;
     hourlyCounts: Array<{ hour: string; count: number }>;
+    rateLimitUntil: string | null;
   }>({
     queryKey: ["unfollow-campaign"],
     queryFn: () => customFetch("/api/bluesky/unfollow-campaign/status"),
@@ -1114,11 +1115,13 @@ function AutoUnfollowCard() {
     }
   }
 
-  async function drainNow() {
+  async function drainNow(count?: number) {
     setDraining(true);
     try {
-      await customFetch("/api/admin/drain-queue", { method: "POST" });
-      toast({ title: "Draining next batch", description: "Processing 20 unfollows now — queue will update shortly" });
+      const url = count ? `/api/admin/drain-queue?count=${count}` : "/api/admin/drain-queue";
+      await customFetch(url, { method: "POST" });
+      const n = count ?? 20;
+      toast({ title: `Draining ${n} unfollows`, description: `Processing up to ${n} unfollows now — queue will update shortly` });
       setTimeout(() => refetchCampaign(), 4_000);
       setTimeout(() => refetchCampaign(), 10_000);
       setTimeout(() => refetchCampaign(), 20_000);
@@ -1386,6 +1389,31 @@ function AutoUnfollowCard() {
             </>
           )}
 
+          {/* Rate limit cooldown banner */}
+          {campaign?.rateLimitUntil && (() => {
+            const until = new Date(campaign.rateLimitUntil);
+            const minsLeft = Math.max(0, Math.ceil((until.getTime() - Date.now()) / 60_000));
+            return (
+              <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg bg-amber-500/8 border border-amber-500/25">
+                <span className="text-amber-500 mt-0.5 flex-shrink-0">⏸</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">Bluesky rate limit — drain paused</p>
+                  <p className="text-[10px] text-muted-foreground/70 mt-0.5">
+                    Bluesky limits how fast you can unfollow. Auto-drain resumes in ~{minsLeft} min ({format(until, "h:mm a")}).
+                    The cron keeps running on Cloudflare — no action needed.
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* "App doesn't need to stay open" reassurance — shown when actively draining */}
+          {isRunning && !campaign?.rateLimitUntil && (
+            <p className="text-[10px] text-muted-foreground/40 text-center px-2">
+              ☁ Running on Cloudflare — you can close this page and unfollows will continue automatically
+            </p>
+          )}
+
           {/* 14-day unfollows sparkline — shown once we have at least 1 day of data */}
           {(campaign?.dailyCounts ?? []).some(d => d.count > 0) && (() => {
             const data = campaign!.dailyCounts;
@@ -1635,21 +1663,40 @@ function AutoUnfollowCard() {
                     : <><Zap className="w-3 h-3" />Trigger Scan Now</>
                   }
                 </Button>
-                {qPending > 0 && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={drainNow}
-                    disabled={draining || triggering}
-                    className="h-8 text-xs gap-1.5 border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10"
-                    title="Drain the next batch from the queue right now (cron auto-runs every 3 min)"
-                  >
-                    {draining
-                      ? <><RefreshCw className="w-3 h-3 animate-spin" />Draining…</>
-                      : <><Activity className="w-3 h-3" />Drain Now</>
-                    }
-                  </Button>
-                )}
+                {qPending > 0 && (() => {
+                  const rlUntil = campaign?.rateLimitUntil ? new Date(campaign.rateLimitUntil) : null;
+                  const rateLimited = rlUntil && rlUntil.getTime() > Date.now();
+                  const minsLeft = rateLimited ? Math.ceil((rlUntil!.getTime() - Date.now()) / 60_000) : 0;
+                  return (
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => drainNow(20)}
+                        disabled={draining || triggering || !!rateLimited}
+                        className="h-8 text-xs gap-1.5 border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 disabled:opacity-40"
+                        title={rateLimited ? `Rate limited — resumes in ${minsLeft}m` : "Drain 20 unfollows right now"}
+                      >
+                        {draining
+                          ? <><RefreshCw className="w-3 h-3 animate-spin" />Draining…</>
+                          : rateLimited
+                          ? <><span className="text-amber-500">⏸</span> Paused {minsLeft}m</>
+                          : <><Activity className="w-3 h-3" />Drain 20</>
+                        }
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => drainNow(500)}
+                        disabled={draining || triggering || !!rateLimited}
+                        className="h-8 text-xs gap-1.5 border-emerald-500/60 bg-emerald-500/8 text-emerald-700 hover:bg-emerald-500/15 disabled:opacity-40 font-semibold"
+                        title={rateLimited ? `Rate limited — resumes in ${minsLeft}m` : "Drain 500 unfollows right now (manual burst)"}
+                      >
+                        {draining ? <><RefreshCw className="w-3 h-3 animate-spin" />Draining…</> : <><Zap className="w-3 h-3" />Drain 500</>}
+                      </Button>
+                    </div>
+                  );
+                })()}
               </div>
               <Button size="sm" onClick={handleSave} disabled={saving || (!isDirty && !settings)}
                 className={cn("h-8 text-xs gap-1.5", isDirty && "ring-1 ring-primary/40")}>

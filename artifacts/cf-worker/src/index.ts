@@ -268,17 +268,22 @@ app.post("/api/admin/trigger-scan", async (c) => {
 // running a new scan. Faster than trigger-scan when the queue already has items.
 // Cron handles automatic drain every 3 min; this is for immediate manual relief.
 app.post("/api/admin/drain-queue", async (c) => {
+  const countParam = c.req.query("count");
+  const batchOverride = countParam ? Math.min(parseInt(countParam, 10) || 20, 500) : undefined;
   c.executionCtx.waitUntil(
     (async () => {
       try {
-        const result = await runScheduledUnfollow(c.env);
-        console.log("[drain-queue] Completed, drained:", result.drained);
+        const result = await runScheduledUnfollow(c.env, batchOverride);
+        console.log("[drain-queue] Completed, drained:", result.drained, "rateLimited:", result.rateLimited);
       } catch (err) {
         console.error("[drain-queue] Error:", err instanceof Error ? err.message : String(err));
       }
     })(),
   );
-  return c.json({ ok: true, message: "Drain started — processing next batch from queue now" });
+  const msg = batchOverride && batchOverride > 20
+    ? `Drain started — processing up to ${batchOverride} unfollows now`
+    : "Drain started — processing next batch from queue now";
+  return c.json({ ok: true, message: msg });
 });
 
 // Manual trigger — runs auto-follow discovery + drains the follow queue immediately
