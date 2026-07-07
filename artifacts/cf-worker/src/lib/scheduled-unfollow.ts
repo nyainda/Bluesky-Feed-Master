@@ -51,7 +51,37 @@ const TABLE = "unfollow_scheduled_queue";
 
 const BATCH_PER_CRON = 20;
 const DELAY_MS = 200; // slightly more spacing to stay well within rate limits
-const RATE_LIMIT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour cooldown after a 429
+// Fallback cooldown when Bluesky's 429 gives us no `ratelimit-reset` header.
+// Kept SHORT (5 min, not 1 hour) so the drain resumes as soon as the window
+// clears instead of freezing for an hour and looking "stopped" on the dashboard.
+const RATE_LIMIT_FALLBACK_MS = 5 * 60 * 1000;
+// Absolute ceiling so a bogus/huge reset header can't pause us for days.
+const RATE_LIMIT_MAX_MS = 60 * 60 * 1000; // 1 hour max
+
+/**
+ * Bluesky returns rate-limit metadata in response headers on a 429:
+ *   ratelimit-reset: <unix seconds> when the current window resets
+ * We honor that exact time instead of blindly pausing for a flat hour — a 429
+ * on the per-hour write budget usually clears in minutes, and the daily cap
+ * clears at UTC midnight. Falls back to RATE_LIMIT_FALLBACK_MS if absent, and
+ * is clamped to [30s, RATE_LIMIT_MAX_MS].
+ */
+function computeCooldownUntil(err: unknown): number {
+  const headers = (err as { headers?: Record<string, string> })?.headers;
+  const resetRaw =
+    headers?.["ratelimit-reset"] ?? headers?.["RateLimit-Reset"] ?? headers?.["x-ratelimit-reset"];
+  const now = Date.now();
+  if (resetRaw) {
+    const resetSec = Number(resetRaw);
+    if (Number.isFinite(resetSec) && resetSec > 0) {
+      // Header is unix SECONDS; add a 2s safety margin.
+      const untilMs = resetSec * 1000 + 2000;
+      const clamped = Math.min(Math.max(untilMs, now + 30_000), now + RATE_LIMIT_MAX_MS);
+      return clamped;
+    }
+  }
+  return now + RATE_LIMIT_FALLBACK_MS;
+}
 
 export async function ensureScheduledUnfollowTable(env: Env): Promise<void> {
   await env.DB.prepare(
@@ -286,13 +316,27 @@ export async function runScheduledUnfollow(env: Env, batchOverride?: number): Pr
       lastError = msg;
 
       if (isRateLimit) {
-        // Bluesky 429 — set a 1-hour cooldown. Leave ALL items pending (not failed)
-        // so they're picked up cleanly after the cooldown expires.
-        const cooldownUntil = new Date(Date.now() + RATE_LIMIT_COOLDOWN_MS).toISOString();
-        console.error(`[scheduled-unfollow] Rate limit hit — pausing drain until ${cooldownUntil}`);
+        // Bluesky 429 — pause only until the window actually resets (from the
+        // ratelimit-reset header), not a blind flat hour. Leave ALL items pending
+        // (not failed) so they're picked up cleanly once the cooldown expires.
+        const cooldownUntil = new Date(computeCooldownUntil(err)).toISOString();
+        const minsLeft = Math.ceil((new Date(cooldownUntil).getTime() - Date.now()) / 60_000);
+        console.error(`[scheduled-unfollow] Rate limit hit — pausing drain ${minsLeft}m until ${cooldownUntil}`);
         try { await saveSetting(env, "rate_limit_until", cooldownUntil); } catch {}
-        try { await saveSetting(env, "last_drain_error", `Rate Limit Exceeded — cooldown until ${cooldownUntil}`); } catch {}
-        // Don't write statusUpdates for this or remaining items — leave them pending
+        try { await saveSetting(env, "last_drain_error", `Rate Limit Exceeded — cooldown until ${cooldownUntil} (~${minsLeft}m)`); } catch {}
+        // Persist any successful unfollows made BEFORE the 429 hit this tick so
+        // the queue count actually drops instead of re-processing them next time.
+        if (statusUpdates.length > 0) {
+          try {
+            await env.DB.batch(
+              statusUpdates.map(({ id, status }) =>
+                env.DB.prepare(
+                  `UPDATE ${TABLE} SET status = ?, processed_at = datetime('now') WHERE id = ?`,
+                ).bind(status, id),
+              ),
+            );
+          } catch {}
+        }
         return { drained: false, rateLimited: true };
       }
 

@@ -269,7 +269,13 @@ app.post("/api/admin/trigger-scan", async (c) => {
 // Cron handles automatic drain every 3 min; this is for immediate manual relief.
 app.post("/api/admin/drain-queue", async (c) => {
   const countParam = c.req.query("count");
-  const batchOverride = countParam ? Math.min(parseInt(countParam, 10) || 20, 1500) : undefined;
+  // Hard-cap the per-invocation batch to what a single CF Free-tier worker can
+  // finish inside the 50-subrequest budget (~7 setup + N deleteFollow + 1 batch
+  // status write). Anything larger blows the budget, breaks the loop early, and
+  // skips the status write so the queue never drops. Callers that want to drain
+  // more must send multiple sequential calls (the dashboard's drainNow does this).
+  const SAFE_MAX = 35;
+  const batchOverride = countParam ? Math.min(parseInt(countParam, 10) || 20, SAFE_MAX) : undefined;
   c.executionCtx.waitUntil(
     (async () => {
       try {
