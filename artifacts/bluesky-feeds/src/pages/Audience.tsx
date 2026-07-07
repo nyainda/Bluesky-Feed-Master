@@ -1119,16 +1119,27 @@ function AutoUnfollowCard() {
     setDraining(true);
     try {
       const n = count ?? 20;
-      // For large bursts (1500), chain 3 sequential calls so each gets a fresh
-      // CF Worker invocation with its own subrequest budget (~40 unfollows each).
-      const calls = n >= 1500 ? 3 : 1;
-      const perCall = Math.ceil(n / calls);
+      // ── Why we chunk instead of one big call ──────────────────────────────
+      // CF Workers Free tier caps EACH invocation at 50 subrequests. Every
+      // deleteFollow() is one subrequest, so a single "count=500" call can only
+      // ever process ~35-40 items before throwing "too many subrequests" — and
+      // when it breaks early it skips the status write, so the queue never
+      // actually drops. Fix: split the requested count into invocation-sized
+      // bursts sent sequentially, each getting its own fresh 50-subrequest
+      // budget. 500 → ~15 bursts of 35, 1500 → ~43 bursts.
+      const SAFE_BATCH = 35;
+      const calls = Math.max(1, Math.ceil(n / SAFE_BATCH));
+      const perCall = Math.min(n, SAFE_BATCH);
       for (let i = 0; i < calls; i++) {
         await customFetch(`/api/admin/drain-queue?count=${perCall}`, { method: "POST" });
-        if (i < calls - 1) await new Promise(r => setTimeout(r, 3000));
+        // Nudge the progress UI partway through long bursts so it visibly moves.
+        if (i > 0 && i % 4 === 0) refetchCampaign();
+        if (i < calls - 1) await new Promise(r => setTimeout(r, 2500));
       }
-      const label = n >= 1500 ? "1500 (3-burst)" : String(n);
-      toast({ title: `Draining ${label} unfollows`, description: `Sent ${calls} drain request${calls > 1 ? "s" : ""} — queue will update shortly` });
+      toast({
+        title: `Draining ${n.toLocaleString()} unfollows`,
+        description: `Sent ${calls} sequential burst${calls > 1 ? "s" : ""} of ${perCall} — queue will update as they process.`,
+      });
       setTimeout(() => refetchCampaign(), 4_000);
       setTimeout(() => refetchCampaign(), 12_000);
       setTimeout(() => refetchCampaign(), 25_000);
@@ -1697,7 +1708,7 @@ function AutoUnfollowCard() {
                         onClick={() => drainNow(500)}
                         disabled={draining || triggering || !!rateLimited}
                         className="h-8 text-xs gap-1.5 border-emerald-500/60 bg-emerald-500/8 text-emerald-700 hover:bg-emerald-500/15 disabled:opacity-40 font-semibold"
-                        title={rateLimited ? `Rate limited — resumes in ${minsLeft}m` : "Drain 500 unfollows right now (manual burst)"}
+                        title={rateLimited ? `Rate limited — resumes in ${minsLeft}m` : "Drain 500 unfollows — sends ~15 sequential bursts of 35 (~40s), each within the CF free-tier budget"}
                       >
                         {draining ? <><RefreshCw className="w-3 h-3 animate-spin" />Draining…</> : <><Zap className="w-3 h-3" />Drain 500</>}
                       </Button>
@@ -1707,7 +1718,7 @@ function AutoUnfollowCard() {
                         onClick={() => drainNow(1500)}
                         disabled={draining || triggering || !!rateLimited}
                         className="h-8 text-xs gap-1.5 border-violet-500/60 bg-violet-500/8 text-violet-700 hover:bg-violet-500/15 disabled:opacity-40 font-bold"
-                        title={rateLimited ? `Rate limited — resumes in ${minsLeft}m` : "Drain 1500 unfollows — sends 3 burst requests in sequence (~9s total)"}
+                        title={rateLimited ? `Rate limited — resumes in ${minsLeft}m` : "Drain 1500 unfollows — sends ~43 sequential bursts of 35 (~2 min); keep this tab open until it finishes"}
                       >
                         {draining ? <><RefreshCw className="w-3 h-3 animate-spin" />Draining…</> : <><Zap className="w-3 h-3" />Drain 1500</>}
                       </Button>
@@ -3116,7 +3127,7 @@ function DiscoverTab() {
         </motion.div>
       )}
 
-      {/* ── Follow-back Tracker ─────────────────────────────────────────── */}
+      {/* ── Follow-back Tracker ─────────────────���───────────────────────── */}
       <FollowBackTracker />
     </div>
   );
